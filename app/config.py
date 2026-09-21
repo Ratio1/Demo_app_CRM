@@ -42,7 +42,10 @@ _MAX_PORT_DIGITS = 5
 _MIN_PORT = 1
 _MAX_PORT = 65535
 # Spec §4: "No URL/query/TLS options." A host is a name or an IP literal.
-_FORBIDDEN_HOST_CHARS = frozenset("/?#@=\\'\"[]")
+# The comma is in the set because libpq reads `host=a,b` as a multi-host
+# failover list, which is another way to reach a server the operator did not
+# name; spec §4 says `host[:port]`, singular.
+_FORBIDDEN_HOST_CHARS = frozenset("/?#@=,\\'\"[]")
 
 
 class ConfigError(ValueError):
@@ -162,15 +165,19 @@ def _parse_port(text: str, *, origin: str) -> int:
   Raises
   ------
   ConfigError
-    If the text is not ASCII decimal digits, or is out of range. ``int`` alone
-    would accept ``+5432``, ``" 5432"``, ``5_432`` and non-ASCII digits such
-    as ``٥٤٣٢``, so the character set is checked first.
+    If the text is not ASCII decimal digits, is not in canonical form, or is
+    out of range. ``int`` alone would accept ``+5432``, ``" 5432"``, ``5_432``
+    and non-ASCII digits such as ``٥٤٣٢``, so the character set is checked
+    first; a leading zero is then rejected so that one port has exactly one
+    spelling and two values can be compared as written.
   """
   if not text or not all(character in _ASCII_DIGITS for character in text):
     raise ConfigError(f"{origin} port is not a decimal number")
   if len(text) > _MAX_PORT_DIGITS:
     raise ConfigError(f"{origin} port is out of the range 1-65535")
   port = int(text)
+  if str(port) != text:
+    raise ConfigError(f"{origin} port is not in canonical form")
   if not _MIN_PORT <= port <= _MAX_PORT:
     raise ConfigError(f"{origin} port is out of the range 1-65535")
   return port

@@ -70,6 +70,13 @@ select = [
   "RUF", # ruff-specific
 ]
 
+ignore = [
+  # N818 wants every exception name to end in "Error". CONTRACTS.md §4 pins
+  # `class AmbiguousCommit(Exception)` for app/db/retry.py, and a lane may not
+  # rename a contracted symbol. Lift this only through a contract step.
+  "N818",
+]
+
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
 
