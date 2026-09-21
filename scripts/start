@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+#
+# start — the single command that serves Demo_App_CRM (PLAN.md §5), and the
+# Dockerfile CMD. It starts the server and does nothing else: it never migrates,
+# provisions, seeds or otherwise touches the database, and it reads no
+# environment variable of its own. The five database variables are read once, at
+# lifespan, by app/config.py (CONTRACTS.md §2) — this script only passes the
+# process the flags that bound it.
+#
+# Why each flag:
+#
+#   --host 0.0.0.0 --port 3000   the container contract (spec §8, PLAN.md §5).
+#   --workers 1                  one worker, so there is no worker manager and
+#                                no process supervisor; `exec` below then makes
+#                                uvicorn PID 1 and SIGTERM reaches it directly.
+#   --no-server-header           no `server:` response header to fingerprint.
+#   --no-proxy-headers           X-Forwarded-Host/Proto/For must not influence
+#                                any decision or redirect target; the app
+#                                compares Origin and Host against the origin
+#                                stored in the database instead (PLAN.md §5).
+#   --limit-concurrency 64       transport-level last resort only. The app's own
+#                                budgets are much tighter — the connection pool
+#                                admits 4 active plus 16 waiting and the hash
+#                                executor 1 active plus 8 queued (29 in total),
+#                                each answering with a sanitized 429 or 503 that
+#                                carries a correlation id. 64 sits well above
+#                                that sum on purpose: if it were close, uvicorn's
+#                                bare 503 would pre-empt the designed responses
+#                                and the throttling tests would be asserting
+#                                uvicorn's behaviour instead of the app's.
+#   --backlog 128                bounded accept queue.
+#   --timeout-graceful-shutdown 20
+#                                finish in-flight requests on SIGTERM, then stop.
+#                                NOTE for scripts/run-local (Slice E): this
+#                                exceeds Docker's default 10 s stop timeout, so
+#                                the reference `docker run` needs
+#                                `--stop-timeout 25` or docker escalates to
+#                                SIGKILL before uvicorn's own window closes.
+#
+# `python -B` so nothing writes bytecode on the read-only root filesystem; the
+# .pyc files for the dependencies are baked in at build time by pip.
+#
+# Slice E adds uvicorn's --ssl-certfile/--ssl-keyfile here, conditional on the
+# generated dev certificate app/certs/dev-server.crt being present (PLAN.md §5
+# "Dev TLS, host and container"). Nothing else is added: no http:// exception,
+# no reloader, no second process.
+
+set -Eeuo pipefail
+
+exec python -B -m uvicorn app.main:app \
+  --host 0.0.0.0 \
+  --port 3000 \
+  --workers 1 \
+  --no-server-header \
+  --no-proxy-headers \
+  --limit-concurrency 64 \
+  --backlog 128 \
+  --timeout-graceful-shutdown 20
