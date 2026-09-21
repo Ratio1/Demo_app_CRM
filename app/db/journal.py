@@ -18,6 +18,10 @@ Layout
 
 Restart semantics
 -----------------
+The target database is never assumed blank, so a run reads before it acts: if
+a ``schema_migrations`` table is already there in a shape this runner did not
+write, the run stops before creating anything.
+
 DDL is not assumed to be transactional, so a crash can land between the DDL
 and the journal write. For a step with no journal row the runner therefore
 evaluates the postcondition *first*: if it already holds, the step is adopted
@@ -669,6 +673,49 @@ async def _journal_table_exists(conn: JournalConnection) -> bool:
   return bool(row is not None and row[0])
 
 
+async def _preflight_journal_shape(
+  conn: JournalConnection, steps: Sequence[MigrationStep], role: str
+) -> None:
+  """Refuse to act on a ``schema_migrations`` table this runner did not write.
+
+  Parameters
+  ----------
+  conn : JournalConnection
+    An autocommit connection.
+  steps : Sequence[MigrationStep]
+    The loaded steps; the bootstrap step supplies the shape definition.
+  role : str
+    The validated runtime role, in case the check file asks for it.
+
+  Raises
+  ------
+  MigrationError
+    If a ``schema_migrations`` table exists but the bootstrap step's
+    postcondition does not hold for it.
+
+  Notes
+  -----
+  Read-only, so it runs in a dry run too. When no journal table exists there
+  is nothing to disagree with and the function returns at once. The shape is
+  taken from ``0001_journal/01_schema_migrations.check.sql`` rather than from
+  a second copy of the column list here, so the pre-flight and the
+  postcondition can never drift apart.
+  """
+  bootstrap = next(
+    (step for step in steps if step.key == (BOOTSTRAP_MIGRATION_ID, BOOTSTRAP_STEP_ID)),
+    None,
+  )
+  if bootstrap is None or not await _journal_table_exists(conn):
+    return
+  if not await _check_holds(conn, bootstrap, role):
+    raise MigrationError(
+      "public.schema_migrations already exists but is not the table this runner "
+      f"writes: {bootstrap.check_path} does not hold for it. The database was "
+      "not blank and was not migrated by this chain; resolve it by hand rather "
+      "than letting CREATE TABLE IF NOT EXISTS adopt a stranger's table"
+    )
+
+
 async def ensure_journal_table(conn: JournalConnection) -> None:
   """Create ``schema_migrations`` if it is not already there.
 
@@ -768,17 +815,34 @@ async def apply_migrations(
   ------
   MigrationError
     If the connection is not in autocommit mode, if ``grant_to`` is not a
-    usable role name, or if ``steps`` is empty.
+    usable role name, if ``steps`` is empty, or if a ``schema_migrations``
+    table is already there in a shape this runner did not write.
   ChecksumMismatch
     If a step's file no longer matches the checksum recorded for it.
   PostconditionFailed
     If a step's DDL ran but its postcondition did not then hold, or if a
     recorded-but-unverified step still fails its check.
+
+  Notes
+  -----
+  The run **reads before it acts**. The target database is never assumed
+  blank — ``crm`` was provisioned at bootstrap — so before anything is
+  created the runner asks whether a journal table is already present and, if
+  one is, whether it has the shape this runner writes. It asks with the
+  bootstrap step's own ``.check.sql``, so there is one definition of that
+  shape rather than two that could drift.
+
+  Without that pre-flight, ``CREATE TABLE IF NOT EXISTS`` would silently
+  accept a table of the same name left by some other tool, and the run would
+  fail later and less clearly — after the journal had already been consulted
+  as though it were ours.
   """
   _require_autocommit(conn)
   role = _validated_role(grant_to)
   if not steps:
     raise MigrationError("no migration steps to apply")
+
+  await _preflight_journal_shape(conn, steps, role)
 
   if not dry_run:
     await ensure_journal_table(conn)
