@@ -1,36 +1,34 @@
+# Demo_App_CRM — Python application.
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+#
+# NOTE: there is deliberately no bare `*.pem` rule here. The committed trust
+# material under app/certs/roots/ must stay tracked; the generated, machine-local
+# artefacts are listed by their exact paths below. Committed roots additionally
+# use the .crt extension as a second line of defence.
 
-# dependencies
-/node_modules
-/.pnp
-.pnp.js
+# local env files — required by `_tools/pgsql/pg env --write`, which refuses to
+# write a file that git does not already ignore. Do not weaken these two lines.
+.env
+.env*.local
 
-# testing
-/coverage
+# generated TLS material (never committed)
+app/certs/roots.dev/
+app/certs/ca-bundle.pem
+app/certs/dev-server.crt
+app/certs/dev-server.key
 
-# next.js
-/.next/
-/out/
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
 
-# production
-/build
+# tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
 
 # misc
 .DS_Store
-*.pem
-
-# debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# local env files
-.env*.local
-.env
-
-# vercel
-.vercel
-
-# typescript
-*.tsbuildinfo
-next-env.d.ts
