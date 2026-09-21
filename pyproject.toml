@@ -1,0 +1,100 @@
+[project]
+name = "demo-app-crm"
+version = "0.1.0"
+description = "Demo_App_CRM — a small, security-hardened CRM tutorial application."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = "==3.12.*"
+
+# Version floors only. `uv.lock` is the resolver source of truth and
+# `requirements.lock.txt` (uv export --frozen --no-dev --hashes) is what the
+# image installs, because the image has no uv.
+dependencies = [
+  "fastapi>=0.141.1",
+  "uvicorn>=0.53.0",
+  "jinja2>=3.1.6",
+  "python-multipart>=0.0.32",
+  "psycopg[binary]>=3.3.6",
+  "psycopg-pool>=3.3.2",
+  "argon2-cffi>=25.1.0",
+  "pydantic>=2.13.5",
+]
+
+[dependency-groups]
+# Locked for reproducibility, excluded from the image by `uv export --no-dev`.
+dev = [
+  "pytest>=9.1.1",
+  "pytest-asyncio>=1.4.0",
+  "anyio>=4.15.1",
+  "httpx>=0.28.1",
+  "pytest-playwright>=0.9.0",
+  "playwright>=1.63.0",
+  "axe-playwright-python>=0.1.8",
+  "ruff>=0.16.8",
+  "mypy>=2.3.1",
+]
+
+[tool.uv]
+# Not an installable package: `app` is imported from the working directory and
+# the Dockerfile copies it in. Keeps `uv export` free of a self-referencing
+# `-e .` line that pip would try to build inside the image.
+package = false
+
+# --------------------------------------------------------------------------
+# Style — spec §3: type hints, NumPy docstrings, two-space indentation.
+# --------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+indent-width = 2
+target-version = "py312"
+src = ["."]
+
+[tool.ruff.format]
+indent-style = "space"
+quote-style = "double"
+docstring-code-format = true
+
+[tool.ruff.lint]
+select = [
+  "E",   # pycodestyle errors
+  "W",   # pycodestyle warnings
+  "F",   # pyflakes
+  "I",   # import sorting
+  "B",   # bugbear
+  "UP",  # pyupgrade
+  "D",   # pydocstyle (NumPy convention, see below)
+  "N",   # pep8-naming
+  "S",   # flake8-bandit
+  "C4",  # comprehensions
+  "SIM", # simplify
+  "RUF", # ruff-specific
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D", "S101", "S105", "S106"]
+"scripts/**" = ["D"]
+
+# --------------------------------------------------------------------------
+# Typing — spec §3 / PLAN.md §5: mypy strict over app/.
+# --------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+files = ["app"]
+strict = true
+warn_unreachable = true
+warn_unused_configs = true
+enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
+
+# --------------------------------------------------------------------------
+# Tests — owned by the Tests lane; the asyncio mode is pinned here because
+# pyproject.toml is a Backend-lane file.
+# --------------------------------------------------------------------------
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+addopts = "--strict-markers --strict-config"
+xfail_strict = true
