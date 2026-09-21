@@ -1,0 +1,41 @@
+# Build context for `demo-crm-app:local` (PLAN.md §5).
+#
+# What must NOT be listed here, and why:
+#   app/certs/ca-bundle.pem      built by scripts/build-ca-bundle immediately
+#   app/certs/dev-server.crt     before `docker build` and baked into the image
+#   app/certs/dev-server.key     — excluding them would break the TLS chain and
+#                                  the dev HTTPS listener.
+# Only `app/certs/roots.dev/` is excluded, so the machine-local dev CA reaches
+# a local image through the built bundle and never as a loose directory. The
+# Deploy gate asserts the image contains no .env*, no roots.dev/ and no .git.
+
+# credentials — never in an image, not even the example
+.env*
+
+# version control
+.git
+.gitignore
+.gitattributes
+
+# host-only virtualenv and the uv-managed interpreter pin
+.venv
+.python-version
+
+# the dev CA source; the built bundle is what ships
+app/certs/roots.dev/
+
+# tests and generated documentation evidence
+tests/
+docs/
+
+# caches and bytecode
+**/__pycache__/
+**/*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# editor / OS noise
+.DS_Store
