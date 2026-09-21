@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+#
+# with-env — run a command with database credentials from an env file.
+#
+#   scripts/with-env <env-file> -- <command> [args...]
+#
+# This is the ONLY way a credential reaches a process in this repository.
+# Nothing else reads, prints, greps or sources an env file.
+#
+# Design rules (CONTRACTS.md §3), each of which is a security property:
+#
+#   * The file is parsed line by line. There is no `source`, no `eval` and no
+#     `export $(...)`: a value is never handed to the shell as code, so a
+#     password containing `$`, backticks or a newline cannot execute anything.
+#   * Only DB_SERVER, DB_PORT, DB_USER, DB_PASSWORD and DB_NAME may be set.
+#     Any other key, or any line that is not KEY=value, aborts the run before
+#     a single variable is exported and before the command starts.
+#   * The basename must be `.env` or match `.env*.local` — exactly the two
+#     patterns the submodule .gitignore covers and `pg env --write` enforces.
+#     A file that git would track can therefore not be used as a credential
+#     source.
+#   * Values are exported into this process and handed on by `exec`. Never
+#     `env KEY=VALUE cmd`, which would put the password in the process table
+#     for every other user on the machine to read.
+#   * No message ever contains a value. Diagnostics name the file and the line
+#     number only — not even the key, because a value spanning a line break
+#     would otherwise be reported as if it were a key name.
+#   * Callers must not wrap this in `set -x`, `bash -x` or a logging shim.
+#
+# Pre-existing PG* variables are deliberately left alone: the app defends
+# against them by passing every libpq parameter explicitly, and the Deploy
+# gate's hostile-environment test would be vacuous if this script scrubbed
+# them first.
+
+set -euo pipefail
+
+readonly PROG="${0##*/}"
+readonly ALLOWED=(DB_SERVER DB_PORT DB_USER DB_PASSWORD DB_NAME)
+
+usage() {
+  printf 'usage: %s <env-file> -- <command> [args...]\n' "$PROG" >&2
+  exit 2
+}
+
+die() {
+  printf '%s: %s\n' "$PROG" "$1" >&2
+  exit 2
+}
+
+[ "$#" -ge 3 ] || usage
+env_file="$1"
+shift
+[ "$1" = "--" ] || usage
+shift
+[ "$#" -ge 1 ] || usage
+
+base="${env_file##*/}"
+case "$base" in
+  .env | .env*.local) ;;
+  *) die "refusing '$base': an env file must be named .env or .env*.local" ;;
+esac
+
+[ -e "$env_file" ] || die "no such file: $env_file"
+[ -f "$env_file" ] || die "not a regular file: $env_file"
+[ -r "$env_file" ] || die "not readable: $env_file"
+
+keys=()
+values=()
+lineno=0
+
+# `|| [ -n "$line" ]` so a final line without a trailing newline is still read.
+while IFS= read -r line || [ -n "$line" ]; do
+  lineno=$((lineno + 1))
+
+  # Leading whitespace is stripped only to classify the line; the key and the
+  # value are always taken from the raw line, so an indented key is rejected
+  # by the allowlist rather than silently accepted.
+  stripped="${line#"${line%%[![:space:]]*}"}"
+  [ -n "$stripped" ] || continue
+  case "$stripped" in '#'*) continue ;; esac
+
+  case "$line" in
+    *=*) ;;
+    *) die "$env_file line $lineno: not KEY=value" ;;
+  esac
+
+  key="${line%%=*}"
+  value="${line#*=}"
+
+  ok=0
+  for allowed_key in "${ALLOWED[@]}"; do
+    if [ "$key" = "$allowed_key" ]; then
+      ok=1
+      break
+    fi
+  done
+  [ "$ok" -eq 1 ] || die "$env_file line $lineno: key is not in the allowlist"
+
+  keys+=("$key")
+  values+=("$value")
+done <"$env_file"
+
+# Nothing above this line exported anything: a malformed file leaves the
+# environment untouched and the command unrun.
+for i in "${!keys[@]}"; do
+  export "${keys[i]?}=${values[i]}"
+done
+
+exec "$@"
