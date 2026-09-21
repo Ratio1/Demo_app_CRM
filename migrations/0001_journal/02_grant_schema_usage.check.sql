@@ -1,0 +1,17 @@
+-- Postcondition for 02_grant_schema_usage: the runtime role can use the public
+-- schema.
+--
+-- has_schema_privilege reports the EFFECTIVE privilege, which is the property
+-- the application actually needs. Two consequences worth knowing:
+--
+--   * On a database created from template0, PUBLIC still holds USAGE on the
+--     public schema, so this postcondition can already hold before the GRANT
+--     has run. The runner then adopts the step into the journal without
+--     executing it, which is correct for the property but means the journal
+--     row is not evidence that this particular GRANT was issued.
+--   * After the scratch reset (DROP SCHEMA public CASCADE; CREATE SCHEMA
+--     public) the implicit PUBLIC grant is gone, so the step genuinely runs.
+--
+-- information_schema has no schema-privilege view, so there is no portable way
+-- to ask about the direct grant alone.
+SELECT has_schema_privilege({grant_to_name}, 'public', 'USAGE') AS ok
