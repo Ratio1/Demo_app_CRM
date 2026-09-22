@@ -1,8 +1,15 @@
 """Response headers — SEC-026, SEC-027, SEC-028, SEC-070 through SEC-076.
 
 Authority: ``ACCESS_MATRIX.md`` §7; ``slice-a.md`` §2.6 (the exact header
-table). One assertion per directive, on a private page, the login page and
-an error page, per ``PLAN.md`` §6's security-gate description.
+table), ruling **R49** (``img-src`` drops ``data:`` — nothing ships a
+``data:`` image) and ruling **R50** (``Referrer-Policy: same-origin``, never
+``no-referrer``: per the Fetch standard a browser serialises ``Origin`` as
+the literal string ``"null"`` on a non-``GET``/``HEAD`` request whose
+referrer policy is ``no-referrer``, so an exact-``Origin`` check at step 0a
+would refuse every real-browser form ``POST`` — reproduced live against
+headless Chromium in Slice A gate round 1). One assertion per directive, on
+a private page, the login page and an error page, per ``PLAN.md`` §6's
+security-gate description.
 """
 
 from __future__ import annotations
@@ -15,7 +22,7 @@ import pytest
 pytestmark = pytest.mark.asyncio
 
 _EXPECTED_CSP = (
-  "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+  "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; "
   "connect-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; "
   "form-action 'self'"
 )
@@ -81,12 +88,12 @@ async def test_sec026_frame_ancestors_none_on_every_kind_of_page(
     assert response.headers.get("x-frame-options") == "DENY"
 
 
-async def test_sec027_referrer_policy_no_referrer_on_every_kind_of_page(
+async def test_sec027_referrer_policy_same_origin_on_every_kind_of_page(
   admin_session: httpx.AsyncClient, http_client_factory: Any
 ) -> None:
-  """``Referrer-Policy: no-referrer`` on every response."""
+  """``Referrer-Policy: same-origin`` (R50) on every response, never ``no-referrer``."""
   for response in await _pages(admin_session, http_client_factory):
-    assert response.headers.get("referrer-policy") == "no-referrer"
+    assert response.headers.get("referrer-policy") == "same-origin"
 
 
 async def test_sec028_no_credential_or_token_ever_appears_as_a_query_parameter() -> None:
@@ -120,6 +127,27 @@ async def test_sec075_an_unsupported_method_is_405_with_no_disclosure(
   client: httpx.AsyncClient = http_client_factory()
   response = await client.request("TRACE", "/login")
   assert response.status_code in (404, 405)
+
+
+async def test_sec063_docs_routes_are_404_on_a_server_whose_lifespan_ran(
+  http_client_factory: Any,
+) -> None:
+  """``/docs``, ``/redoc`` and ``/openapi.json`` are ``404`` over a live, lifespan-backed server.
+
+  Complements ``tests/arch/test_gates.py``'s
+  ``test_sec063_docs_routes_are_404_in_the_shipped_configuration``, which
+  asserts on the constructed ``FastAPI`` object without ever entering the
+  lifespan (``app.state.context`` stays unset, so no live request could be
+  made there without hitting ``OriginHostMiddleware``'s ``503`` "not
+  provisioned" path — not the ``404`` this ID actually names). ``live_server``
+  (via ``http_client_factory``) already waited for ``/health/live`` and ran
+  ``manage set-origin`` before this test runs, so its lifespan has
+  genuinely started: this is the live half SEC-063 needs.
+  """
+  client: httpx.AsyncClient = http_client_factory()
+  for path in ("/docs", "/redoc", "/openapi.json"):
+    response = await client.get(path)
+    assert response.status_code == 404, f"{path} did not 404 (got {response.status_code})"
 
 
 # SEC-076 (repeated allowlisted query parameter -> 400) has no assertion
