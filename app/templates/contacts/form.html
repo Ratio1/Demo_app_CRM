@@ -1,22 +1,22 @@
-{#-  contacts/form.html — CONTRACTS.md §8.2: `mode: "new"|"edit"`,
+{#-  contacts/form.html — context: `mode: "new"|"edit"`,
   `action_url`, `cancel_url`, `contact {id?, full_name, company, email,
   phone, kind, version?}`, `owner_label`, `errors {field: [str]}`,
   `idempotency_key`, `limits {full_name:160, company:160, email:254,
   phone:32}`.
 
-  POST field names (slice-b.md §2(f)) are `name, company, email, phone,
-  kind` (+ `version` on edit) — NOT `full_name`; the context key is
-  `contact.full_name`, the wire name is `name`. Every `errors` lookup below
-  is keyed by the POST name to match.
+  POST field names are `name, company, email, phone, kind` (+
+  `version` on edit) — NOT `full_name`; the context key is
+  `contact.full_name`, the wire name is `name`. Every `errors` lookup
+  below is keyed by the POST name to match.
 
-  UX_FLOWS.md §4.5: single column, max 640px, not a modal. Field order:
-  Full name* · Company · Work email* · Phone · Type (radio pair, R31/§4.6).
-  Actions CP-115: "Save contact" (primary) / "Cancel" (a LINK to
-  `cancel_url`, never a form button). Ownership: read-only `owner_label`
-  (CP-32, pre-formatted server-side — "Owner: you" / "Owner: {name}"), no
-  owner control (`ACC-012`). Hidden: `version` (edit only), a fresh
-  `idempotency_key`, CSRF. Focus (R28): `autofocus` on the first field on a
-  fresh load, none after a validation failure.
+  Single column, max 640px, not a modal. Field order: Full name* ·
+  Company · Work email* · Phone · Type (radio pair). Actions: "Save
+  contact" (primary) / "Cancel" (a LINK to `cancel_url`, never a form
+  button). Ownership: read-only `owner_label` (pre-formatted
+  server-side — "Owner: you" / "Owner: {name}"), no owner control.
+  Hidden: `version` (edit only), a fresh `idempotency_key`, CSRF.
+  Focus: `autofocus` on the first field on a fresh load, none after a
+  validation failure.
 -#}
 {% extends "base.html" %}
 {% from "partials/field_errors.html" import field_errors %}
@@ -99,17 +99,12 @@
       {% endif %}
     </fieldset>
 
-    {#- `owner_label` is confirmed against the shipped
-       `app/routes/contacts.py` as a RAW display name
-       (`principal.display_name` on create, `view.owner_name` on edit) —
-       never the literal word "you", even for the actor's own contact.
-       UX_FLOWS.md §4.5 says the read-only line is "Owner: you" /
-       "Owner: {name}" (UI_SPEC.md §4.13 the same, CP-32 verbatim); the
-       shipped route always sends the second form, so this template adds
-       the "Owner: " wrapper and never renders "you". Flagged for
-       `backend-security`/UX_FLOWS reconciliation, not silently
-       resolved by inventing an `is_own` this context key does not
-       carry. #}
+    {#- `owner_label` is a RAW display name from
+       `app/routes/contacts.py` (`principal.display_name` on create,
+       `view.owner_name` on edit) — never the literal word "you", even
+       for the actor's own contact. This template adds the "Owner: "
+       wrapper around whatever name the route sends; there is no
+       `is_own` key in this context to render "you" instead. #}
     <p class="owner-line">Owner: {{ owner_label }}</p>
 
     <div class="form-actions">

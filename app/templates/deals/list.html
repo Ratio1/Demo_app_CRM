@@ -1,20 +1,19 @@
-{#-  deals/list.html — CONTRACTS.md §8.2: `query {q, stage, status, sort,
-  dir, page}`, `results` (§8.3), `can_create: false`.
+{#-  deals/list.html — context: `query {q, stage, status, sort,
+  dir, page}`, `results`, `can_create: false`.
 
-  Contract addition (documented, not invented — see partials/
-  deal_results.html's own header comment): this page also supplies
-  `focus_region`, always `false` here — the fragment-only focus-move rule
-  never applies to a full page load (mirrors contacts/list.html's own
-  note).
+  This page also supplies `focus_region`, always `false` here — the
+  fragment-only focus-move rule never applies to a full page load
+  (mirrors contacts/list.html's own note; see partials/
+  deal_results.html's own header comment).
 
-  UX_FLOWS.md §4.7 S7: structurally identical to S4 (contacts list) — same
-  table<->card transform at 640px, same <1024px filter disclosure, same
-  Pin U-2 pagination/focus/announcement rules. Differences: no "Add deal"
-  primary action here (CP-117 "Go to contacts" instead — a deal needs a
+  Structurally identical to the contacts list — same table<->card
+  transform at 640px, same <1024px filter disclosure, same
+  pagination/focus/announcement rules. Differences: no "Add deal"
+  primary action here ("Go to contacts" instead — a deal needs a
   parent contact, and a contact picker here would duplicate the
-  ownership-validated parent flow for no gain); `can_create` is frozen
-  `false`. Sort allowlist (ACCESS_MATRIX.md §5.2): title, amount,
-  close_date, stage, created_at, default `created_at desc`.
+  ownership-validated parent flow for no gain); `can_create` is always
+  `false`. Sortable columns: title, amount, close_date, stage,
+  created_at, default `created_at desc`.
 -#}
 {% extends "base.html" %}
 {% block main %}

@@ -1,14 +1,14 @@
-{#-  deals/pipeline.html — CONTRACTS.md §8.2: `query {status}`,
-  `stages [{key, label, count, amount, deals [deal_card]}]` — read-only
-  (R22): columns on desktop, stacked lists on mobile, each card linking
-  to the deal; no stage control on a pipeline card.
+{#-  deals/pipeline.html — context: `query {status}`,
+  `stages [{key, label, count, amount, deals [deal_card]}]` —
+  read-only: columns on desktop, stacked lists on mobile, each card
+  linking to the deal; no stage control on a pipeline card.
 
-  UX_FLOWS.md S8: filter is `status` only (active/archived/all), enhanced
-  into `#pipeline-results`; "the page repeats CP-37" (Archived contacts
-  and their deals are excluded) — rendered only under the DEFAULT
-  `status=active` filter, since it would misstate the page under
-  `archived`/`all`, which the dashboard (CP-37's other user, spec §4.19)
-  never offers a filter for at all.
+  Filter is `status` only (active/archived/all), enhanced into
+  `#pipeline-results`. The "Archived contacts and their deals are
+  excluded" note is rendered only under the DEFAULT `status=active`
+  filter, since it would misstate the page under `archived`/`all`;
+  the dashboard never offers a status filter at all, so it never needs
+  that note either.
 -#}
 {% extends "base.html" %}
 {% block main %}

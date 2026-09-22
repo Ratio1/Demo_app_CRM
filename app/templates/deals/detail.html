@@ -1,27 +1,25 @@
-{#-  deals/detail.html — CONTRACTS.md §8.2: `deal {id, title, amount,
+{#-  deals/detail.html — context: `deal {id, title, amount,
   close_date, stage, stage_label, stage_changed_at, version, created_at,
   updated_at}`, `contact {id, full_name, is_archived, owner_name,
   is_own}`, `can {edit, change_stage}`, `stage_form {idempotency_key,
   version, lateral_targets, terminal, current_stage}`, `breadcrumb
   [{label, url}]`.
 
-  UX_FLOWS.md S10: single column at both widths: <h1> title, amount,
-  stage badge, close date, "For: {contact}" link (CP-134), owner line,
-  the stage control (§4.8), CP-119 "Edit deal" as primary, and the deal's
-  own short context — no timeline of its own (activities belong to the
-  contact, spec §2). Breadcrumb CP-130 as <nav aria-label="Breadcrumb"> at
-  >=1024px, collapsing to a single "‹ {contact}" back link below that
-  (UI_SPEC.md §4.2) — both rendered, CSS decides which shows, the same
-  two-renderings-one-list pattern `partials/nav.html` uses for itself.
+  Single column at both widths: <h1> title, amount, stage badge, close
+  date, "For: {contact}" link, owner line, the stage control, "Edit
+  deal" as primary, and the deal's own short context — no timeline of
+  its own (activities belong to the contact). Breadcrumb as <nav
+  aria-label="Breadcrumb"> at >=1024px, collapsing to a single
+  "‹ {contact}" back link below that — both rendered, CSS decides
+  which shows, the same two-renderings-one-list pattern
+  `partials/nav.html` uses for itself.
 
-  slice-c.md §2(a) note 9 / ask A-8 (orchestrator-implemented conditional
-  reading, recorded not re-litigated here): `can.change_stage` is False
-  whenever the parent contact is archived, so `partials/stage_control.
-  html` — which itself renders the CP-35 "closed" note for a TERMINAL
-  deal — is included only when `can.change_stage` is true; a deal whose
-  parent is archived shows no stage control and no terminal note, only
-  the "Archived contact" badge next to the stage badge (matching the
-  list/pipeline card treatment, UX_FLOWS.md §4.7 S7).
+  `can.change_stage` is False whenever the parent contact is archived,
+  so `partials/stage_control.html` — which itself renders the "closed"
+  note for a TERMINAL deal — is included only when `can.change_stage`
+  is true; a deal whose parent is archived shows no stage control and
+  no terminal note, only the "Archived contact" badge next to the
+  stage badge (matching the list/pipeline card treatment).
 -#}
 {% extends "base.html" %}
 {% from "partials/badges.html" import stage_badge, archived_contact_badge, owner_line %}

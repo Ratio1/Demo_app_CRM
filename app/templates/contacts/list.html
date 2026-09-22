@@ -1,18 +1,17 @@
-{#-  contacts/list.html — CONTRACTS.md §8.2: `query {q, kind, status, sort,
-  dir, page}`, `results` (§8.3), `can_create: bool`.
+{#-  contacts/list.html — context: `query {q, kind, status, sort,
+  dir, page}`, `results`, `can_create: bool`.
 
-  Contract addition (documented, not invented — see partials/
-  contact_results.html's own header comment): this page also supplies
-  `focus_region` (slice-b.md §2(e)/R40) on every render, always `false`
-  here — the fragment-only focus-move rule never applies to a full page
-  load. Flagged for a CONTRACTS.md §8.2/§8.3 follow-up amendment.
+  This page also supplies `focus_region` on every render, always
+  `false` here — the fragment-only focus-move rule never applies to a
+  full page load (see partials/contact_results.html's own header
+  comment).
 
-  UX_FLOWS.md §4.4 regions: error-summary slot (none on this screen — no
-  form posts here) · <h1>Contacts</h1> + scope · notice · actions row ·
-  filter bar (#contact-filters, OUTSIDE the swap target) · results region
-  (#contact-results, rendered by partials/contact_results.html, which this
-  page includes so the fragment GET and the full page render byte-identical
-  markup for that region — CONTRACTS.md §8's rule 3).
+  Regions: error-summary slot (none on this screen — no form posts
+  here) · <h1>Contacts</h1> + scope · notice · actions row · filter
+  bar (#contact-filters, OUTSIDE the swap target) · results region
+  (#contact-results, rendered by partials/contact_results.html, which
+  this page includes so the fragment GET and the full page render
+  byte-identical markup for that region).
 -#}
 {% extends "base.html" %}
 {% block main %}
@@ -58,10 +57,10 @@
           <option value="all"{% if query.status == "all" %} selected{% endif %}>All</option>
         </select>
       </div>
-      {#- UI_SPEC.md §4.9: the mobile sort affordance, shown only below
-         640px (`.sort-mobile-only`), independent of this <1024px
-         disclosure boundary — the 640-1023px band shows the real <th>
-         sort links (full table) plus this collapsed disclosure, per D14. #}
+      {#- The mobile sort affordance is shown only below 640px
+         (`.sort-mobile-only`), independent of the <1024px disclosure
+         boundary — the 640-1023px band shows the real <th> sort links
+         (full table) plus this collapsed disclosure. #}
       <div class="field sort-mobile-only">
         <label for="sort-key">Sort by</label>
         <select id="sort-key" name="sort">

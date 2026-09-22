@@ -1,36 +1,23 @@
-{#-  contacts/detail.html — CONTRACTS.md §8.2: `contact {id, full_name,
+{#-  contacts/detail.html — context: `contact {id, full_name,
   company, email, phone, kind, owner_name, is_own, is_archived,
   archived_at, version, created_at, updated_at}`, `can {edit, archive,
   restore, reassign, add_deal, add_activity}`, `deals [deal_card]`,
-  `deal_forms {deal_id: {...}}`, `timeline` (§8.3), `activity_form {values
+  `deal_forms {deal_id: {...}}`, `timeline`, `activity_form {values
   {kind, occurred_on, summary}, errors, idempotency_key, limit: 1000}`,
   `archive_form {idempotency_key, version}`, `restore_form {idempotency_key,
   version}`, `reassign | None {assignable_users [{id,display_name}],
   current_owner_id, idempotency_key, version, errors}`.
 
-  slice-b.md §2(i): `deals=[]`, `deal_forms={}`, `timeline` (zero items),
-  `activity_form` (values only, no route yet) and `can.add_deal` /
-  `can.add_activity` are ALWAYS `False` in Slice B — "no route exists yet,
-  and an entry point that 404s is worse than one that is absent." Every
-  control gated on those two flags is therefore built but never rendered
-  reachable this slice; it activates with no template change once a later
-  slice's route exists and the service sets the flag `True`.
-
-  R30 layout: DOM order is the SAME single-column order at every width —
-  Details -> Activity (form + #timeline) -> Deals -> Record -> Owner; at
+  DOM order is the SAME single-column order at every width — Details
+  -> Activity (form + #timeline) -> Deals -> Record -> Owner; at
   >=1024px CSS grid (`.workspace`, app.css) places Deals visually above
-  Activity by `order` only (§8 Q13, closed by R40: default stands, keyboard
-  order therefore differs from visual order at desktop, disclosed not
-  fixed here).
+  Activity by `order` only, so keyboard order differs from visual
+  order at desktop (disclosed, not fixed, here).
 
-  #timeline: UX_FLOWS.md §4.6's "Regions" row nests `#timeline` INSIDE
-  `<section aria-labelledby="h-activity">` (one "Activity" h2, CP-129);
-  UI_SPEC.md §4.16's own standalone snippet gives `#timeline` a second,
-  identical "Activity" `<h2>`. Read together as the same region at two
-  levels of the document: this template follows the CONTRACTS-frozen
-  regions row (one heading) and gives the nested swap target
-  `aria-label="Activity timeline"` instead of a duplicate visible `<h2>` —
-  flagged as a cross-document wording overlap, not silently picked.
+  #timeline is nested INSIDE `<section aria-labelledby="h-activity">`
+  (one "Activity" h2) rather than carrying a second, duplicate
+  "Activity" heading of its own — the nested swap target gets
+  `aria-label="Activity timeline"` instead.
 -#}
 {% extends "base.html" %}
 {% from "partials/badges.html" import kind_badge, archived_badge, stage_badge, owner_line %}
@@ -75,9 +62,9 @@
     <h2 id="h-details">Details</h2>
     <dl class="detail-list">
       {#- Company/phone render whatever value the record holds, including
-         an empty string, rather than inventing a placeholder glyph — no
-         copy id covers one for this context (UX_FLOWS.md §6 reserves
-         "(empty)" for the 409 stale-diff panel specifically). #}
+         an empty string, rather than inventing a placeholder glyph —
+         the "(empty)" placeholder is reserved for the 409 stale-diff
+         panel specifically, not used here. #}
       <div class="detail-row"><dt>Company</dt><dd>{{ contact.company }}</dd></div>
       <div class="detail-row"><dt>Work email</dt><dd>{{ contact.email }}</dd></div>
       <div class="detail-row"><dt>Phone</dt><dd>{{ contact.phone }}</dd></div>
@@ -113,25 +100,23 @@
     </form>
     {% endif %}
 
-    {#- The region's markup moved verbatim into partials/timeline.html when
-       Slice D gave it a route (CONTRACTS.md §8.3 names that partial as the
-       `#timeline` swap target): one implementation now serves this full
-       render and the fragment `GET /contacts/{id}/timeline`, exactly as
-       `partials/contact_results.html` serves `#contact-results`. The two
-       differences the route brought with it are inside the partial — real
-       pagination and `21 Sep 2026` in place of the ISO day. #}
+    {#- partials/timeline.html is the `#timeline` swap target: one
+       implementation serves this full render and the fragment
+       `GET /contacts/{id}/timeline`, exactly as
+       `partials/contact_results.html` serves `#contact-results` —
+       with real pagination and `21 Sep 2026` in place of the ISO day. #}
     {% include "partials/timeline.html" %}
   </section>
 
   <section class="workspace-deals" aria-labelledby="h-deals">
     <h2 id="h-deals">Deals</h2>
-    {#- PIN C7 (DECISIONS.md §12): "the contact detail's #deals region
-       shows the contact's deals (scoped) with a 'New deal' action."
-       slice-c.md §2(e): this region is a FULL PAGE RENDER ONLY — no
-       hx-*, no fragment route, no partial; every deal mutation already
-       lands on 303 /contacts/{id}...#deal-{id}, a full server render.
-       Gating the stage control on `not contact.is_archived` (rather
-       than a per-deal flag `deal_card` does not carry) reproduces
+    {#- The contact detail's #deals region shows the contact's deals
+       (scoped) with a "New deal" action. This region is a FULL PAGE
+       RENDER ONLY — no hx-*, no fragment route, no partial; every
+       deal mutation already lands on a redirect to
+       /contacts/{id}...#deal-{id}, a full server render. Gating the
+       stage control on `not contact.is_archived` (rather than a
+       per-deal flag `deal_card` does not carry) reproduces
        `can.change_stage`'s own rule from the deal-detail page: every
        card here belongs to THIS contact, so its archived state is
        exactly `contact.is_archived` for every one of them. #}

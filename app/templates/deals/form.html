@@ -1,29 +1,28 @@
-{#-  deals/form.html — CONTRACTS.md §8.2: `mode: "new"|"edit"`,
+{#-  deals/form.html — context: `mode: "new"|"edit"`,
   `action_url`, `cancel_url`, `deal {id?, title, amount, close_date,
   version?}`, `contact {id, full_name}`, `errors {field: [str]}`,
   `idempotency_key`, `limits {title:160}`.
 
-  POST field names (slice-c.md §2(a)/§2(d)) are `title`, `amount`,
-  `close_date` (+ `version` on edit) — NOT `contact_id` (the parent is the
-  path; PIN C8/`ACC-217` — `contact_id` is immutable after create and
-  carries no form field at all, in either mode) and NOT `stage`
-  (`ACC-211`: never accepted on create, never a field on edit —
-  `ACCESS_MATRIX.md` §5.3). No back-link element above the header,
-  matching the shipped `contacts/form.html` precedent (Cancel, at the
-  bottom, is the one navigation-away control in both editors).
+  POST field names are `title`, `amount`, `close_date` (+ `version` on
+  edit) — NOT `contact_id` (the parent is in the path; `contact_id` is
+  immutable after create and carries no form field at all, in either
+  mode) and NOT `stage` (never accepted on create, never a field on
+  edit). No back-link element above the header, matching
+  `contacts/form.html`'s own layout (Cancel, at the bottom, is the one
+  navigation-away control in both editors).
 
-  UX_FLOWS.md §4.7 S9: single column, max 640px, mirrors S5. Amount is
-  `type="text" inputmode="decimal"` — never `type="number"` (UI_SPEC.md
-  §4.6: its spinner/wheel-stepping/locale parsing are all wrong for
-  money). `deal.amount` on the wire is the CANONICAL string
-  (`app/services/money.py canonical_amount`, e.g. "1250.00") on a fresh
-  load, or the RAW submitted string after a failed validation
-  (slice-c.md §2(a): "the form's amount is never the € string" — `€`
-  appears only on read-only display surfaces, never in this input's
-  `value=`). Close date optional (R31, `<input type="date">`, ISO on the
-  wire). Stage is absent on create (`CP-33`) and never a field on edit —
-  this template has no stage input in either mode. R28: `autofocus` on
-  the first field on a fresh load only, none after a validation failure.
+  Single column, max 640px. Amount is `type="text"
+  inputmode="decimal"` — never `type="number"` (its spinner/
+  wheel-stepping/locale parsing are all wrong for money). `deal.amount`
+  on the wire is the CANONICAL string (`app/services/money.py
+  canonical_amount`, e.g. "1250.00") on a fresh load, or the RAW
+  submitted string after a failed validation — the form's amount is
+  never the € string; `€` appears only on read-only display surfaces,
+  never in this input's `value=`. Close date optional (`<input
+  type="date">`, ISO on the wire). Stage is absent on create and never
+  a field on edit — this template has no stage input in either mode.
+  `autofocus` on the first field on a fresh load only, none after a
+  validation failure.
 -#}
 {% extends "base.html" %}
 {% from "partials/field_errors.html" import field_errors %}
