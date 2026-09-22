@@ -53,58 +53,6 @@ def browser_context_args(browser_context_args: dict[str, Any]) -> dict[str, Any]
   return {**browser_context_args, "ignore_https_errors": True}
 
 
-def _provision_ready_agent(tmp_path: Path) -> tuple[str, str]:
-  """Create one agent and immediately complete its forced password change (CLI only).
-
-  Returns
-  -------
-  tuple[str, str]
-    ``(email, final_password)`` — a session logged in with this pair reaches
-    contact routes directly, with no forced-reset detour in the test body.
-  """
-  email = f"e2e-contacts+{uuid.uuid4().hex[:10]}@example.test"
-  first_password = "a fictional e2e contacts create passphrase"
-  final_password = "a fictional e2e contacts final passphrase 2"
-
-  for args, password, log_name in (
-    (
-      [
-        "create-user",
-        "--email",
-        email,
-        "--name",
-        "E2E Contacts Agent",
-        "--role",
-        "agent",
-        "--password-stdin",
-      ],
-      first_password,
-      "create-user",
-    ),
-    (["reset-password", "--email", email, "--password-stdin"], first_password, "reset-password"),
-  ):
-    password_file = tmp_path / f"pw-{log_name}-{uuid.uuid4().hex[:6]}"
-    password_file.write_text(password + "\n", encoding="utf-8")
-    password_file.chmod(0o600)
-    try:
-      with password_file.open("rb") as stdin_file:
-        log_path = tmp_path / f"{log_name}.log"
-        with log_path.open("wb") as log_file:
-          subprocess.run(  # noqa: S603
-            [str(WITH_ENV), OWNER_ENV_FILE, "--", str(VENV_PYTHON), "-B", str(MANAGE), *args],
-            cwd=SUBMODULE_ROOT,
-            stdin=stdin_file,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            check=True,
-            timeout=30.0,
-          )
-    finally:
-      password_file.unlink(missing_ok=True)
-
-  return email, final_password
-
-
 @pytest.fixture
 def ready_agent(live_server: LiveServer, tmp_path: Path) -> Iterator[tuple[str, str]]:
   """Yield ``(email, first_password)`` for an agent whose *next* login is still forced."""
