@@ -1434,7 +1434,22 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
      drop a coroutine for every *later* async test — never an earlier one.
      Ordering ``tests/e2e`` last among the async-test buckets removes the
      corruption for the single, literal ``pytest tests`` invocation.
-  4. ``tests/concurrency/test_last_admin_race.py`` **absolute last, after
+  4. ``tests/concurrency/test_demo_seed_and_reset.py`` **after ``tests/e2e``,
+     before ``test_last_admin_race.py`` (plan §4 task 6).** Its
+     ``reset-demo --yes`` deletes every row of ``activities``, ``deals``,
+     ``contacts``, ``mutation_receipts``, ``sessions``, ``login_throttle``
+     and ``rate_budget`` in the shared ``crm_test`` — every other test
+     module's fixture data included, not only its own — so it must not run
+     while anything else in the session still expects that data to survive.
+     Placed ahead of ``test_last_admin_race.py`` because that module already
+     rebuilds the schema and its own two-admin state from scratch regardless
+     of what came before it (bucket 5's own reasoning), so running this
+     module first costs it nothing. It is a plain sync module with no
+     ``pytest.mark.asyncio`` test of its own (every database read it needs
+     goes through its own owner-role subprocess, mirroring
+     ``crm_test_schema``'s), so bucket 3's event-loop concern does not apply
+     to it either — it is placed here for the data-wipe reason, not that one.
+  5. ``tests/concurrency/test_last_admin_race.py`` **absolute last, after
      even tests/e2e.** Its own module-scoped fixture resets and
      re-migrates ``crm_test`` from scratch and bootstraps two admins of
      its own — a schema wipe that would take the shared
@@ -1449,16 +1464,16 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
      sync test module with no Playwright fixtures of its own, so its
      position relative to bucket 3's event-loop concern is moot either
      way — it is placed last for the schema reason, not that one.
-  5. ``tests/concurrency/test_migration_journal.py`` **absolute last, after
+  6. ``tests/concurrency/test_migration_journal.py`` **absolute last, after
      even ``test_last_admin_race.py`` (ruling R66, SQL-026).** Its own
      ``SQL-026`` test drops and recreates the whole ``public`` schema
      directly (owner role) to prove a from-empty `migrate` — the same
-     class of wipe ``test_last_admin_race.py`` already earns bucket 4's
+     class of wipe ``test_last_admin_race.py`` already earns bucket 5's
      placement for, one step further out: nothing in this session runs
      after it, so nothing needs the ``bootstrap_admin``/two-admin state
      either module's own fixtures built. The *next* session's autouse
      ``crm_test_schema`` reset absorbs whatever this module leaves behind,
-     exactly as bucket 4's own reasoning already establishes.
+     exactly as bucket 5's own reasoning already establishes.
   """
 
   def _path_parts(item: pytest.Item) -> tuple[str, ...]:
@@ -1466,6 +1481,10 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 
   def _is_inprocess(item: pytest.Item) -> bool:
     return "inprocess" in _path_parts(item)
+
+  def _is_demo_seed_and_reset(item: pytest.Item) -> bool:
+    parts = _path_parts(item)
+    return bool(parts) and parts[-1] == "test_demo_seed_and_reset.py"
 
   def _is_last_admin_race(item: pytest.Item) -> bool:
     parts = _path_parts(item)
@@ -1479,16 +1498,28 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     return bool(parts) and parts[-1] == "test_migration_journal.py"
 
   inprocess_items = [item for item in items if _is_inprocess(item)]
+  demo_seed_and_reset_items = [item for item in items if _is_demo_seed_and_reset(item)]
   last_admin_race_items = [item for item in items if _is_last_admin_race(item)]
   e2e_items = [item for item in items if _is_e2e(item)]
   migration_journal_items = [item for item in items if _is_migration_journal(item)]
   special = {
     id(item)
-    for item in inprocess_items + last_admin_race_items + e2e_items + migration_journal_items
+    for item in (
+      inprocess_items
+      + demo_seed_and_reset_items
+      + last_admin_race_items
+      + e2e_items
+      + migration_journal_items
+    )
   }
   other_items = [item for item in items if id(item) not in special]
   items[:] = (
-    inprocess_items + other_items + e2e_items + last_admin_race_items + migration_journal_items
+    inprocess_items
+    + other_items
+    + e2e_items
+    + demo_seed_and_reset_items
+    + last_admin_race_items
+    + migration_journal_items
   )
 
 
@@ -2058,3 +2089,116 @@ async def archive_contact(principal: LoggedInPrincipal, *, contact_id: str) -> h
     f"/contacts/{contact_id}/archive",
     data={"csrf_token": csrf_token, "idempotency_key": idempotency_key, "version": version},
   )
+
+
+# ---------------------------------------------------------------------------
+# Slice D — activities: the one HTTP helper shared by tests/access and
+# tests/concurrency (tests/e2e drives the same form through Playwright
+# locators instead, per that directory's own convention). Mirrors the deal
+# helpers above; nothing here can succeed before ``app/routes/activities.py``
+# ships.
+#
+# ``create_activity`` deliberately does NOT use ``extract_hidden_field`` (the
+# first-match helper) on the contact workspace: that page can carry several
+# same-named ``idempotency_key``/``version`` hidden fields at once (the
+# archive form, the restore form, the reassign form, one stage-control form
+# per deal card, and the add-activity form itself), so the first match is
+# only ever correct by accident. The CSRF token has no such ambiguity — it is
+# one per session, not one per form — so it is read from whichever form
+# happens to be on the page.
+# ---------------------------------------------------------------------------
+
+#: `POST /activities` on success: `303 /contacts/{id}?notice=activity_logged#timeline`.
+_ACTIVITY_CREATE_LOCATION_PATTERN = re.compile(
+  r"^/contacts/([0-9a-fA-F-]{36})\?notice=activity_logged#timeline$"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SeededActivity:
+  """An activity created through the real HTTP surface, for a test to act on."""
+
+  contact_id: str
+  owner: LoggedInPrincipal
+
+
+def parse_activity_create_location(location: str) -> str:
+  """Pull ``{contact_id}`` out of an activity-create ``Location`` header.
+
+  Returns
+  -------
+  str
+
+  Raises
+  ------
+  AssertionError
+    If the header does not match the contracted shape (the create redirect
+    carries no activity id of its own — the destination is the contact's
+    timeline, never a page of the activity itself, ``ACCESS_MATRIX.md``
+    §1.6's "an activity has no ``GET`` route of its own").
+  """
+  match = _ACTIVITY_CREATE_LOCATION_PATTERN.match(location)
+  assert match is not None, f"unexpected activity-create Location header shape: {location!r}"
+  return match.group(1)
+
+
+async def create_activity(
+  principal: LoggedInPrincipal,
+  *,
+  contact_id: str,
+  kind: str = "note",
+  occurred_on: str = "2026-09-15",
+  summary: str = "A fictional check-in note.",
+) -> SeededActivity:
+  """Drive ``POST /activities`` for one principal's own, active contact.
+
+  Parameters
+  ----------
+  principal : LoggedInPrincipal
+    Logs the activity as themselves — the author is the session, never a
+    submitted field.
+  contact_id : str
+    The parent, re-resolved under the scope predicate by the service; must
+    be visible to ``principal`` and not archived, or the ``303`` this
+    helper asserts on will not happen (use a raw ``client.post`` instead
+    for a foreign/missing/archived-parent case).
+  kind, occurred_on, summary : str
+    Fictional field values (``AGENTS.md``).
+
+  Returns
+  -------
+  SeededActivity
+
+  Raises
+  ------
+  AssertionError
+    If the request does not succeed with the contracted redirect.
+  """
+  detail = await principal.client.get(f"/contacts/{contact_id}")
+  assert detail.status_code == 200, (
+    f"GET /contacts/{contact_id} failed (status {detail.status_code}) before logging an activity"
+  )
+  csrf_token = extract_csrf_token(detail.text)
+  idempotency_key = extract_scoped_hidden_field(
+    detail.text, form_action="/activities", name="idempotency_key"
+  )
+  response = await principal.client.post(
+    "/activities",
+    data={
+      "csrf_token": csrf_token,
+      "idempotency_key": idempotency_key,
+      "contact_id": contact_id,
+      "kind": kind,
+      "occurred_on": occurred_on,
+      "summary": summary,
+    },
+  )
+  assert response.status_code == 303, (
+    f"POST /activities failed (status {response.status_code}); body follows: "
+    f"{response.text[:500]!r}"
+  )
+  parsed_contact_id = parse_activity_create_location(response.headers.get("location", ""))
+  assert parsed_contact_id == contact_id, (
+    f"activity-create Location named contact {parsed_contact_id!r}, expected {contact_id!r}"
+  )
+  return SeededActivity(contact_id=contact_id, owner=principal)
