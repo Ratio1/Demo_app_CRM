@@ -41,7 +41,6 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
-from argon2 import PasswordHasher, Type
 from fastapi import FastAPI
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -83,7 +82,12 @@ from app.security.failures import (
 )
 from app.security.headers import SecurityHeadersMiddleware
 from app.security.origin import OriginCache, ReadinessCache, authority_of
-from app.security.passwords import DEFAULT_BLOCKLIST, HashQueueFull, PasswordService
+from app.security.passwords import (
+  DEFAULT_BLOCKLIST,
+  HashQueueFull,
+  PasswordService,
+  production_hasher,
+)
 from app.security.throttle import BudgetService, ThrottleService
 
 if TYPE_CHECKING:
@@ -96,9 +100,6 @@ if TYPE_CHECKING:
   from app.security.clock import Clock
 
 __all__ = [
-  "ARGON2_MEMORY_COST",
-  "ARGON2_PARALLELISM",
-  "ARGON2_TIME_COST",
   "MAX_BODY_BYTES",
   "BodySizeLimitMiddleware",
   "CorrelationMiddleware",
@@ -107,15 +108,6 @@ __all__ = [
   "create_app",
   "lifespan",
 ]
-
-#: ``THREAT_MODEL.md`` T-01 / ``SEC-017``. Measured at ~20 ms per hash on
-#: the development machine (``slice-a.md`` §8.7). Code constants: there is
-#: no variable, key or branch that can select anything else (``ARC-020``).
-ARGON2_TIME_COST: Final = 2
-ARGON2_MEMORY_COST: Final = 19_456
-ARGON2_PARALLELISM: Final = 1
-ARGON2_HASH_LEN: Final = 32
-ARGON2_SALT_LEN: Final = 16
 
 #: 64 KiB. Every form in this application is a handful of short fields; a
 #: body above this is a crafted request, not a user (``SEC-004``).
@@ -375,18 +367,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
   pool = create_pool(config)
   await open_pool(pool)
   clock = SystemClock()
-  passwords = PasswordService(
-    PasswordHasher(
-      time_cost=ARGON2_TIME_COST,
-      memory_cost=ARGON2_MEMORY_COST,
-      parallelism=ARGON2_PARALLELISM,
-      hash_len=ARGON2_HASH_LEN,
-      salt_len=ARGON2_SALT_LEN,
-      type=Type.ID,
-    ),
-    blocklist=DEFAULT_BLOCKLIST,
-    clock=clock,
-  )
+  passwords = PasswordService(production_hasher(), blocklist=DEFAULT_BLOCKLIST, clock=clock)
   app.state.context = AppContext(
     config=config,
     pool=pool,

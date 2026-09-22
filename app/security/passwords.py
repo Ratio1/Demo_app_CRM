@@ -34,14 +34,18 @@ import re
 from collections.abc import Callable, Iterable, Sequence
 from typing import TYPE_CHECKING, Final
 
+from argon2 import PasswordHasher, Type
 from argon2.exceptions import HashingError, InvalidHashError, VerificationError
 
 if TYPE_CHECKING:
-  from argon2 import PasswordHasher
-
   from app.security.clock import Clock
 
 __all__ = [
+  "ARGON2_HASH_LEN",
+  "ARGON2_MEMORY_COST",
+  "ARGON2_PARALLELISM",
+  "ARGON2_SALT_LEN",
+  "ARGON2_TIME_COST",
   "CP_71_TOO_SHORT",
   "CP_72_TOO_LONG",
   "CP_73_BLOCKLISTED",
@@ -52,10 +56,24 @@ __all__ = [
   "MIN_PASSWORD_LENGTH",
   "HashQueueFull",
   "PasswordService",
+  "production_hasher",
 ]
 
 MIN_PASSWORD_LENGTH: Final = 15
 MAX_PASSWORD_LENGTH: Final = 128
+
+#: The pinned Argon2id profile (``THREAT_MODEL.md`` T-01, ``SEC-017``),
+#: measured at ~20 ms per hash on the development machine (``slice-a.md``
+#: §8.7). Code constants: no variable, configuration key or branch selects
+#: anything else, and :class:`PasswordService` never reads them — it uses
+#: whatever hasher it is handed (``ARC-020``). They live here rather than
+#: in ``app/main.py`` so that ``scripts/manage`` can hash a password
+#: without importing the ASGI application.
+ARGON2_TIME_COST: Final = 2
+ARGON2_MEMORY_COST: Final = 19_456
+ARGON2_PARALLELISM: Final = 1
+ARGON2_HASH_LEN: Final = 32
+ARGON2_SALT_LEN: Final = 16
 
 #: A context word shorter than this is ignored. Two- and three-letter
 #: fragments of a display name ("Jo", "Ana", "e2e") match far too much
@@ -94,6 +112,26 @@ DEFAULT_BLOCKLIST: Final[frozenset[str]] = frozenset(
 _DUMMY_PASSWORD: Final = "a fictional password that authenticates nobody"  # noqa: S105
 
 _TOKEN_SPLIT: Final = re.compile(r"[^0-9a-z]+")
+
+
+def production_hasher() -> PasswordHasher:
+  """Return a hasher at the pinned parameters.
+
+  Returns
+  -------
+  argon2.PasswordHasher
+    ``argon2id``, ``t=2``, ``m=19456``, ``p=1``, 32-byte hash, 16-byte
+    salt. The one place those five numbers are turned into an object, so
+    the server and the CLI cannot drift apart.
+  """
+  return PasswordHasher(
+    time_cost=ARGON2_TIME_COST,
+    memory_cost=ARGON2_MEMORY_COST,
+    parallelism=ARGON2_PARALLELISM,
+    hash_len=ARGON2_HASH_LEN,
+    salt_len=ARGON2_SALT_LEN,
+    type=Type.ID,
+  )
 
 
 class HashQueueFull(RuntimeError):
