@@ -1,0 +1,29 @@
+<!--
+  errors/503.html — CONTRACTS.md §8.4: `context: "unavailable" |
+  "ambiguous_commit"` (R19/R37 — the token is `ambiguous_commit`, the
+  pre-R19 "unconfirmed" spelling is retired), `correlation_id`,
+  `record_url | None`. Public shell ALWAYS (R32) — the backend passes
+  `principal=None` unconditionally, same reasoning as 500.html.
+
+  `unavailable` (DB down and unprovisioned, one body): CP-92/CP-18,
+  no action link. `ambiguous_commit`: CP-93/CP-19 — explicitly forbids
+  resubmission and sends the user to the record when `record_url` is
+  known. Both may carry `state-unavailable.svg` (R18).
+-->
+{% extends "base.html" %}
+{% block main %}
+<div class="state-panel">
+  <img src="/static/img/state-unavailable.svg" alt="" width="200" height="160">
+  {% if context == "unavailable" %}
+  <h1 tabindex="-1">{{ app_name }} is temporarily unavailable</h1>
+  <p>{{ app_name }} is temporarily unavailable. Nothing you did caused this. Try again in a moment.</p>
+  {% elif context == "ambiguous_commit" %}
+  <h1 tabindex="-1">We could not confirm your change</h1>
+  <p>We could not confirm whether your change was saved. Do not submit it again. Open the record and check what was saved.</p>
+  {% if record_url %}
+  <p class="state-panel-action"><a href="{{ record_url }}">Open the record</a></p>
+  {% endif %}
+  {% endif %}
+  <p class="correlation-id">Reference: {{ correlation_id }}</p>
+</div>
+{% endblock %}

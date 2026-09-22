@@ -1,0 +1,15 @@
+<!--
+  errors/429.html — CONTRACTS.md §8.4: `retry_after_seconds`,
+  `correlation_id`. Shell follows the session (public for a pre-auth
+  login throttle — handled on auth/login.html itself, not here; full
+  private for an authenticated budget). Non-login busy state, CP-90/CP-03.
+  No action link (UI_SPEC.md §4.22 row: "—").
+-->
+{% extends "base.html" %}
+{% block main %}
+<div class="state-panel">
+  <h1 tabindex="-1">{{ app_name }} is busy</h1>
+  <p>{{ app_name }} is busy with your requests. Wait about {{ retry_after_seconds }} seconds, then try again.</p>
+  <p class="correlation-id">Reference: {{ correlation_id }}</p>
+</div>
+{% endblock %}

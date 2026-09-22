@@ -1,0 +1,14 @@
+<!--
+  errors/413.html — CONTRACTS.md §8.4: `correlation_id`, `back_url`.
+  Authenticated (a body this large is reached only by a crafted request).
+  CP-89/CP-16. Action label "Back" (UI_SPEC.md §4.22 row).
+-->
+{% extends "base.html" %}
+{% block main %}
+<div class="state-panel">
+  <h1 tabindex="-1">That was too large to send</h1>
+  <p>That was too large to send. Shorten the text and try again.</p>
+  <p class="state-panel-action"><a href="{{ back_url }}">Back</a></p>
+  <p class="correlation-id">Reference: {{ correlation_id }}</p>
+</div>
+{% endblock %}

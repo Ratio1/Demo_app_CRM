@@ -1,0 +1,34 @@
+<!--
+  errors/403.html — CONTRACTS.md §8.4: `reason: "session" | "role" |
+  "forced_reset"`, `correlation_id`.
+
+  Shell (UX_FLOWS.md §3 shell rule / UI_SPEC.md §3): `reason="session"` is
+  ALWAYS the public shell, whatever the real session state was — the
+  backend passes `principal=None` for that case so base.html's ordinary
+  selection is enough. The other two reasons are authenticated (a valid
+  session is required to reach them) and base.html renders the normal or
+  forced-reset nav from the real `principal`.
+
+  `reason="session"` is also the byte-identical step-0 403 for CSRF/Origin/
+  Host failures (UX_FLOWS.md §3.4/§3.5) — CP-81/CP-08, the same body for
+  every step-0 cause once the correlation id is normalized (R27).
+-->
+{% extends "base.html" %}
+{% block main %}
+<div class="state-panel">
+  {% if reason == "session" %}
+  <h1 tabindex="-1">We could not complete that action</h1>
+  <p>We could not complete that action. The page may have been open too long, or your session may have ended. Sign in again and repeat it. Anything you had typed was not saved.</p>
+  <p class="state-panel-action"><a href="/login">Sign in</a></p>
+  {% elif reason == "role" %}
+  <h1 tabindex="-1">You do not have access to that</h1>
+  <p>You do not have access to that. Reassigning a contact's owner is an administrator action.</p>
+  <p class="state-panel-action"><a href="/dashboard">Dashboard</a></p>
+  {% elif reason == "forced_reset" %}
+  <h1 tabindex="-1">Set a new password to continue</h1>
+  <p>Set a new password to continue. Until you do, the rest of {{ app_name }} is unavailable.</p>
+  <p class="state-panel-action"><a href="/account/password">Change your password</a></p>
+  {% endif %}
+  <p class="correlation-id">Reference: {{ correlation_id }}</p>
+</div>
+{% endblock %}

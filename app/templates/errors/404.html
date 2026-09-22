@@ -1,0 +1,15 @@
+<!--
+  errors/404.html — CONTRACTS.md §8.4: `correlation_id`, `back_url`.
+  Shell follows the session. Identical for a foreign and a missing object,
+  for one principal (R27) — CP-84/CP-10. Action label "Dashboard"
+  (UI_SPEC.md §4.22 row: "link to Dashboard/Contacts").
+-->
+{% extends "base.html" %}
+{% block main %}
+<div class="state-panel">
+  <h1 tabindex="-1">We could not find that</h1>
+  <p>We could not find that. It may have been removed, or it may belong to someone else.</p>
+  <p class="state-panel-action"><a href="{{ back_url }}">Dashboard</a></p>
+  <p class="correlation-id">Reference: {{ correlation_id }}</p>
+</div>
+{% endblock %}

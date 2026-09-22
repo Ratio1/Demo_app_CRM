@@ -1,0 +1,21 @@
+<!--
+  errors/500.html — CONTRACTS.md §8.4: `correlation_id`. Public shell
+  ALWAYS (R32) — the backend passes `principal=None` unconditionally for
+  this handler, so base.html's ordinary shell selection is enough; no
+  extra template-side logic needed to enforce the rule.
+
+  CP-91/CP-20b. CP-20b's own text embeds `{correlation_id}` inline
+  ("...give your administrator this reference: {correlation_id}."), so
+  unlike every sibling error template this page does NOT also add the
+  separate small-print "Reference: ..." line — that would duplicate it.
+  May carry `state-error.svg` (R18) — "the one system failure, not a
+  denial".
+-->
+{% extends "base.html" %}
+{% block main %}
+<div class="state-panel">
+  <img src="/static/img/state-error.svg" alt="" width="200" height="160">
+  <h1 tabindex="-1">Something went wrong</h1>
+  <p>Something went wrong on our side. Try again. If it keeps happening, give your administrator this reference: {{ correlation_id }}.</p>
+</div>
+{% endblock %}
