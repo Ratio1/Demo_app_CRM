@@ -272,7 +272,7 @@ def test_axe_pass_on_deal_list_and_pipeline_pages(
   page: Page, live_server: LiveServer, ready_agent: tuple[str, str], page_name: str, goto_path: str
 ) -> None:
   """An automated axe-core scan of the deal list / pipeline page reports zero violations."""
-  from axe_playwright_python.sync_playwright import Axe
+  from axe_playwright_python.sync_playwright import Axe  # type: ignore[import-untyped]
 
   email, first_password = ready_agent
   password = _sign_in_and_complete_forced_reset(page, live_server.base_url, email, first_password)
