@@ -2,10 +2,10 @@
   `kind_badge(kind)`, `archived_badge()`, `owner_line(owner_name, is_own)`.
 
   Pill shape, `--text-xs`, `--weight-medium`, a text label plus, where
-  natural, a 16px `aria-hidden` icon as a SECOND non-colour cue. Only
-  `kind_badge` and `archived_badge` are wired into a screen so far
-  (contacts have no stage); `stage_badge` is included so a later screen
-  needs no template change.
+  natural, a 16px `aria-hidden` icon as a SECOND non-colour cue.
+  `kind_badge` and `archived_badge` mark a contact's type and archived
+  state; `stage_badge` marks a deal's stage (used by the deal list,
+  deal detail, stage control and the contact workspace).
 
   `owner_line` renders "Owner: you" / "Owner: {name}" as PLAIN TEXT (no
   pill on the workspace header/editor owner line; the pill is reserved
@@ -37,9 +37,7 @@
 
 {#- This macro's signature is `stage_badge(stage)` — one argument, no
    separate label parameter — so the five stage labels are a
-   module-level map here rather than a caller-supplied string; not yet
-   wired into a screen (contacts carry no stage), kept so a later
-   screen needs no template change. #}
+   module-level map here rather than a caller-supplied string. #}
 {% set _stage_labels = {"new": "New", "qualified": "Qualified", "proposal": "Proposal", "won": "Won", "lost": "Lost"} %}
 {% macro stage_badge(stage) -%}
 <span class="badge badge-stage-{{ stage }}"><svg class="icon icon-16" aria-hidden="true"><use href="/static/img/icons.svg#icon-stage-{{ stage }}"></use></svg><span>{{ _stage_labels[stage] }}</span></span>

@@ -3,12 +3,11 @@
   allowlisted `?notice=<code>` to this object through its own fixed table;
   the template never inspects the query string and never echoes anything
   that is not `notice.text`. Renders directly after the page header on a
-  successful redirect. The three codes currently in use are:
-  `signed_out`, `session_ended`, `password_changed` (one combined banner).
+  successful redirect.
 
   `role="alert"` for warning (the one kind that is never purely
-  informational — none of the three current codes use it, but the
-  mapping is kept general), `role="status"` for success/info.
+  informational — no code currently maps to it, but the mapping is
+  kept general), `role="status"` for success/info.
 -#}
 {% if notice %}
 <p class="notice alert alert-{{ notice.kind }}" role="{{ 'alert' if notice.kind == 'warning' else 'status' }}">

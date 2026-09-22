@@ -13,11 +13,10 @@
   serves the enhanced and no-JS paths).
 
   `target`/`id_prefix` are parameterized so both `partials/
-  contact_results.html`/`contacts/list.html` and `partials/
-  timeline.html` reuse this file unchanged. The contact-workspace
-  timeline region currently always renders zero items with
-  has_prev/has_next=false, so both timeline controls always render as
-  the inert `<span>` here.
+  contact_results.html`/`contacts/list.html` and
+  `partials/timeline.html` reuse this file unchanged: the contact
+  results pagination navigates real result pages, and the
+  contact-workspace timeline paginates activity items the same way.
 -#}
 {% macro pagination(results, target, id_prefix, aria_label, prev_label, next_label) -%}
 <p class="pagination-summary">Showing {{ results.range_start }}–{{ results.range_end }} of {{ results.total }}</p>
