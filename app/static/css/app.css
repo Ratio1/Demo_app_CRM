@@ -725,9 +725,10 @@ main#main {
 }
 
 /* ==========================================================================
-   13. Pagination / table->card pattern — reserved for the list slices
-   (UI_SPEC §4.8-4.10). Included now so later slices need no CSS addition
-   for the pattern itself.
+   13. Pagination / table->card pattern (UI_SPEC §4.8-4.10, R23/R24).
+   Wired by contacts/list.html + partials/contact_results.html this slice;
+   partials/pagination.html and partials/timeline.html (a later slice)
+   share this one implementation.
    ========================================================================== */
 
 .pagination {
@@ -740,8 +741,21 @@ main#main {
   color: var(--color-text-secondary);
   font-weight: var(--weight-medium);
 }
-.pagination a { min-height: var(--touch-target-min); display: inline-flex; align-items: center; }
+.pagination a,
+.pagination .is-disabled {
+  min-height: var(--touch-target-min);
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-1) var(--space-2);
+}
+@media (min-width: 640px) {
+  /* UI_SPEC §6 touch-target table: "Pagination/timeline links >=44px
+     mobile, >=36px desktop" — the available <a> and the inert <span>
+     share one box at both sizes, so the control never shifts (R24). */
+  .pagination a, .pagination .is-disabled { min-height: 2.25rem; }
+}
 .pagination-current { color: var(--color-text-secondary); }
+.pagination-summary { margin-top: var(--space-4); color: var(--color-text-secondary); font-size: var(--text-sm); }
 
 table.responsive-table { width: 100%; border-collapse: collapse; }
 table.responsive-table th, table.responsive-table td {
@@ -775,7 +789,263 @@ table.responsive-table tbody tr:nth-child(even) { background: var(--color-bg-sur
 }
 
 /* ==========================================================================
-   14. forced-colors / reduced-motion (last, per UI_SPEC §7)
+   14. Badges / chips (UI_SPEC §4.12, §4.13) — Slice B: kind (lead/
+   customer), archived. Stage badges wired by a later slice, tokens
+   already exist (§1).
+   ========================================================================== */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0.125rem var(--space-2);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+.badge-lead      { background: var(--color-lead-bg);      color: var(--color-lead-text); }
+.badge-customer  { background: var(--color-customer-bg);  color: var(--color-customer-text); }
+.badge-archived  { background: var(--color-archived-bg);  color: var(--color-archived-text); }
+.badge-stage-new       { background: var(--color-stage-new-bg);       color: var(--color-stage-new-text); }
+.badge-stage-qualified { background: var(--color-stage-qualified-bg); color: var(--color-stage-qualified-text); }
+.badge-stage-proposal  { background: var(--color-stage-proposal-bg);  color: var(--color-stage-proposal-text); }
+.badge-stage-won       { background: var(--color-stage-won-bg);       color: var(--color-stage-won-text); }
+.badge-stage-lost      { background: var(--color-stage-lost-bg);      color: var(--color-stage-lost-text); }
+
+.badges-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem var(--space-2);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+/* Owner chip (UI_SPEC §4.13/§2 "Owner chip: text/fill, 9.45:1"): no hex
+   pair is given to reproduce that exact figure, so this reuses the
+   already-measured "Secondary text / table stripe" pair (§2, 6.92:1)
+   rather than introducing an unverified new one. */
+.chip-owner { background: var(--color-bg-surface-alt); color: var(--color-text-secondary); }
+
+.owner-line { margin-top: var(--space-2); color: var(--color-text-secondary); }
+
+/* ==========================================================================
+   15. Filter disclosure (UI_SPEC §4.11, R23's <1024px boundary)
+   ========================================================================== */
+
+.filter-disclosure { margin-top: var(--space-4); }
+.filter-disclosure > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--touch-target-min);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  font-weight: var(--weight-medium);
+  list-style: none;
+}
+.filter-disclosure > summary::-webkit-details-marker { display: none; }
+.filter-disclosure form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) 0 0;
+}
+.filter-disclosure .field { margin-top: 0; }
+.region-status { color: var(--color-text-secondary); font-size: var(--text-sm); }
+
+/* UI_SPEC §4.9: shown only below 640px, independent of the 1024px
+   disclosure boundary — the 640-1023px band keeps the real <th> sort
+   links (full table) and hides these. */
+@media (min-width: 640px) {
+  .sort-mobile-only { display: none; }
+}
+
+@media (min-width: 1024px) {
+  .filter-disclosure > summary { display: none; }
+  .filter-disclosure form {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--space-3);
+  }
+  .filter-disclosure .field { flex: 1 1 160px; }
+  /* UI_SPEC §4.11's own provisional technique for unwrapping a CLOSED
+     <details> at this breakpoint (marked NOT VERIFIED there, across
+     every engine, for exactly this reason): a closed <details>'s
+     non-summary content is hidden through an internal
+     `::details-content` pseudo-element (`content-visibility: hidden`
+     in the UA stylesheet), which the host element's own `display`
+     value does not reach — only `content-visibility`, targeted
+     directly, overrides it. If a P4 pass finds this unreliable in a
+     real engine, UI_SPEC §4.11's own documented fallback (two full
+     render blocks, viewport-suffixed field ids) ships instead and
+     REVIEW.md records it — not silently swapped here. */
+  .filter-disclosure::details-content {
+    content-visibility: visible;
+    display: block;
+  }
+}
+
+/* ==========================================================================
+   16. Confirmation disclosure (UI_SPEC §4.20 — archive; §4.18's terminal
+   stage confirmations reuse this unchanged in a later slice)
+   ========================================================================== */
+
+.confirm { margin-top: var(--space-4); }
+.confirm > summary {
+  list-style: none;
+  cursor: pointer;
+}
+.confirm > summary::-webkit-details-marker { display: none; }
+.confirm-body {
+  margin-top: var(--space-3);
+  padding: var(--space-4);
+  background: var(--color-bg-surface-alt);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+}
+.confirm-body form { margin-top: var(--space-3); }
+
+/* ==========================================================================
+   17. Contact editor (UI_SPEC §4.5-§4.7 composition: single column, 640px)
+   ========================================================================== */
+
+.form-shell { max-width: 40rem; }
+.form-actions {
+  margin-top: var(--space-5);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+/* The workspace's own primary action, when it is a one-field POST
+   (Restore) rather than a link (Edit) — same visual slot, no layout
+   shift between the two. */
+.primary-action-form { display: inline-block; margin: 0; }
+
+/* ==========================================================================
+   18. Contact workspace layout (UI_SPEC §4.15, R30)
+   ========================================================================== */
+
+.workspace {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-5);
+  margin-top: var(--space-5);
+}
+.workspace > section, .workspace > aside {
+  padding: var(--space-4);
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+.workspace h2 { font-size: var(--text-lg); font-weight: var(--weight-semibold); }
+@media (min-width: 1024px) {
+  /* DOM order is Details -> Activity -> Deals -> Record -> Owner at
+     every width (R30); `order` is what places Deals visually above
+     Activity here without changing that DOM/keyboard order (§8 Q13,
+     closed by R40: default stands, consequence disclosed not fixed). */
+  .workspace { grid-template-columns: 2fr 1fr; align-items: start; }
+  .workspace-details  { grid-column: 1; order: 1; }
+  .workspace-deals    { grid-column: 1; order: 2; }
+  .workspace-activity { grid-column: 1; order: 3; }
+  .workspace-record   { grid-column: 2; order: 1; }
+  .workspace-owner    { grid-column: 2; order: 2; }
+}
+@media (min-width: 1200px) {
+  .workspace { gap: var(--space-6); grid-template-columns: 2fr minmax(320px, 420px); }
+}
+
+.detail-list { margin-top: var(--space-3); }
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+.detail-row:last-child { border-bottom: 0; }
+.detail-row dt { color: var(--color-text-secondary); font-weight: var(--weight-medium); }
+.detail-row dd { margin: 0; text-align: right; }
+
+.empty-inline { margin-top: var(--space-2); color: var(--color-text-secondary); }
+
+/* Timeline / deal card — Slice B renders both only in their empty state
+   (slice-b.md §2(i)); styled now so a later slice's real items need no
+   CSS addition, per this file's own §13 precedent. */
+.timeline-list { margin-top: var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
+.timeline-item { display: flex; gap: var(--space-3); }
+.timeline-icon { flex-shrink: 0; color: var(--color-text-secondary); margin-top: 0.2em; }
+.timeline-meta { color: var(--color-text-secondary); font-size: var(--text-sm); }
+.timeline-summary { margin-top: var(--space-1); }
+
+.deal-card {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+}
+.deal-card p { margin-top: var(--space-1); }
+.deal-card p:first-child { margin-top: 0; }
+
+/* ==========================================================================
+   19. State panel used INLINE inside a region (contacts empty/no-results,
+   timeline empty) — UI_SPEC §4.22's `.state-panel` styles only `h1`; this
+   adds the `h2`/`h3` a region's own heading level needs. Both classes are
+   applied together (`class="state-panel state-panel-region"`) so padding,
+   the illustration and the action link stay the one shared implementation.
+   ========================================================================== */
+
+.state-panel-region h2, .state-panel-region h3 {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+}
+
+/* ==========================================================================
+   20. 409 stale-edit recovery panel (UI_SPEC §4.23)
+   ========================================================================== */
+
+.state-panel-409 { max-width: 48rem; }
+.stale-diff {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+@media (min-width: 640px) {
+  /* "Your changes" first at 390px (stacked); side by side from here. */
+  .stale-diff { grid-template-columns: 1fr 1fr; }
+}
+.stale-diff h2 { font-size: var(--text-base); font-weight: var(--weight-semibold); }
+.stale-diff dl { margin-top: var(--space-2); }
+.diff-row { padding: var(--space-2) 0; border-bottom: 1px solid var(--color-border-subtle); }
+.diff-row:last-child { border-bottom: 0; }
+.diff-row dt { font-weight: var(--weight-medium); }
+.diff-row dd { margin: var(--space-1) 0 0; }
+/* Reuses the alert warn pair (§2, "warn row reused for the stale-edit
+   diff marker") — never colour alone: the glyph + the word "changed"
+   in `.diff-marker` are the non-colour cues (R2-08 family). */
+.diff-changed { background: var(--color-warn-bg); }
+.diff-marker { color: var(--color-warn-text); font-weight: var(--weight-medium); }
+.state-panel-409 form { margin-top: var(--space-5); }
+
+/* ==========================================================================
+   21. sr-only alias — partials/announce.html's OOB element (slice-b.md
+   §2(e) prints `class="visually-hidden"` verbatim; only its innerHTML
+   ever reaches the shell's real `#announce` node, per the htmx OOB
+   swap mechanics documented there, but the class is aliased so it is
+   never an undefined one either way).
+   ========================================================================== */
+
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+/* ==========================================================================
+   22. forced-colors / reduced-motion (last, per UI_SPEC §7)
    ========================================================================== */
 
 @media (prefers-reduced-motion: reduce) {
