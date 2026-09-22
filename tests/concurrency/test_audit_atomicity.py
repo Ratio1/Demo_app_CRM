@@ -41,24 +41,27 @@ async def test_sql016_a_forced_failure_after_the_audit_insert_leaves_no_row_in_e
 ) -> None:
   """Both the session row and the audit row vanish together when the transaction aborts.
 
-  Deliberately does **not** depend on the shared ``crm_test_schema``
-  fixture. This file is collected before ``test_last_admin_race.py``
-  (``tests/concurrency``, "audit" sorts before "last"), whose own
-  module-scoped ``isolated_two_admins`` fixture resets and re-migrates
-  ``crm_test`` independently of, and without consulting, the
-  session-scoped ``crm_test_schema`` fixture's cache (module docstring:
-  "this module's reset runs and completes before the shared session
-  fixture is first requested"). Adding ``crm_test_schema`` here was tried
-  and reverted: it makes *this* file the first requester instead, so
-  ``crm_test_schema`` runs and caches **before**
-  ``test_last_admin_race.py``'s own reset wipes and re-bootstraps the
-  schema again — after which the later, still-cached ``bootstrap_admin``
-  fixture (``tests/security``) tries ``manage bootstrap`` a second time
-  against an already-provisioned database and fails outright (exit 3),
-  taking down every ``live_server``-dependent test in the suite. Recorded
-  as a pre-existing ordering fragility (**not fixed here**, given the
-  collateral risk just demonstrated) rather than silently left unexplained
-  — see the round-3 test-engineer report.
+  Does not *name* ``crm_test_schema`` as a parameter, but no longer needs
+  to: as of ruling **R57** that fixture is session-scoped **autouse**, so
+  it already ran — migrating ``crm_test`` — before the first test in the
+  session, this one included, regardless of whether any test requests it
+  by name. (History, since the fragility this paragraph used to describe
+  is resolved by that same ruling, not merely avoided: before R57,
+  ``crm_test_schema`` was lazy, and this module deliberately avoided
+  requesting it, because doing so made *this* file the session's first
+  requester — running the shared reset *before*
+  ``test_last_admin_race.py``'s own independent, module-scoped reset,
+  which then wiped and re-bootstrapped the schema *again* on top of it, so
+  that the later, still-cached ``bootstrap_admin`` fixture tried ``manage
+  bootstrap`` a second time against an already-provisioned database and
+  failed outright — taking down every ``live_server``-dependent test in
+  the suite. R57 removes the conflict at its root by moving
+  ``test_last_admin_race.py`` to run **absolute last** in collection order
+  — after ``tests/e2e``, after every fixture this file or any other module
+  could still need — so its independent reset can no longer land in
+  between two other fixtures' requests for the shared one. See
+  ``conftest.py``'s ``crm_test_schema``/``pytest_collection_modifyitems``
+  docstrings for the mechanism.)
   """
   from conftest import insert_test_user_row
 

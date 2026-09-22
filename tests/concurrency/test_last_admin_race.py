@@ -15,16 +15,47 @@ out from under them.
 
 This module therefore resets and migrates ``crm_test`` **itself**, in its
 own ``module``-scoped fixture, independent of every other fixture in
-``conftest.py``. Running the whole suite in one process is safe under
-pytest's default (sorted, non-randomized) collection order, because
-``tests/concurrency`` sorts before ``tests/security``/``tests/e2e``, so this
-module's reset runs and completes before the shared session fixture is
-first requested. Running this file **in isolation**
-(``pytest tests/concurrency/test_last_admin_race.py``) is always safe and is
-the recommended invocation for re-verifying it by hand. A test-order-
-randomizing plugin would break this assumption; none is configured here.
+``conftest.py``.
 
-Nothing below can run today: ``scripts/manage`` does not exist yet.
+Collection order (ruling R57, amended from the original R41-era note)
+--------------------------------------------------------------------------
+This module's own reset wipes the schema and bootstraps two admins that
+are **not** the shared ``bootstrap_admin``, so it must never run while
+anything else in the session still needs the shared admin or the schema
+state ``crm_test_schema`` (session-scoped, autouse) established. Earlier
+revisions of this docstring relied on ``tests/concurrency`` sorting before
+``tests/security``/``tests/e2e`` in pytest's default collection order —
+true as far as it went, but no longer sufficient once ``crm_test_schema``
+became session-scoped **autouse**: that fixture now runs and caches
+*before* the first test in the session, which would be *this* module's
+own reset racing it for nothing (harmless) were it not for what runs
+*after*. The real requirement is stronger than "before tests/security":
+this module must run **strictly after every other module in the
+session**, ``tests/e2e`` included, so that nothing downstream ever asks
+for ``bootstrap_admin``/``live_server`` again after this module has
+disabled and re-created admins out from under them. ``conftest.py``'s
+``pytest_collection_modifyitems`` now places this exact file dead last for
+that reason — see its own docstring for the four-bucket ordering and why
+placing it after ``tests/e2e`` specifically (not merely after
+``tests/security``) is what the guarantee actually requires. Running this
+file **in isolation** (``pytest tests/concurrency/test_last_admin_race.py``)
+is always safe and is the recommended invocation for re-verifying it by
+hand.
+
+No ``asyncio`` in this module (deliberately)
+------------------------------------------------
+The two concurrent ``disable-user`` invocations below are launched with
+plain ``subprocess.Popen`` and joined with two ``.wait()`` calls — not
+``asyncio.gather``/``asyncio.to_thread`` inside an ``asyncio.run()`` the
+way an earlier revision did it. Running ``asyncio.run()`` from a **sync**
+test body, in a session where ``tests/e2e``'s pytest-playwright fixtures
+have already been set up (which, per the ordering above, they now always
+have been by the time this module runs), reproduces exactly the
+``Runner.run() cannot be called from a running event loop`` /
+"coroutine … was never awaited" corruption ``conftest.py``'s module
+docstring documents for ``pytest-asyncio``/``pytest-playwright``
+interaction — this module never needs an event loop at all to race two
+OS processes, so it does not open one.
 """
 
 from __future__ import annotations
@@ -211,31 +242,6 @@ def _count_active_admins(*, log_path: Path) -> int:
   pytest.fail(f"no RESULT line from the active-admin count probe (exit {completed.returncode})")
 
 
-def _disable(email: str, *, log_path: Path) -> int:
-  """Run ``manage disable-user --email <email>``, returning its exit code (never raising)."""
-  argv = [
-    str(WITH_ENV),
-    OWNER_ENV_FILE,
-    "--",
-    str(VENV_PYTHON),
-    "-B",
-    str(MANAGE),
-    "disable-user",
-    "--email",
-    email,
-  ]
-  with log_path.open("wb") as log_file:
-    completed = subprocess.run(  # noqa: S603
-      argv,
-      cwd=SUBMODULE_ROOT,
-      stdout=log_file,
-      stderr=subprocess.STDOUT,
-      timeout=30.0,
-      check=False,
-    )
-  return completed.returncode
-
-
 def test_sql014_two_concurrent_disable_user_races_leave_exactly_one_active_admin(
   isolated_two_admins: tuple[ProvisionedUser, ProvisionedUser],
   tmp_path: Path,
@@ -244,7 +250,7 @@ def test_sql014_two_concurrent_disable_user_races_leave_exactly_one_active_admin
 
   Per iteration: re-provision two active admins (the previous iteration's
   survivor plus one fresh one), then race ``disable-user`` on each against
-  the other, concurrently, via ``asyncio.gather`` over two subprocesses.
+  the other, concurrently, as two ``subprocess.Popen`` processes.
   Exactly one must exit ``0``; the other must exit ``3`` ("last active
   admin", slice-a.md §1.2) — never both succeeding (would leave 0 active
   admins) and never both failing (would falsely block a legitimate
@@ -265,24 +271,48 @@ def test_sql014_two_concurrent_disable_user_races_leave_exactly_one_active_admin
   CLI's own view of the outcome, a direct count proves the database itself
   ended the iteration with exactly one active administrator, which is what
   ACC-608/SQL-014 actually requires.
-  """
-  import asyncio
 
+  Genuinely concurrent by OS process, not by ``asyncio`` (module docstring):
+  both ``disable-user`` subprocesses are started with ``subprocess.Popen``
+  before either is waited on, so they race for real; this sync test body
+  never opens an event loop.
+  """
   admin_a, admin_b = isolated_two_admins
   survivor_email = admin_a.email
   #: Iteration 0's opponent is the fixture's own second admin; every later
   #: iteration creates a fresh one instead (set back to ``None`` below).
   next_opponent_email: str | None = admin_b.email
 
-  async def _race(email_a: str, email_b: str, iteration: int) -> tuple[int, int]:
+  def _race(email_a: str, email_b: str, iteration: int) -> tuple[int, int]:
     log_a = tmp_path / f"disable-{iteration}-a.log"
     log_b = tmp_path / f"disable-{iteration}-b.log"
 
-    async def _run(email: str, log_path: Path) -> int:
-      return await asyncio.to_thread(_disable, email, log_path=log_path)
+    def _argv(email: str) -> list[str]:
+      return [
+        str(WITH_ENV),
+        OWNER_ENV_FILE,
+        "--",
+        str(VENV_PYTHON),
+        "-B",
+        str(MANAGE),
+        "disable-user",
+        "--email",
+        email,
+      ]
 
-    result_a, result_b = await asyncio.gather(_run(email_a, log_a), _run(email_b, log_b))
-    return result_a, result_b
+    with log_a.open("wb") as file_a, log_b.open("wb") as file_b:
+      # Both `Popen` calls return before either process is waited on, so
+      # the two `disable-user` invocations genuinely overlap in the
+      # database rather than merely alternating.
+      process_a = subprocess.Popen(  # noqa: S603
+        _argv(email_a), cwd=SUBMODULE_ROOT, stdout=file_a, stderr=subprocess.STDOUT
+      )
+      process_b = subprocess.Popen(  # noqa: S603
+        _argv(email_b), cwd=SUBMODULE_ROOT, stdout=file_b, stderr=subprocess.STDOUT
+      )
+      exit_a = process_a.wait(timeout=30.0)
+      exit_b = process_b.wait(timeout=30.0)
+    return exit_a, exit_b
 
   for iteration in range(RACE_REPEAT_COUNT):
     if next_opponent_email is not None:
@@ -313,7 +343,7 @@ def test_sql014_two_concurrent_disable_user_races_leave_exactly_one_active_admin
     # active admins, run concurrently — "each removing the other admin"
     # (ACC-608): command A targets the current survivor, command B targets
     # the freshly created one.
-    exit_survivor, exit_fresh = asyncio.run(_race(survivor_email, fresh_email, iteration))
+    exit_survivor, exit_fresh = _race(survivor_email, fresh_email, iteration)
     exits = sorted([exit_survivor, exit_fresh])
     assert exits == [0, 3], (
       f"iteration {iteration}: expected exactly one success (0) and one domain "

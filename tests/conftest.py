@@ -1,9 +1,12 @@
 """Shared fixtures for the Demo_App_CRM Slice A test suite.
 
 Authority: ``_agents/projects/CRM/contracts/slice-a.md`` §7 (test hooks) and
-§7.5 / ruling R41 (per-test ephemeral TLS server), §7.1 (CLI provisioning),
-§7.2 / §10(e) (resetting ``crm_test``), §7.3 (the injectable clock), §7.4
-(the fast Argon2 test profile).
+§7.5 / ruling R41 (the ephemeral TLS server's certificate/port shape,
+amended by **R46(b)**/**R57** to one server per *session* rather than per
+test), §7.1 (CLI provisioning), §7.2 / §10(e) (resetting ``crm_test``,
+amended by **R57** to a session-scoped **autouse** fixture), §7.3 (the
+injectable clock), §7.4 (the fast Argon2 test profile), **R54** (the
+``create_app`` injection seam ``tests/inprocess`` drives).
 
 Credential discipline
 ----------------------
@@ -23,14 +26,21 @@ does not have (ACC-605, ACC-609).
 ``.env.test.local`` — ``crm_test_app`` — the only role the served
 application itself runs as.
 
-Server isolation (R41)
-------------------------
-Every test that needs a live HTTP(S) endpoint gets its **own** uvicorn
-subprocess, bound to an OS-assigned ``127.0.0.1:0`` port with **no**
-probe-then-bind race: this module binds and listens on the port itself and
-hands the already-listening socket's file descriptor to the uvicorn
-subprocess (``--fd``), so there is never a second bind. Port ``3002`` is the
-human dev-run assignment (``BRIEF.md``) and never appears here.
+Server isolation (R41, amended by R46(b)/R57)
+------------------------------------------------
+One test **session** that needs a live HTTP(S) endpoint gets **one**
+uvicorn subprocess (``live_server``, session-scoped), bound to an
+OS-assigned ``127.0.0.1:0`` port with **no** probe-then-bind race: this
+module binds and listens on the port itself and hands the
+already-listening socket's file descriptor to the uvicorn subprocess
+(``--fd``), so there is never a second bind. Port ``3002`` is the human
+dev-run assignment (``BRIEF.md``) and never appears here. Every test that
+uses it shares that one process and its one certificate; isolation between
+tests is by data (dedicated ``example.test`` identities from
+``provision_agent``/``unique_email``, never the shared ``bootstrap_admin``,
+for anything that mutates account-scoped or global counters) and by
+targeted owner-role cleanup (``test_throttle_and_budget.py``'s autouse
+clear of ``login_throttle``/``rate_budget``), not by a fresh process.
 
 Why so much of this is lazy-imported
 --------------------------------------
@@ -44,22 +54,34 @@ ship). Every such import is therefore deferred into the fixture or test body
 that actually needs it, so a missing module surfaces as one failing test,
 not a blank test session.
 
-Two ways a test reaches the database
+Three ways a test reaches the database
 --------------------------------------
-1. **Over HTTP**, via ``live_server``/``admin_client``/``agent_client`` — for
-   anything genuinely observable only at the wire (cookie attributes,
-   status codes, response headers). The server subprocess builds its own
-   ``SystemClock`` (``create_app`` takes no clock parameter), so nothing
-   reachable only through HTTP can be driven by ``ManualClock``.
-2. **In process**, via ``db_connection`` — for repository-level behaviour
-   the contract itself drives by an explicit ``now`` parameter (expiry,
-   revocation, throttle/budget windows: §7.3 "every expiry test... advances
-   the clock rather than sleeping"; ruling **R46(a)**: this is Slice A's
-   "in-process transport with an injected ``ManualClock``" for exactly the
-   repository-level surface it can reach — ``create_app`` itself has no
-   clock/service injection seam yet, so a request through the full ASGI
-   app cannot be clock-driven; that gap belongs to the Backend lane, not
-   this suite). This fixture calls ``app.config.load_config()`` with no
+1. **Over HTTP, against the real TLS server**, via
+   ``live_server``/``admin_client``/``agent_client`` — for anything
+   genuinely observable only at the wire (cookie attributes, TLS itself,
+   status codes, response headers). ``live_server`` builds its app with the
+   production ``SystemClock`` (**R46(b)**: one such server per *session*,
+   not per test — see the fixture's own docstring), so nothing reached
+   through it can be driven by ``ManualClock``; a clock-dependent
+   assertion belongs on transport 3 instead.
+2. **In process, at the repository layer**, via ``db_connection`` — for
+   behaviour the contract drives by an explicit ``now`` parameter without
+   needing a request at all (expiry, revocation: §7.3 "every expiry
+   test... advances the clock rather than sleeping").
+3. **In process, through the whole ASGI app**, via ``tests/inprocess``'s
+   own fixtures (``in_process_app``/``in_process_client``): **R54** gives
+   ``create_app`` a ``clock``/``password_hasher`` injection seam, so a test
+   can drive the real route table — middleware, CSRF, throttle, sessions,
+   the lot — through ``httpx.ASGITransport`` with a :class:`ManualClock`
+   it advances by hand, entering the lifespan with ``async with
+   app.router.lifespan_context(app):`` (no new dependency — **R42** still
+   holds). This is the strongest of the three: it is the only one that
+   proves an expiry or a window boundary the way the *served* application
+   would actually enforce it, not just the repository function underneath.
+   See ``tests/inprocess/conftest.py`` for the fixtures and why its origin
+   is ``https://crm.test`` rather than an ephemeral port.
+
+Transport 2's fixture (``db_connection``) calls ``app.config.load_config()`` with no
    explicit mapping, so **it**, in turn, reads ``os.environ`` — but this
    module's own fixtures never read ``os.environ`` directly to build a
    database credential; they always go through ``load_config()``, which
@@ -410,7 +432,7 @@ def fast_password_hasher() -> object:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="session", autouse=True)
 def crm_test_schema(tmp_path_factory: pytest.TempPathFactory) -> None:
   """Reset ``crm_test`` to an empty, freshly migrated schema, once per session.
 
@@ -419,6 +441,32 @@ def crm_test_schema(tmp_path_factory: pytest.TempPathFactory) -> None:
   migration chain, granting the runtime role. ``crm`` is never touched
   (``D-I``) — only ``.env.test.owner.local`` is used, and its allowed keys
   are the five database names, none of which name the production database.
+
+  **Session-scoped and autouse (ruling R57).** Every test in the session
+  depends on this, whether or not it names it, so it always runs **first**
+  — before the first test's body, regardless of collection order or of
+  which module happens to be collected first. That is what makes the
+  canonical invocation (``tests/README.md``) runnable starting from a
+  *clean* ``crm_test`` (freshly created, unmigrated: nothing has ever run
+  ``app.db.journal migrate`` against it) exactly as well as from a *dirty*
+  one left over from a previous run — a module that reaches the database
+  without ever requesting a fixture that names ``crm_test_schema``
+  (``tests/concurrency/test_audit_atomicity.py`` is the example this suite
+  has) no longer has to rely on some *other*, earlier test having migrated
+  the schema as a side effect.
+
+  ``tests/concurrency/test_last_admin_race.py`` is the one module that
+  still resets and re-provisions the schema **again**, independently, in
+  its own ``module``-scoped fixture — it needs the total active-admin
+  count at exactly two, which the shared ``bootstrap_admin`` cannot give
+  it without disabling the admin every other module relies on. Collection
+  runs it dead last (this module's own ``pytest_collection_modifyitems``,
+  below), *after* ``bootstrap_admin`` has already been provisioned and
+  used by every other module in the session, so the schema it leaves
+  dirty at session end affects nothing else in *this* run; the *next*
+  run's ``crm_test_schema`` (this fixture) absorbs it, which is exactly
+  the "runnable from a dirty ``crm_test``" property this fixture exists
+  to hold.
 
   Parameters
   ----------
@@ -880,23 +928,47 @@ def _wait_until_serving(base_url: str, *, timeout: float) -> None:
   raise TimeoutError(f"server at {base_url} never answered /health/live: {last_error!r}")
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def live_server(
-  tmp_path: Path,
+  tmp_path_factory: pytest.TempPathFactory,
   bootstrap_admin: ProvisionedUser,
 ) -> Iterator[LiveServer]:
-  """Start one uvicorn instance over TLS, on its own ephemeral port.
+  """Start one uvicorn instance over TLS, on its own ephemeral port, once per session.
 
   Plain sync generator fixture: nothing in its body ``await``s (subprocess
   management, socket binding and the polling wait are all synchronous), so
   there is no reason to add async-fixture/event-loop-scope friction under
   ``asyncio_mode = strict`` for a fixture that does no I/O through asyncio.
 
-  Order, per slice-a.md §7.5: generate a throwaway certificate into
-  ``tmp_path``; bind and listen on ``127.0.0.1:0`` ourselves; hand the
-  listening socket to uvicorn by file descriptor; wait for it to answer;
-  re-point ``crm_test``'s stored origin to this exact port with
-  ``manage set-origin`` under the owner env file, its own subprocess.
+  Order, per slice-a.md §7.5: generate a throwaway certificate into a
+  dedicated ``tmp_path_factory`` directory (session-scoped — **not**
+  ``tmp_path``, which is function-scoped and would be a pytest
+  ``ScopeMismatch`` error here); bind and listen on ``127.0.0.1:0``
+  ourselves; hand the listening socket to uvicorn by file descriptor; wait
+  for it to answer; re-point ``crm_test``'s stored origin to this exact
+  port with ``manage set-origin`` under the owner env file, its own
+  subprocess.
+
+  **Session-scoped (ruling R46(b)/R57):** one TLS uvicorn subprocess serves
+  every test in the session that needs one, rather than a fresh subprocess
+  per test (the original R41 shape). It starts once, the first time any
+  test requests it (directly or through ``http_client_factory``), and is
+  torn down at session end. Isolation between the tests that share it is
+  by data — a dedicated, uniquely-generated ``example.test`` identity per
+  test that mutates anything account-scoped or global
+  (``provision_agent``/``unique_email``; never the shared
+  ``bootstrap_admin``/``admin_session`` for that) — and by targeted
+  owner-role cleanup where a counter is genuinely shared and global
+  (``test_throttle_and_budget.py``'s autouse clear of
+  ``login_throttle``/``rate_budget``), never by restarting the process.
+  This is safe to share because nothing in the served app's in-process
+  state is test-mutable in a way a fresh process would have reset anyway:
+  the Argon2 hash-queue gate empties itself once every concurrent request
+  in a test completes (before the next test starts, since tests run
+  sequentially — the canonical invocation is never run under a
+  parallelizing plugin), and the origin/readiness caches are warm on a
+  value that never changes for the life of this server (this fixture sets
+  it exactly once, below).
 
   Yields
   ------
@@ -908,6 +980,7 @@ def live_server(
   that an origin row and an active admin exist before any request is made —
   both are provisioning preconditions of ``/health/ready`` (ACC-902/903).
   """
+  tmp_path = tmp_path_factory.mktemp("live_server")
   certificate = generate_test_certificate(tmp_path)
   sock = bind_ephemeral_listening_socket()
   port = sock.getsockname()[1]
@@ -1188,29 +1261,134 @@ async def admin_session(
 
 
 # ---------------------------------------------------------------------------
-# Collection ordering — the pytest-asyncio / pytest-playwright interaction
-# (module docstring, "tests/e2e runs as its own separate invocation").
+# Clearing the two global throttle/budget counters (ruling R52, extended by
+# R57 to the in-process transport too) — shared by
+# ``tests/security/test_throttle_and_budget.py`` (``live_server``) and
+# ``tests/inprocess`` (``in_process_client``): both drive the same
+# DB-shared, global ``login_throttle``/``rate_budget`` rows, so one clearing
+# routine belongs in one place rather than two copies drifting apart.
+# ---------------------------------------------------------------------------
+
+_CLEAR_THROTTLE_AND_BUDGET_SNIPPET: Final[str] = """
+import asyncio
+from typing import Any, cast
+from psycopg import AsyncConnection
+from app.config import load_config
+
+async def main() -> None:
+  kwargs = cast('dict[str, Any]', load_config().connect_kwargs())
+  conn = await AsyncConnection.connect(autocommit=True, **kwargs)
+  try:
+    await conn.execute('DELETE FROM public.login_throttle')
+    await conn.execute('DELETE FROM public.rate_budget')
+  finally:
+    await conn.close()
+
+asyncio.run(main())
+"""
+
+
+def clear_throttle_and_budget_state(*, log_path: Path) -> None:
+  """Delete every row from ``login_throttle`` and ``rate_budget`` (owner role).
+
+  A blunt test-isolation wipe of exactly the two counter tables ruling
+  **R52** names, nothing else (``crm`` is never touched; this only ever
+  runs against ``crm_test``, via ``OWNER_ENV_FILE``).
+
+  Parameters
+  ----------
+  log_path : Path
+    Where the owner-role subprocess's combined output is saved; never
+    printed.
+  """
+  run_with_env(
+    OWNER_ENV_FILE,
+    str(VENV_PYTHON),
+    "-B",
+    "-c",
+    _CLEAR_THROTTLE_AND_BUDGET_SNIPPET,
+    log_path=log_path,
+  )
+
+
+# ---------------------------------------------------------------------------
+# Collection ordering.
+#
+# Four concerns, addressed in one hook because they interact (see each
+# bucket's rationale below): the pytest-asyncio / pytest-playwright event
+# loop corruption (module docstring, "tests/e2e runs as its own separate
+# invocation"), the new in-process/ASGI transport's origin (Hazard, ruling
+# R54), and ``test_last_admin_race.py``'s independent schema reset (ruling
+# R57, this module's ``crm_test_schema`` docstring).
 # ---------------------------------------------------------------------------
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-  """Collect ``tests/e2e`` last when it shares a session with async tests.
+  """Order the session as ``[inprocess] -> [everything else] -> [e2e] -> [last_admin_race]``.
 
-  See the module docstring, "``tests/e2e`` and the pytest-asyncio /
-  pytest-playwright interaction", for what this works around and how it was
-  verified. Running ``tests/e2e`` last means nothing collected after it can
-  be corrupted by its fixture setup; everything ordered ahead of it is
-  unaffected either way. This does not replace the documented, still-valid
-  fallback of running ``tests/e2e`` as its own separate invocation (for
-  example to keep a browser-less leg); it only makes the single literal
-  invocation (``pytest tests``) safe as well.
+  Four buckets, in this order, each explained below. A test collected in
+  more than one bucket's predicate is placed by whichever bucket is
+  checked first, in the order the buckets are built (inprocess, then
+  last-admin-race, then e2e): today no test matches two predicates at
+  once, since the three special directories/files are disjoint, but the
+  precedence is stated so a future addition cannot become ambiguous by
+  accident.
+
+  1. ``tests/inprocess`` **first.** Its own module-scoped fixture points
+     ``crm_test``'s stored ``public_origin`` at ``https://crm.test``
+     (ruling **R54**). ``live_server`` (bucket 2/3) points the same row at
+     its own ``https://127.0.0.1:<port>`` the moment it is first
+     constructed and never repoints it again for the rest of the session —
+     so if any ``live_server``-backed test ran *before* ``tests/inprocess``,
+     the in-process fixture's ``manage set-origin`` would still work, but
+     every ``live_server`` test **after** it would start failing every
+     request with ``403`` (``Host``/``Origin`` no longer match the origin
+     ``live_server`` was actually pointed at) — and reordering it back
+     would break the tests that ran in between. Running ``tests/inprocess``
+     first and letting ``live_server`` set its own origin exactly once,
+     after, needs no toggling back at all.
+  2. **Everything else**, unordered relative to itself except as buckets
+     3-4 pull specific items out of it.
+  3. ``tests/e2e`` **second to last.** See the module docstring: at least
+     one ``tests/e2e`` item's fixture chain sets up pytest-playwright's
+     session-scoped fixtures, and once that has happened in a session,
+     ``pytest-asyncio``'s ``asyncio.Runner.run()`` can fail or silently
+     drop a coroutine for every *later* async test — never an earlier one.
+     Ordering ``tests/e2e`` last among the async-test buckets removes the
+     corruption for the single, literal ``pytest tests`` invocation.
+  4. ``tests/concurrency/test_last_admin_race.py`` **absolute last, after
+     even tests/e2e.** Its own module-scoped fixture resets and
+     re-migrates ``crm_test`` from scratch and bootstraps two admins of
+     its own — a schema wipe that would take the shared
+     ``bootstrap_admin``/``crm_test_schema`` state (every other module's
+     ``live_server``/``db_connection`` fixture depends on it) down with
+     it. Placing it after every other test in the session, including
+     ``tests/e2e``, means nothing that runs afterward in *this* session
+     needs that state any more; the *next* session's ``crm_test_schema``
+     (autouse, ruling R57) absorbs whatever this module leaves behind,
+     which is the "runnable from a dirty ``crm_test``" property that
+     fixture's own docstring names. It is also, incidentally, a plain
+     sync test module with no Playwright fixtures of its own, so its
+     position relative to bucket 3's event-loop concern is moot either
+     way — it is placed last for the schema reason, not that one.
   """
 
-  def _is_e2e(item: pytest.Item) -> bool:
-    return "e2e" in Path(item.nodeid.split("::", 1)[0]).parts
+  def _path_parts(item: pytest.Item) -> tuple[str, ...]:
+    return Path(item.nodeid.split("::", 1)[0]).parts
 
+  def _is_inprocess(item: pytest.Item) -> bool:
+    return "inprocess" in _path_parts(item)
+
+  def _is_last_admin_race(item: pytest.Item) -> bool:
+    parts = _path_parts(item)
+    return bool(parts) and parts[-1] == "test_last_admin_race.py"
+
+  def _is_e2e(item: pytest.Item) -> bool:
+    return "e2e" in _path_parts(item)
+
+  inprocess_items = [item for item in items if _is_inprocess(item)]
+  last_admin_race_items = [item for item in items if _is_last_admin_race(item)]
   e2e_items = [item for item in items if _is_e2e(item)]
-  if not e2e_items:
-    return
-  other_items = [item for item in items if not _is_e2e(item)]
-  items[:] = other_items + e2e_items
+  special = {id(item) for item in inprocess_items + last_admin_race_items + e2e_items}
+  other_items = [item for item in items if id(item) not in special]
+  items[:] = inprocess_items + other_items + e2e_items + last_admin_race_items
