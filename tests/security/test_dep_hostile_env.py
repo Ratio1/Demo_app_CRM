@@ -107,6 +107,17 @@ def _run_probe(
 
 # ---------------------------------------------------------------------------
 # DEP-004(a) — explicit kwargs reach crm_test under a hostile PG* environment.
+#
+# Ruling R53: `scripts/with-env` scrubs every `PG*` variable **before**
+# `exec`-ing the child (D9/R35), so setting the hostile set as `extra_env` on
+# the *launcher* subprocess (the previous shape of this test) is scrubbed
+# away before the child interpreter even starts — the child never sees a
+# hostile environment at all, and the test would pass regardless of whether
+# `connect_kwargs()` actually resists one. The probe below instead injects
+# the hostile `PG*` set with `os.environ.update(...)` **inside** the running
+# child process, immediately before `load_config()`/`connect` — after the
+# scrub, but exactly where a real hostile environment would sit — so a
+# connection succeeding here is real evidence, not a vacuous pass.
 # ---------------------------------------------------------------------------
 
 _TLS_SESSION_PROBE = """
@@ -130,9 +141,45 @@ async def main() -> None:
 asyncio.run(main())
 """
 
+#: Same as :data:`_TLS_SESSION_PROBE`, plus (1) an in-child ``os.environ.update``
+#: of the hostile ``PG*`` set — substituted by ``repr()``, never ``.format()``,
+#: so nothing here collides with the f-string braces already inside the
+#: script (the same reason ``conftest.insert_test_user_row`` uses
+#: ``.replace``, not ``.format`` — see its docstring); and (2) a
+#: ``host_matches_config`` boolean that proves the *negotiated* connection
+#: used ``connect_kwargs()``'s own ``host``, without ever printing the
+#: value itself (credential discipline, module docstring).
+_HOSTILE_ENV_TLS_PROBE = """
+import asyncio
+import os
+from typing import Any, cast
+from psycopg import AsyncConnection
+from app.config import load_config
+
+os.environ.update(__HOSTILE_ENV__)
+
+async def main() -> None:
+  kwargs = cast('dict[str, Any]', load_config().connect_kwargs())
+  conn = await AsyncConnection.connect(**kwargs)
+  try:
+    cur = await conn.execute(
+      "SELECT ssl, version FROM pg_stat_ssl WHERE pid = pg_backend_pid()"
+    )
+    row = await cur.fetchone()
+    host_matches_config = conn.info.host == kwargs.get('host')
+    print(
+      "RESULT connected=True ssl=" + str(row[0]) + " version=" + str(row[1])
+      + " host_matches_config=" + str(host_matches_config)
+    )
+  finally:
+    await conn.close()
+
+asyncio.run(main())
+"""
+
 
 def test_dep004a_hostile_pg_env_still_reaches_crm_test_over_tls(tmp_path: Path) -> None:
-  """A direct interpreter invocation under a hostile ``PG*`` set still connects, over TLS.
+  """A hostile ``PG*`` set injected **inside** the connecting process still yields ``verify-full``.
 
   Scope, exactly as the register pins it: every contracted kwarg is already
   explicit in ``connect_kwargs()`` (``host``, ``port``, ``user``,
@@ -143,20 +190,27 @@ def test_dep004a_hostile_pg_env_still_reaches_crm_test_over_tls(tmp_path: Path) 
   not yet among them (tracked separately by
   ``tests/unit/test_config.py::test_d1_connect_kwargs_is_exactly_the_twelve_key_set``);
   this test only asserts what the *current* nine-key set already guarantees:
-  a real TLS session still negotiates, despite ``PGSSLMODE=disable`` and a
-  nonexistent ``PGSSLROOTCERT`` sitting in the environment.
+  a real TLS session still negotiates against the configured host, despite
+  ``PGSSLMODE=disable`` and a nonexistent ``PGSSLROOTCERT`` sitting in
+  ``os.environ`` at connect time (R53 — injected inside the child so
+  ``with-env``'s own scrub, which would otherwise make this vacuous, is
+  irrelevant here).
   """
   # `-c`, not a script path: a script *path* puts the script's own directory
   # on sys.path[0], not the cwd, so `import app` would fail regardless of
   # `cwd=SUBMODULE_ROOT` — the same reason slice-a.md §10(e) uses `-c`.
-  argv = [str(WITH_ENV), RUNTIME_ENV_FILE, "--", str(VENV_PYTHON), "-B", "-c", _TLS_SESSION_PROBE]
-  result = _run_probe(argv, extra_env=_HOSTILE_PG_ENV, log_path=tmp_path / "probe.log")
+  script = _HOSTILE_ENV_TLS_PROBE.replace("__HOSTILE_ENV__", repr(_HOSTILE_PG_ENV))
+  argv = [str(WITH_ENV), RUNTIME_ENV_FILE, "--", str(VENV_PYTHON), "-B", "-c", script]
+  # No `extra_env` on the launcher: R53's whole point is that a hostile set
+  # placed there is scrubbed by `with-env` before the child ever starts.
+  result = _run_probe(argv, extra_env={}, log_path=tmp_path / "probe.log")
   assert "connected=True" in result
   assert "ssl=True" in result
+  assert "host_matches_config=True" in result
 
 
 def test_dep004a_baseline_without_hostile_env_also_connects_over_tls(tmp_path: Path) -> None:
-  """Control case: the same probe with no hostile environment, for comparison."""
+  """Control case: the same (non-hostile) probe shape, for comparison."""
   argv = [str(WITH_ENV), RUNTIME_ENV_FILE, "--", str(VENV_PYTHON), "-B", "-c", _TLS_SESSION_PROBE]
   result = _run_probe(argv, extra_env={}, log_path=tmp_path / "probe.log")
   assert "connected=True" in result
