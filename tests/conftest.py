@@ -372,13 +372,16 @@ def crm_test_schema(tmp_path_factory: pytest.TempPathFactory) -> None:
   """
   log_dir = tmp_path_factory.mktemp("crm_test_reset")
 
-  reset_script = log_dir / "reset_schema.py"
-  reset_script.write_text(_RESET_SCHEMA_SNIPPET, encoding="utf-8")
+  # `-c`, not a script path: a script *path* puts the script's own directory
+  # on sys.path[0] instead of the cwd, so `from app.config import
+  # load_config` would fail regardless of `cwd=SUBMODULE_ROOT` — the same
+  # reason slice-a.md §10(e) itself uses `-c` rather than a temp file.
   run_with_env(
     OWNER_ENV_FILE,
     str(VENV_PYTHON),
     "-B",
-    str(reset_script),
+    "-c",
+    _RESET_SCHEMA_SNIPPET,
     log_path=log_dir / "01_drop_recreate_schema.log",
   )
   run_with_env(
