@@ -73,6 +73,15 @@ COPY app/ ./app/
 COPY migrations/ ./migrations/
 COPY scripts/ ./scripts/
 
+# app/certs/ again, this time owned by the runtime user. scripts/dev-run.sh and
+# scripts/build-image generate app/certs/dev-server.key mode 0600, and a
+# root-owned 0600 key is unreadable by uid 10001 — uvicorn would then fail to
+# start the TLS listener scripts/start adds. Changing the OWNER rather than
+# widening the MODE keeps the key readable by exactly one account inside the
+# image. The trust anchor beside it (ca-bundle.pem) is world-readable either
+# way; it is a public certificate.
+COPY --chown=10001:10001 app/certs/ ./app/certs/
+
 # Non-root from here on, by number so it holds even if /etc/passwd were absent.
 # Everything above is owned by root and mode 0755/0644: the application user can
 # read and execute the code and can write nothing, which is what a read-only
