@@ -46,7 +46,7 @@ import psycopg
 
 from app.db.repositories import contacts as contacts_repo
 from app.db.repositories import users as users_repo
-from app.db.retry import run_read_committed, run_serializable
+from app.db.retry import AmbiguousCommit
 from app.security.audit import (
   ACTION_CONTACT_ARCHIVED,
   ACTION_CONTACT_CREATED,
@@ -65,6 +65,7 @@ from app.security.idempotency import (
   mint_key,
   payload_sha256,
   replay_after_conflict,
+  settle_ambiguous,
 )
 
 if TYPE_CHECKING:
@@ -72,7 +73,7 @@ if TYPE_CHECKING:
   from datetime import datetime
   from uuid import UUID
 
-  from app.db.pool import Pool, PoolConnection
+  from app.db.pool import PoolConnection
   from app.db.repositories.contacts import (
     ContactKind,
     ContactPage,
@@ -83,6 +84,7 @@ if TYPE_CHECKING:
   )
   from app.db.repositories.receipts import Operation, ReceiptRow
   from app.db.repositories.users import UserOptionRow
+  from app.db.retry import TransactionRunner
   from app.security.clock import Clock
   from app.security.principal import Scope
 
@@ -553,7 +555,7 @@ def _applied(receipt: ReceiptRow, *, replayed: bool) -> Applied:
 
 
 async def _resolve_conflict(
-  pool: Pool,
+  runner: TransactionRunner,
   error: psycopg.Error,
   *,
   user_id: UUID,
@@ -565,9 +567,9 @@ async def _resolve_conflict(
 
   Parameters
   ----------
-  pool : Pool
-    The process pool; the conflicting transaction has already unwound and
-    released its connection.
+  runner : TransactionRunner
+    The process runner (amendment **A-14**); the conflicting transaction
+    has already unwound and released its connection.
   error : psycopg.Error
     The original failure, re-raised if the receipt cannot be found.
   user_id, operation, key, digest
@@ -587,7 +589,7 @@ async def _resolve_conflict(
     produces, with its correlation id.
   """
   decision = await replay_after_conflict(
-    pool, user_id=user_id, operation=operation, key=key, digest=digest
+    runner, user_id=user_id, operation=operation, key=key, digest=digest
   )
   if decision.receipt is None:
     raise error
@@ -597,7 +599,7 @@ async def _resolve_conflict(
 
 
 async def _stale_after_race(
-  pool: Pool,
+  runner: TransactionRunner,
   scope: Scope,
   *,
   contact_id: UUID,
@@ -616,7 +618,7 @@ async def _stale_after_race(
   async def _read(conn: PoolConnection) -> ContactRow | None:
     return await contacts_repo.get_contact(conn, scope, contact_id=contact_id)
 
-  row = await run_read_committed(pool, _read, op="contact-stale-reread")
+  row = await runner.read_committed(_read, op="contact-stale-reread")
   if row is None:
     raise ContactNotFound(contact_id)
   current = _view(row, scope)
@@ -708,14 +710,14 @@ def build_contact_query(
 
 
 async def list_contacts(
-  pool: Pool, scope: Scope, *, query: contacts_repo.ContactQuery
+  runner: TransactionRunner, scope: Scope, *, query: contacts_repo.ContactQuery
 ) -> ContactListView:
   """Read one page of contacts and its scoped total.
 
   Parameters
   ----------
-  pool : Pool
-    The process pool.
+  runner : TransactionRunner
+    The process runner (amendment **A-14**).
   scope : Scope
     The viewer's scope; the repository inlines it in **both** statements.
   query : ContactQuery
@@ -743,7 +745,7 @@ async def list_contacts(
   async def _read(conn: PoolConnection) -> ContactPage:
     return await contacts_repo.list_contacts(conn, scope, query=query)
 
-  page = await run_read_committed(pool, _read, op="contact-list")
+  page = await runner.read_committed(_read, op="contact-list")
   rows = tuple(_row_view(row, scope) for row in page.rows)
   total = page.total
   # The page and the page size the repository actually applied, after its
@@ -773,7 +775,9 @@ async def list_contacts(
   )
 
 
-async def get_for_detail(pool: Pool, scope: Scope, *, contact_id: UUID) -> ContactView:
+async def get_for_detail(
+  runner: TransactionRunner, scope: Scope, *, contact_id: UUID
+) -> ContactView:
   """Read one contact for its workspace or its edit form.
 
   Raises
@@ -792,19 +796,19 @@ async def get_for_detail(pool: Pool, scope: Scope, *, contact_id: UUID) -> Conta
   async def _read(conn: PoolConnection) -> ContactRow | None:
     return await contacts_repo.get_contact(conn, scope, contact_id=contact_id)
 
-  row = await run_read_committed(pool, _read, op="contact-detail")
+  row = await runner.read_committed(_read, op="contact-detail")
   if row is None:
     raise ContactNotFound(contact_id)
   return _view(row, scope)
 
 
-async def list_assignable_users(pool: Pool) -> tuple[AssignableUser, ...]:
+async def list_assignable_users(runner: TransactionRunner) -> tuple[AssignableUser, ...]:
   """Return the active users an admin may reassign a contact to (``ACC-032``).
 
   Parameters
   ----------
-  pool : Pool
-    The process pool.
+  runner : TransactionRunner
+    The process runner (amendment **A-14**).
 
   Returns
   -------
@@ -825,12 +829,12 @@ async def list_assignable_users(pool: Pool) -> tuple[AssignableUser, ...]:
   async def _read(conn: PoolConnection) -> tuple[UserOptionRow, ...]:
     return await users_repo.list_active_users(conn)
 
-  rows = await run_read_committed(pool, _read, op="assignable-users")
+  rows = await runner.read_committed(_read, op="assignable-users")
   return tuple(AssignableUser(id=row.id, display_name=row.display_name) for row in rows)
 
 
 async def create_contact(
-  pool: Pool,
+  runner: TransactionRunner,
   clock: Clock,
   scope: Scope,
   *,
@@ -842,8 +846,8 @@ async def create_contact(
 
   Parameters
   ----------
-  pool : Pool
-    The process pool.
+  runner : TransactionRunner
+    The process runner (amendment **A-14**).
   clock : Clock
     The injected time source; every instant below comes from it.
   scope : Scope
@@ -911,17 +915,31 @@ async def create_contact(
     return Applied(contact_id=contact_id, notice=NOTICE_FOR_STATUS["created"], replayed=False)
 
   try:
-    return await run_serializable(pool, _work, op=OP_CREATE)
+    return await runner.serializable(_work, op=OP_CREATE)
+  # SQL-013, PIN C5: the commit's outcome is unknown, so the receipt is
+  # re-read in a FRESH transaction. Present -> the transaction landed and
+  # this is the 303 it would have answered; absent -> settle_ambiguous
+  # re-raises and main.py renders CP-19's "do not resubmit" 503. Never a
+  # retry: retrying an ambiguous commit is how one submission becomes two
+  # rows. It is not a psycopg.Error, so this clause is independent of the
+  # one below and is written before it (slice-c.md §2(b) note 4).
+  except AmbiguousCommit as error:
+    return _applied(
+      await settle_ambiguous(
+        runner, error, user_id=scope.actor_id, operation=OP_CREATE, key=key, digest=digest
+      ),
+      replayed=True,
+    )
   except psycopg.Error as error:
     if error.sqlstate != _UNIQUE_VIOLATION:
       raise
     return await _resolve_conflict(
-      pool, error, user_id=scope.actor_id, operation=OP_CREATE, key=key, digest=digest
+      runner, error, user_id=scope.actor_id, operation=OP_CREATE, key=key, digest=digest
     )
 
 
 async def update_contact(
-  pool: Pool,
+  runner: TransactionRunner,
   clock: Clock,
   scope: Scope,
   *,
@@ -1012,19 +1030,33 @@ async def update_contact(
     return Applied(contact_id=contact_id, notice=NOTICE_FOR_STATUS["updated"], replayed=False)
 
   try:
-    return await run_serializable(pool, _work, op=OP_UPDATE)
+    return await runner.serializable(_work, op=OP_UPDATE)
   except _ConcurrentStale:
-    return await _stale_after_race(pool, scope, contact_id=contact_id, submitted=values)
+    return await _stale_after_race(runner, scope, contact_id=contact_id, submitted=values)
+  # SQL-013, PIN C5: the commit's outcome is unknown, so the receipt is
+  # re-read in a FRESH transaction. Present -> the transaction landed and
+  # this is the 303 it would have answered; absent -> settle_ambiguous
+  # re-raises and main.py renders CP-19's "do not resubmit" 503. Never a
+  # retry: retrying an ambiguous commit is how one submission becomes two
+  # rows. It is not a psycopg.Error, so this clause is independent of the
+  # one below and is written before it (slice-c.md §2(b) note 4).
+  except AmbiguousCommit as error:
+    return _applied(
+      await settle_ambiguous(
+        runner, error, user_id=scope.actor_id, operation=OP_UPDATE, key=key, digest=digest
+      ),
+      replayed=True,
+    )
   except psycopg.Error as error:
     if error.sqlstate != _UNIQUE_VIOLATION:
       raise
     return await _resolve_conflict(
-      pool, error, user_id=scope.actor_id, operation=OP_UPDATE, key=key, digest=digest
+      runner, error, user_id=scope.actor_id, operation=OP_UPDATE, key=key, digest=digest
     )
 
 
 async def archive_contact(
-  pool: Pool,
+  runner: TransactionRunner,
   clock: Clock,
   scope: Scope,
   *,
@@ -1100,19 +1132,33 @@ async def archive_contact(
     return Applied(contact_id=contact_id, notice=NOTICE_FOR_STATUS["archived"], replayed=False)
 
   try:
-    return await run_serializable(pool, _work, op=OP_ARCHIVE)
+    return await runner.serializable(_work, op=OP_ARCHIVE)
   except _ConcurrentStale:
-    return await _stale_after_race(pool, scope, contact_id=contact_id, submitted={})
+    return await _stale_after_race(runner, scope, contact_id=contact_id, submitted={})
+  # SQL-013, PIN C5: the commit's outcome is unknown, so the receipt is
+  # re-read in a FRESH transaction. Present -> the transaction landed and
+  # this is the 303 it would have answered; absent -> settle_ambiguous
+  # re-raises and main.py renders CP-19's "do not resubmit" 503. Never a
+  # retry: retrying an ambiguous commit is how one submission becomes two
+  # rows. It is not a psycopg.Error, so this clause is independent of the
+  # one below and is written before it (slice-c.md §2(b) note 4).
+  except AmbiguousCommit as error:
+    return _applied(
+      await settle_ambiguous(
+        runner, error, user_id=scope.actor_id, operation=OP_ARCHIVE, key=key, digest=digest
+      ),
+      replayed=True,
+    )
   except psycopg.Error as error:
     if error.sqlstate != _UNIQUE_VIOLATION:
       raise
     return await _resolve_conflict(
-      pool, error, user_id=scope.actor_id, operation=OP_ARCHIVE, key=key, digest=digest
+      runner, error, user_id=scope.actor_id, operation=OP_ARCHIVE, key=key, digest=digest
     )
 
 
 async def restore_contact(
-  pool: Pool,
+  runner: TransactionRunner,
   clock: Clock,
   scope: Scope,
   *,
@@ -1182,19 +1228,33 @@ async def restore_contact(
     return Applied(contact_id=contact_id, notice=NOTICE_FOR_STATUS["restored"], replayed=False)
 
   try:
-    return await run_serializable(pool, _work, op=OP_RESTORE)
+    return await runner.serializable(_work, op=OP_RESTORE)
   except _ConcurrentStale:
-    return await _stale_after_race(pool, scope, contact_id=contact_id, submitted={})
+    return await _stale_after_race(runner, scope, contact_id=contact_id, submitted={})
+  # SQL-013, PIN C5: the commit's outcome is unknown, so the receipt is
+  # re-read in a FRESH transaction. Present -> the transaction landed and
+  # this is the 303 it would have answered; absent -> settle_ambiguous
+  # re-raises and main.py renders CP-19's "do not resubmit" 503. Never a
+  # retry: retrying an ambiguous commit is how one submission becomes two
+  # rows. It is not a psycopg.Error, so this clause is independent of the
+  # one below and is written before it (slice-c.md §2(b) note 4).
+  except AmbiguousCommit as error:
+    return _applied(
+      await settle_ambiguous(
+        runner, error, user_id=scope.actor_id, operation=OP_RESTORE, key=key, digest=digest
+      ),
+      replayed=True,
+    )
   except psycopg.Error as error:
     if error.sqlstate != _UNIQUE_VIOLATION:
       raise
     return await _resolve_conflict(
-      pool, error, user_id=scope.actor_id, operation=OP_RESTORE, key=key, digest=digest
+      runner, error, user_id=scope.actor_id, operation=OP_RESTORE, key=key, digest=digest
     )
 
 
 async def reassign_contact(
-  pool: Pool,
+  runner: TransactionRunner,
   clock: Clock,
   scope: Scope,
   *,
@@ -1299,14 +1359,28 @@ async def reassign_contact(
     return Applied(contact_id=contact_id, notice=NOTICE_FOR_STATUS["reassigned"], replayed=False)
 
   try:
-    return await run_serializable(pool, _work, op=OP_REASSIGN)
+    return await runner.serializable(_work, op=OP_REASSIGN)
   except _ConcurrentStale:
     return await _stale_after_race(
-      pool, scope, contact_id=contact_id, submitted={"owner_id": str(new_owner_id)}
+      runner, scope, contact_id=contact_id, submitted={"owner_id": str(new_owner_id)}
+    )
+  # SQL-013, PIN C5: the commit's outcome is unknown, so the receipt is
+  # re-read in a FRESH transaction. Present -> the transaction landed and
+  # this is the 303 it would have answered; absent -> settle_ambiguous
+  # re-raises and main.py renders CP-19's "do not resubmit" 503. Never a
+  # retry: retrying an ambiguous commit is how one submission becomes two
+  # rows. It is not a psycopg.Error, so this clause is independent of the
+  # one below and is written before it (slice-c.md §2(b) note 4).
+  except AmbiguousCommit as error:
+    return _applied(
+      await settle_ambiguous(
+        runner, error, user_id=scope.actor_id, operation=OP_REASSIGN, key=key, digest=digest
+      ),
+      replayed=True,
     )
   except psycopg.Error as error:
     if error.sqlstate != _UNIQUE_VIOLATION:
       raise
     return await _resolve_conflict(
-      pool, error, user_id=scope.actor_id, operation=OP_REASSIGN, key=key, digest=digest
+      runner, error, user_id=scope.actor_id, operation=OP_REASSIGN, key=key, digest=digest
     )

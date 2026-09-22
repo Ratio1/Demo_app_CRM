@@ -52,19 +52,19 @@ from typing import TYPE_CHECKING, Final, Literal
 from uuid import UUID
 
 from app.db.repositories.receipts import insert_receipt, read_receipt
-from app.db.retry import run_read_committed
 
 if TYPE_CHECKING:
   from collections.abc import Sequence
   from datetime import datetime
 
-  from app.db.pool import Pool, PoolConnection
+  from app.db.pool import PoolConnection
   from app.db.repositories.receipts import (
     Operation,
     ReceiptRow,
     ResultObjectType,
     ResultStatus,
   )
+  from app.db.retry import AmbiguousCommit, TransactionRunner
 
 __all__ = [
   "CANONICAL_UUID",
@@ -76,6 +76,7 @@ __all__ = [
   "parse_canonical",
   "payload_sha256",
   "replay_after_conflict",
+  "settle_ambiguous",
 ]
 
 #: The canonical 36-character form, case-insensitive hex. ``uuid.UUID()``
@@ -357,7 +358,7 @@ async def commit_receipt(
 
 
 async def replay_after_conflict(
-  pool: Pool,
+  runner: TransactionRunner,
   *,
   user_id: UUID,
   operation: Operation,
@@ -368,10 +369,10 @@ async def replay_after_conflict(
 
   Parameters
   ----------
-  pool : Pool
-    The process pool. A new acquisition, taken only after the conflicting
-    transaction has ended and released its own connection
-    (``DATA_CONTRACT.md`` §6.1).
+  runner : TransactionRunner
+    The process runner (amendment **A-14**). A new acquisition, taken only
+    after the conflicting transaction has ended and released its own
+    connection (``DATA_CONTRACT.md`` §6.1).
   user_id : UUID
     The session's user.
   operation : Operation
@@ -402,4 +403,69 @@ async def replay_after_conflict(
   async def _read(conn: PoolConnection) -> ReceiptDecision:
     return await decide(conn, user_id=user_id, operation=operation, key=key, digest=digest)
 
-  return await run_read_committed(pool, _read, op="receipt-replay")
+  return await runner.read_committed(_read, op="receipt-replay")
+
+
+async def settle_ambiguous(
+  runner: TransactionRunner,
+  error: AmbiguousCommit,
+  *,
+  user_id: UUID,
+  operation: Operation,
+  key: UUID,
+  digest: str,
+) -> ReceiptRow:
+  """Resolve a commit whose outcome is unknown, through the receipt (**PIN C5**).
+
+  Parameters
+  ----------
+  runner : TransactionRunner
+    The process runner. The transaction that was committing is gone —
+    whether it landed or not — so this opens a **fresh** one.
+  error : AmbiguousCommit
+    The original signal, re-raised unchanged when the receipt is absent.
+  user_id : UUID
+    The session's user; the same value the lost transaction would have
+    written.
+  operation : Operation
+    The operation the key is scoped to.
+  key : UUID
+    The submitted idempotency key.
+  digest : str
+    :func:`payload_sha256` of this submission.
+
+  Returns
+  -------
+  ReceiptRow
+    The stored receipt, which proves the transaction **landed**: the
+    caller rebuilds the ``303`` it would have answered, so an ambiguous
+    commit that in fact succeeded is invisible to the user.
+
+  Raises
+  ------
+  AmbiguousCommit
+    The original error, unchanged, when the receipt is **absent** — the
+    transaction did not land — and also when a receipt exists under this
+    key carrying a *different* payload. That second case is not a
+    duplicate submission: the key is ours and the digest is ours, so a row
+    with another payload proves the row under this key was **not** written
+    by the transaction that vanished, and we cannot claim it landed.
+    ``main.py``'s shipped handler then renders the 503 whose ``CP-19``
+    copy forbids resubmission and sends the user to the record.
+
+  Notes
+  -----
+  This is the whole of ``SQL-013``'s resolution and it adds **no second
+  lookup path**: it reuses :func:`replay_after_conflict`'s fresh
+  ``READ COMMITTED`` read, which is the one **PIN C5** names.
+
+  The transaction is never retried. Retrying a commit whose outcome is
+  unknown is precisely how one submission becomes two rows, which is why
+  :class:`app.db.retry.AmbiguousCommit` exists at all.
+  """
+  decision = await replay_after_conflict(
+    runner, user_id=user_id, operation=operation, key=key, digest=digest
+  )
+  if decision.kind != "replay" or decision.receipt is None:
+    raise error
+  return decision.receipt

@@ -59,7 +59,7 @@ from starlette.staticfiles import StaticFiles
 
 from app.config import load_config
 from app.db.pool import close_pool, create_pool, open_pool
-from app.db.retry import AmbiguousCommit
+from app.db.retry import AmbiguousCommit, RetryExhausted, TransactionRunner
 from app.logging import configure_logging, log_request, log_unhandled, new_correlation_id
 from app.logging import set_correlation_id as bind_correlation_id
 from app.routes import auth as auth_routes
@@ -77,6 +77,7 @@ from app.routes.errors import (
   no_session_handler,
   not_provisioned_handler,
   payload_too_large,
+  retry_exhausted_handler,
   role_required_handler,
   step_zero_handler,
   too_large_handler,
@@ -403,6 +404,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
   app.state.context = AppContext(
     config=config,
     pool=pool,
+    # A-14: the one runner, over the one pool, carrying the application
+    # clock. Its `sleep` and `jitter` keep their production defaults here;
+    # a test builds its own runner with recording hooks (PIN C4).
+    runner=TransactionRunner(pool, clock=clock),
     clock=clock,
     passwords=passwords,
     throttle=ThrottleService(pool, clock),
@@ -498,6 +503,7 @@ def create_app(
     ContactNotFound: contact_not_found_handler,
     DealNotFound: deal_not_found_handler,
     AmbiguousCommit: ambiguous_commit_handler,
+    RetryExhausted: retry_exhausted_handler,
     Exception: unhandled_exception_handler,
   }
   for exception_class, handler in handlers.items():

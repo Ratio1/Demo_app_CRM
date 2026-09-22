@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
   from app.config import Config
   from app.db.pool import Pool
+  from app.db.retry import TransactionRunner
   from app.security.clock import Clock
   from app.security.origin import OriginCache, ReadinessCache
   from app.security.passwords import PasswordService
@@ -39,7 +40,16 @@ class AppContext:
     The five-name configuration, read once at lifespan start.
   pool : Pool
     The one lazy connection pool. A request holds at most one connection
-    from it at a time (``DATA_CONTRACT.md`` §6.1).
+    from it at a time (``DATA_CONTRACT.md`` §6.1). Reached directly only by
+    the three best-effort writers that keep the module-level shims — the
+    session touch, the counters and the deny-audit — and by nothing that
+    decides a business outcome.
+  runner : TransactionRunner
+    The one transaction runner, built over :attr:`pool` with the
+    application :class:`~app.security.clock.Clock` (amendment **A-14**).
+    **Every** ``app/services/**`` call takes it instead of the pool, which
+    is what lets a test drive the retry budget and the backoff schedule
+    through injected hooks (**PIN C4**) rather than through a real wait.
   clock : Clock
     The injected time source; the only clock anything reads.
   passwords : PasswordService
@@ -58,6 +68,7 @@ class AppContext:
 
   config: Config
   pool: Pool
+  runner: TransactionRunner
   clock: Clock
   passwords: PasswordService
   throttle: ThrottleService

@@ -676,7 +676,7 @@ async def _detail_context(
   can_reassign = principal.is_admin and not view.is_archived
   reassign: dict[str, Any] | None = None
   if can_reassign:
-    users = await list_assignable_users(context.pool)
+    users = await list_assignable_users(context.runner)
     reassign = {
       "assignable_users": [
         {"id": str(user.id), "display_name": user.display_name} for user in users
@@ -1029,7 +1029,7 @@ async def contacts_page(request: Request) -> Response:
 
   context = context_of(request)
   view = await list_contacts(
-    context.pool,
+    context.runner,
     scope_of(principal),
     query=build_contact_query(
       term=parsed.q,
@@ -1132,7 +1132,7 @@ async def contact_create(request: Request) -> Response:
 
   context = context_of(request)
   result = await create_contact(
-    context.pool,
+    context.runner,
     context.clock,
     scope_of(principal),
     submitted=body,
@@ -1167,7 +1167,7 @@ async def contact_detail(request: Request, contact_id: str) -> Response:
   principal = await _start_read(request)
   identifier = _contact_id(contact_id)
   context = context_of(request)
-  view = await get_for_detail(context.pool, scope_of(principal), contact_id=identifier)
+  view = await get_for_detail(context.runner, scope_of(principal), contact_id=identifier)
   page = await _detail_context(request, principal, view)
   return render(request, "contacts/detail.html", page)
 
@@ -1194,7 +1194,7 @@ async def contact_edit(request: Request, contact_id: str) -> Response:
   principal = await _start_read(request)
   identifier = _contact_id(contact_id)
   context = context_of(request)
-  view = await get_for_detail(context.pool, scope_of(principal), contact_id=identifier)
+  view = await get_for_detail(context.runner, scope_of(principal), contact_id=identifier)
   detail_url = _detail_url(request, identifier)
   if view.is_archived:
     return redirect(detail_url, request)
@@ -1238,7 +1238,7 @@ async def contact_update(request: Request, contact_id: str) -> Response:
 
   context = context_of(request)
   result = await update_contact(
-    context.pool,
+    context.runner,
     context.clock,
     scope_of(principal),
     contact_id=identifier,
@@ -1254,7 +1254,7 @@ async def contact_update(request: Request, contact_id: str) -> Response:
     # its owner. Re-reading here also puts the scope predicate in front of
     # the field errors, so a foreign contact with a bad body is the same
     # 404 as a foreign contact with a good one (§1.1, ACC-015).
-    view = await get_for_detail(context.pool, scope_of(principal), contact_id=identifier)
+    view = await get_for_detail(context.runner, scope_of(principal), contact_id=identifier)
     return render(
       request,
       "contacts/form.html",
@@ -1295,7 +1295,7 @@ async def contact_archive(request: Request, contact_id: str) -> Response:
 
   context = context_of(request)
   result = await archive_contact(
-    context.pool,
+    context.runner,
     context.clock,
     scope_of(principal),
     contact_id=identifier,
@@ -1321,7 +1321,7 @@ async def contact_restore(request: Request, contact_id: str) -> Response:
 
   context = context_of(request)
   result = await restore_contact(
-    context.pool,
+    context.runner,
     context.clock,
     scope_of(principal),
     contact_id=identifier,
@@ -1352,7 +1352,7 @@ async def contact_reassign(request: Request, contact_id: str) -> Response:
     # ACC-032 with a malformed target: the contact is still resolved under
     # the scope predicate first, so a foreign one answers 404 and never
     # this 400 — the 409/400 ordering rule applied to a bad owner id.
-    view = await get_for_detail(context.pool, scope, contact_id=identifier)
+    view = await get_for_detail(context.runner, scope, contact_id=identifier)
     if view.is_archived:
       return await _blocked_response(request, _archived_block(view))
     page = await _detail_context(
@@ -1361,7 +1361,7 @@ async def contact_reassign(request: Request, contact_id: str) -> Response:
     return render(request, "contacts/detail.html", page, status_code=400)
 
   result = await reassign_contact(
-    context.pool,
+    context.runner,
     context.clock,
     scope,
     contact_id=identifier,
@@ -1371,11 +1371,11 @@ async def contact_reassign(request: Request, contact_id: str) -> Response:
     correlation_id=current_correlation_id(),
   )
   if isinstance(result, Invalid):
-    view = await get_for_detail(context.pool, scope, contact_id=identifier)
+    view = await get_for_detail(context.runner, scope, contact_id=identifier)
     page = await _detail_context(request, principal, view, reassign_errors=result.errors)
     return render(request, "contacts/detail.html", page, status_code=400)
   if isinstance(result, Stale):
-    users = await list_assignable_users(context.pool)
+    users = await list_assignable_users(context.runner)
     return await _stale_response(
       request,
       result,
