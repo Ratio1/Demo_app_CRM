@@ -35,6 +35,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, cast
 from urllib.parse import urlsplit
+from uuid import UUID
 
 # Running a script by path puts the script's own directory on sys.path[0],
 # not the working directory, so `import app` would fail from scripts/ no
@@ -290,7 +291,7 @@ async def _seed_demo(arguments: argparse.Namespace) -> str:
 
   async def _work(*, pool: Any, clock: Any) -> None:
     correlation_id = new_correlation_id()
-    agent_ids = []
+    agent_ids: list[UUID] = []
     for email, display_name in demo.DEMO_AGENTS:
       agent_ids.append(
         await accounts.ensure_demo_agent(

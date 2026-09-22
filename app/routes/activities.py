@@ -44,7 +44,7 @@ from app.security.context import context_of
 from app.security.idempotency import parse_canonical
 from app.security.principal import scope_of
 from app.services.activities import Duplicate, Invalid, log_activity
-from app.services.deals import Blocked
+from app.services.deals import Blocked, parent_for_form
 
 if TYPE_CHECKING:
   from uuid import UUID
@@ -161,6 +161,16 @@ async def activity_create(request: Request) -> Response:
     correlation_id=current_correlation_id(),
   )
   if isinstance(result, Invalid):
+    # ACCESS_MATRIX.md §1.1's order, applied to the one path the service
+    # cannot apply it on: validation runs before the transaction opens, so a
+    # bad body under an ARCHIVED parent would otherwise re-render a workspace
+    # whose add-activity form is hidden — an error summary linking to fields
+    # that are not on the page. `parent_for_form` is the deal create's own
+    # resolver and the same statement, so the archived answer is identical on
+    # both surfaces, and a foreign parent still raises ContactNotFound first.
+    parent = await parent_for_form(context.runner, scope_of(principal), contact_id=parent_id)
+    if isinstance(parent, Blocked):
+      return await _blocked_response(request, parent)
     page = await detail_page_context(
       request,
       principal,
