@@ -1,10 +1,7 @@
-"""Unit tests for ``app.config`` — SEC-050, SEC-051, and the redaction rule.
+"""Unit tests for ``app.config``: the DB_SERVER parser matrix and the redaction rule.
 
-Authority: ``ACCESS_MATRIX.md`` §7 (SEC-050, SEC-051); ``slice-a.md`` §6 D1/D2
-(the twelve-key ``connect_kwargs`` set once the Backend lane applies R34);
-``PLAN.md`` §6 (the ``DB_SERVER`` parser matrix). These are the one module
-that already ships, so every test below runs against real code today, not
-against a contract stub.
+This is the one module that already ships, so every test below runs
+against real code today, not against a contract stub.
 """
 
 from __future__ import annotations
@@ -55,24 +52,24 @@ def _env(**overrides: str | None) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# SEC-050 — exactly the five names, and the DB_SERVER parser matrix.
+# Exactly the five names, and the DB_SERVER parser matrix.
 # ---------------------------------------------------------------------------
 
 
-def test_sec050_env_names_is_exactly_the_five_contracted_names() -> None:
+def test_env_names_is_exactly_the_five_contracted_names() -> None:
   """``ENV_NAMES`` is exactly the five-name environment contract, in order."""
   assert ENV_NAMES == ("DB_SERVER", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME")
 
 
 @pytest.mark.parametrize("missing", ["DB_SERVER", "DB_USER", "DB_PASSWORD", "DB_NAME"])
-def test_sec050_each_required_name_is_required(missing: str) -> None:
+def test_each_required_name_is_required(missing: str) -> None:
   """Each of the four required names raises ``ConfigError`` when absent."""
   with pytest.raises(ConfigError):
     load_config(_env(**{missing: None}))
 
 
 @pytest.mark.parametrize("missing", ["DB_SERVER", "DB_USER", "DB_PASSWORD", "DB_NAME"])
-def test_sec050_each_required_name_rejects_the_empty_string(missing: str) -> None:
+def test_each_required_name_rejects_the_empty_string(missing: str) -> None:
   """An empty value for a required name is a ``ConfigError``, not a blank field."""
   with pytest.raises(ConfigError):
     load_config(_env(**{missing: ""}))
@@ -87,7 +84,7 @@ def test_sec050_each_required_name_rejects_the_empty_string(missing: str) -> Non
     ("[2001:db8::1]:26257", "2001:db8::1", 26257),
   ],
 )
-def test_sec050_db_server_parses_host_hostport_v6_and_v6port(
+def test_db_server_parses_host_hostport_v6_and_v6port(
   server: str, expected_host: str, expected_port: int
 ) -> None:
   """``DB_SERVER`` accepts ``host``, ``host:port``, ``[v6]`` and ``[v6]:port``."""
@@ -96,31 +93,31 @@ def test_sec050_db_server_parses_host_hostport_v6_and_v6port(
   assert config.port == expected_port
 
 
-def test_sec051_db_port_absent_defaults_to_5432() -> None:
+def test_db_port_absent_defaults_to_5432() -> None:
   """``DB_PORT`` absent, with no port in ``DB_SERVER``, defaults to 5432."""
   config = load_config(_env(DB_SERVER="pg.example.test"))
   assert config.port == DEFAULT_DB_PORT == 5432
 
 
-def test_sec051_db_port_empty_string_is_treated_as_absent() -> None:
+def test_db_port_empty_string_is_treated_as_absent() -> None:
   """An empty ``DB_PORT`` behaves exactly like an absent one, not a value."""
   config = load_config(_env(DB_SERVER="pg.example.test", DB_PORT=""))
   assert config.port == DEFAULT_DB_PORT
 
 
-def test_sec051_db_port_present_and_agreeing_with_db_server_is_accepted() -> None:
+def test_db_port_present_and_agreeing_with_db_server_is_accepted() -> None:
   """Identical values on both names agree and are not an error."""
   config = load_config(_env(DB_SERVER="pg.example.test:6432", DB_PORT="6432"))
   assert config.port == 6432
 
 
-def test_sec051_db_port_present_alone_is_used() -> None:
+def test_db_port_present_alone_is_used() -> None:
   """``DB_PORT`` alone (``DB_SERVER`` carries none) sets the port."""
   config = load_config(_env(DB_SERVER="pg.example.test", DB_PORT="6432"))
   assert config.port == 6432
 
 
-def test_sec051_db_server_and_db_port_disagreeing_is_a_sanitized_error() -> None:
+def test_db_server_and_db_port_disagreeing_is_a_sanitized_error() -> None:
   """A disagreeing pair is a startup error that names no number."""
   with pytest.raises(ConfigError) as excinfo:
     load_config(_env(DB_SERVER="pg.example.test:6432", DB_PORT="5432"))
@@ -138,7 +135,7 @@ def test_sec051_db_server_and_db_port_disagreeing_is_a_sanitized_error() -> None
     "pg.example.test:05432",  # leading zero, not canonical
     "pg.example.test:70000",  # out of range
     "pg.example.test:1:2",  # ambiguous multiple colons, unbracketed
-    "postgres://pg.example.test/crm",  # URL syntax forbidden by spec §4
+    "postgres://pg.example.test/crm",  # URL syntax forbidden
     "pg.example.test?sslmode=disable",  # query syntax forbidden
     "pg.example.test,evil.test",  # multi-host failover list forbidden
     " pg.example.test",  # whitespace
@@ -146,14 +143,14 @@ def test_sec051_db_server_and_db_port_disagreeing_is_a_sanitized_error() -> None
     "[2001:db8::1]x",  # trailing garbage after the bracket
   ],
 )
-def test_sec050_db_server_rejects_every_malformed_spelling(malformed: str) -> None:
+def test_db_server_rejects_every_malformed_spelling(malformed: str) -> None:
   """Every non-canonical or URL/query-syntax ``DB_SERVER`` value is rejected."""
   with pytest.raises(ConfigError):
     load_config(_env(DB_SERVER=malformed))
 
 
 @pytest.mark.parametrize("bad_port", ["0", "65536", "-1", "abc", "5432 ", "05432"])
-def test_sec051_db_port_rejects_out_of_range_and_non_canonical_values(bad_port: str) -> None:
+def test_db_port_rejects_out_of_range_and_non_canonical_values(bad_port: str) -> None:
   """``DB_PORT`` outside 1-65535 or spelled non-canonically is rejected."""
   with pytest.raises(ConfigError):
     load_config(_env(DB_SERVER="pg.example.test", DB_PORT=bad_port))
@@ -212,7 +209,7 @@ def test_config_error_messages_never_contain_a_value() -> None:
 
 
 # ---------------------------------------------------------------------------
-# connect_kwargs — D1's key set (slice-a.md §6 D1, ruling R34).
+# connect_kwargs — the explicit TLS/timeout key set.
 # ---------------------------------------------------------------------------
 
 
@@ -231,8 +228,8 @@ def test_connect_kwargs_carries_the_explicit_tls_and_timeout_parameters() -> Non
   assert kwargs["dbname"] == config.dbname
 
 
-def test_d1_connect_kwargs_is_exactly_the_twelve_key_set() -> None:
-  """``connect_kwargs()`` is exactly D1's twelve keys (slice-a.md §6 D1, ruling R34)."""
+def test_connect_kwargs_is_exactly_the_twelve_key_set() -> None:
+  """``connect_kwargs()`` is exactly the twelve contracted keys."""
   config = load_config(_env())
   kwargs = config.connect_kwargs()
   assert kwargs["ssl_min_protocol_version"] == "TLSv1.2"
@@ -277,11 +274,10 @@ def test_config_dataclass_fields_match_the_contracted_shape() -> None:
 
 
 # ---------------------------------------------------------------------------
-# sslrootcert is resolved from the package, not the working directory
-# (delta D2 / ruling R3). Plan §4 task 6 asks for one unit test pinning this;
-# the two tests above already assert the *value* equals `CA_BUNDLE_PATH`
+# sslrootcert is resolved from the package, not the working directory. The
+# two tests above already assert the *value* equals `CA_BUNDLE_PATH`
 # (`test_connect_kwargs_carries_the_explicit_tls_and_timeout_parameters`,
-# `test_d1_connect_kwargs_is_exactly_the_twelve_key_set`) — these two are
+# `test_connect_kwargs_is_exactly_the_twelve_key_set`) — these two are
 # additive and check what those do not: that the value is package-relative
 # and absolute, and that it does not move when the process's cwd does.
 # ---------------------------------------------------------------------------
@@ -303,7 +299,7 @@ def test_sslrootcert_is_the_package_relative_ca_bundle_path() -> None:
 def test_sslrootcert_is_unaffected_by_the_process_working_directory(
   monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-  """``sslrootcert`` is unaffected by a ``cwd`` change (the defect R3/D2 fixed)."""
+  """``sslrootcert`` is unaffected by a ``cwd`` change."""
   before = load_config(_env()).connect_kwargs()["sslrootcert"]
   monkeypatch.chdir(tmp_path)
   after = load_config(_env()).connect_kwargs()["sslrootcert"]

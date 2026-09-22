@@ -1,18 +1,15 @@
-"""Unit tests for ``app.services.money`` — PIN C1, ask A-6, `ARC-021` (proposed).
+"""Unit tests for ``app.services.money``.
 
-Authority: ``contracts/slice-c.md`` §2(a) (the classification order and the
-`CP-##` each shape maps to), §1(h) ask **A-6** (`1250` and `1250.00` share
-one canonical digest), §2(h) `ARC-021` (money is `decimal.Decimal` end to
-end — the runtime half: :func:`~app.services.money.format_eur` raises on
-anything that is not a :class:`~decimal.Decimal`); ``UX_FLOWS.md`` §6.7
-(the `CP-68`..`CP-69c` sentences); test hook 5
-(``contracts/slice-c.md`` §2(g)).
+Money is parsed and classified as text before ever becoming a
+:class:`~decimal.Decimal`: a malformed amount is rejected with one of a
+fixed set of messages, `1250` and `1250.00` canonicalize to the same
+string, and every downstream function (:func:`~app.services.money.format_eur`)
+raises on anything that is not a `decimal.Decimal` — money stays
+`decimal.Decimal` end to end, never a `float`.
 
-No HTTP, no database: this is the parametrized table hook 5 names, driven
-directly against the shipped module. Every import is deferred into the
-test body (this repo's convention while a lane is still landing code) even
-though ``app/services/money.py`` has now shipped, so this file keeps
-collecting cleanly regardless of import order across a session.
+No HTTP, no database: this is a parametrized table driven directly against
+the shipped module. Every import is deferred into the test body so this
+file keeps collecting cleanly regardless of import order across a session.
 """
 
 from __future__ import annotations
@@ -44,7 +41,7 @@ _AMOUNT_REJECTIONS: tuple[tuple[str | None, str], ...] = (
 def test_parse_amount_rejects_every_malformed_shape_with_its_pinned_message(
   raw: str | None, expected_constant_name: str
 ) -> None:
-  """`parse_amount` classifies every malformed shape into its exact `UX_FLOWS.md` §6.7 sentence."""
+  """`parse_amount` classifies every malformed shape into its exact pinned message."""
   import app.services.money as money_module
   from app.services.money import AmountError, parse_amount
 
@@ -67,13 +64,13 @@ def test_parse_amount_accepts_every_valid_shape_as_a_decimal(raw: str) -> None:
   assert isinstance(result, Decimal), f"{raw!r} should have parsed, got {result!r}"
   # mypy (warn_unreachable): once narrowed to Decimal, a float instance is
   # statically impossible (the two are unrelated extension types that cannot
-  # share a subclass) — but ARC-021 pins "never a float" as the property
-  # under test, so the runtime check stays as explicit, readable evidence.
+  # share a subclass) — but "never a float" is the property under test, so
+  # the runtime check stays as explicit, readable evidence.
   assert not isinstance(result, float)  # type: ignore[unreachable]
 
 
 def test_parse_amount_10000000000_00_is_rejected_but_9999999999_99_is_accepted() -> None:
-  """The `DECIMAL(12,2)` boundary is exact: one digit over the cap is `CP_69B_TOO_LARGE`."""
+  """The `DECIMAL(12,2)` boundary is exact: one digit over the cap is rejected as too large."""
   from decimal import Decimal
 
   from app.services.money import CP_69B_TOO_LARGE, AmountError, parse_amount
@@ -88,7 +85,7 @@ def test_parse_amount_10000000000_00_is_rejected_but_9999999999_99_is_accepted()
 
 
 def test_parse_amount_1250_and_1250_00_share_one_canonical_string() -> None:
-  """Ask `A-6`: `1250` and `1250.00` canonicalize identically, so a resubmit replays, never 409s."""
+  """`1250` and `1250.00` canonicalize identically, so a resubmit replays, never 409s."""
   from decimal import Decimal
 
   from app.services.money import canonical_amount, parse_amount
@@ -101,11 +98,11 @@ def test_parse_amount_1250_and_1250_00_share_one_canonical_string() -> None:
 
 
 def test_parse_amount_1_005_is_never_silently_rounded_to_1_01() -> None:
-  """§1(g) probe 6's finding: the CLASSIFIER catches `1.005` before any `Decimal` is built.
+  """The classifier catches `1.005` before any `Decimal` is built.
 
-  `DECIMAL(12,2)` would round `1.005` to `1.01` at the database — PIN C1's
-  whole point is that the value never reaches that column: it is refused
-  as text, so no `Decimal("1.005")` is ever constructed on this path.
+  `DECIMAL(12,2)` would round `1.005` to `1.01` at the database — the value
+  must never reach that column: it is refused as text, so no
+  `Decimal("1.005")` is ever constructed on this path.
   """
   from app.services.money import AmountError, parse_amount
 
@@ -114,7 +111,7 @@ def test_parse_amount_1_005_is_never_silently_rounded_to_1_01() -> None:
 
 
 def test_format_eur_renders_the_pinned_shape() -> None:
-  """`format_eur` renders `CONTRACTS.md` §8.2's exact `€ 12,345.00` shape from a `Decimal`."""
+  """`format_eur` renders the exact `€ 12,345.00` shape from a `Decimal`."""
   from decimal import Decimal
 
   from app.services.money import format_eur
@@ -125,7 +122,7 @@ def test_format_eur_renders_the_pinned_shape() -> None:
 
 
 def test_format_eur_rejects_a_float_with_typeerror() -> None:
-  """`ARC-021`'s runtime half: a `float` reaching `format_eur` fails loudly, never silently."""
+  """A `float` reaching `format_eur` fails loudly, never silently."""
   from app.services.money import format_eur
 
   with pytest.raises(TypeError):
@@ -141,7 +138,7 @@ def test_format_eur_rejects_a_plain_string_with_typeerror() -> None:
 
 
 def test_format_day_renders_the_pinned_shape() -> None:
-  """`format_day` renders `UX_FLOWS.md` §1.4's exact `21 Sep 2026` shape, unpadded, no locale."""
+  """`format_day` renders the exact `21 Sep 2026` shape, unpadded, no locale."""
   from datetime import date
 
   from app.services.money import format_day

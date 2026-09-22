@@ -1,8 +1,8 @@
-"""Unit tests for ``app.security.passwords`` — SEC-008, SEC-009, ARC-020.
+"""Unit tests for ``app.security.passwords``: length bounds, blocklist, and Argon2 parameters.
 
-Authority: ``ACCESS_MATRIX.md`` §7 (SEC-008, SEC-009, ARC-020);
-``slice-a.md`` §1.1 (``PasswordService.validate``/``hash``/``verify``), §7.4
-(the fast test profile, never used for these three assertions themselves).
+``PasswordService.validate``/``hash``/``verify`` are exercised directly; the
+fast test Argon2 profile is used only for setup speed, never for the three
+assertions that actually check parameter values.
 """
 
 from __future__ import annotations
@@ -61,11 +61,11 @@ def _run[T](awaitable: Coroutine[object, object, T]) -> T:
 
 
 # ---------------------------------------------------------------------------
-# SEC-008 — password length bounds.
+# Password length bounds.
 # ---------------------------------------------------------------------------
 
 
-def test_sec008_a_14_character_password_is_rejected(fast_password_hasher: PasswordHasher) -> None:
+def test_a_14_character_password_is_rejected(fast_password_hasher: PasswordHasher) -> None:
   """14 characters is one below the 15-character floor and is rejected."""
   service = _make_service(fast_password_hasher)
   errors = service.validate("a" * 14, context=())
@@ -73,7 +73,7 @@ def test_sec008_a_14_character_password_is_rejected(fast_password_hasher: Passwo
 
 
 @pytest.mark.parametrize("length", [15, 128])
-def test_sec008_15_and_128_characters_are_accepted(
+def test_15_and_128_characters_are_accepted(
   fast_password_hasher: PasswordHasher, length: int
 ) -> None:
   """15 (the floor) and 128 (the ceiling) are both accepted."""
@@ -84,7 +84,7 @@ def test_sec008_15_and_128_characters_are_accepted(
   assert errors == []
 
 
-def test_sec008_a_129_character_password_is_rejected(
+def test_a_129_character_password_is_rejected(
   fast_password_hasher: PasswordHasher,
 ) -> None:
   """129 characters is one above the 128-character ceiling and is rejected."""
@@ -94,7 +94,7 @@ def test_sec008_a_129_character_password_is_rejected(
   assert errors != []
 
 
-def test_sec008_no_truncation_a_128_character_password_authenticates_unchanged(
+def test_no_truncation_a_128_character_password_authenticates_unchanged(
   fast_password_hasher: PasswordHasher,
 ) -> None:
   """Hashing and verifying the full 128 characters round-trips — no silent truncation."""
@@ -108,7 +108,7 @@ def test_sec008_no_truncation_a_128_character_password_authenticates_unchanged(
 
 
 # ---------------------------------------------------------------------------
-# SEC-009 — blocklist and context words.
+# Blocklist and context words.
 # ---------------------------------------------------------------------------
 
 
@@ -121,7 +121,7 @@ def test_sec008_no_truncation_a_128_character_password_authenticates_unchanged(
     "administrator12345",  # contains the role word "admin"
   ],
 )
-def test_sec009_blocklisted_and_context_words_are_rejected(
+def test_blocklisted_and_context_words_are_rejected(
   fast_password_hasher: PasswordHasher, candidate: str
 ) -> None:
   """A password built around the app name, ``crm``, the fictional domain or a role name fails."""
@@ -130,7 +130,7 @@ def test_sec009_blocklisted_and_context_words_are_rejected(
   assert errors != []
 
 
-def test_sec009_caller_supplied_context_words_are_also_rejected(
+def test_caller_supplied_context_words_are_also_rejected(
   fast_password_hasher: PasswordHasher,
 ) -> None:
   """The per-call ``context`` sequence (e.g. the user's own name/email local part) is honoured."""
@@ -139,7 +139,7 @@ def test_sec009_caller_supplied_context_words_are_also_rejected(
   assert errors != []
 
 
-def test_sec009_an_unrelated_long_random_password_is_accepted(
+def test_an_unrelated_long_random_password_is_accepted(
   fast_password_hasher: PasswordHasher,
 ) -> None:
   """A password containing none of the blocklist or context words passes."""
@@ -149,11 +149,11 @@ def test_sec009_an_unrelated_long_random_password_is_accepted(
 
 
 # ---------------------------------------------------------------------------
-# ARC-020 — Argon2 parameters come from the constructor only.
+# Argon2 parameters come from the constructor only.
 # ---------------------------------------------------------------------------
 
 
-def test_arc020_passwords_module_reads_no_environment_variable(
+def test_passwords_module_reads_no_environment_variable(
   monkeypatch: pytest.MonkeyPatch, fast_password_hasher: PasswordHasher
 ) -> None:
   """Setting an env var that *would* select a cost profile changes nothing.
@@ -169,8 +169,8 @@ def test_arc020_passwords_module_reads_no_environment_variable(
   assert encoded.startswith("$argon2id$v=19$m=8,t=1,p=1$")
 
 
-def test_arc020_no_environ_read_in_module_source() -> None:
-  """Static half of ARC-020: the module source names no environment read at all."""
+def test_no_environ_read_in_module_source() -> None:
+  """Static check: the module source names no environment read at all."""
   import inspect
 
   from app.security import passwords

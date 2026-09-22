@@ -1,8 +1,8 @@
-"""Unit tests for session-token minting — SEC-010.
+"""Unit tests for session-token minting.
 
-Authority: ``ACCESS_MATRIX.md`` §7 (SEC-010: "Session tokens are 256-bit
-CSPRNG and only their SHA-256 is in the database"); ``slice-a.md`` §1.1
-(``app.security.sessions.mint_token() -> tuple[str, str]``).
+Session tokens are 256-bit CSPRNG values, and only their SHA-256 digest is
+stored in the database (``app.security.sessions.mint_token() -> tuple[str,
+str]``).
 """
 
 from __future__ import annotations
@@ -14,12 +14,12 @@ MIN_ENTROPY_BITS = 256
 
 
 def _mint() -> tuple[str, str]:
-  """Call the contracted ``mint_token()``, deferred-imported.
+  """Call ``mint_token()``, deferred-imported.
 
   Returns
   -------
   tuple[str, str]
-    ``(token, sha256_hex)`` exactly as ``slice-a.md`` §1.1 pins.
+    ``(token, sha256_hex)``.
   """
   from app.security.sessions import mint_token
 
@@ -27,13 +27,13 @@ def _mint() -> tuple[str, str]:
   return str(token), str(digest)
 
 
-def test_sec010_the_returned_digest_is_sha256_of_the_token() -> None:
+def test_the_returned_digest_is_sha256_of_the_token() -> None:
   """The second element is exactly ``sha256(token).hexdigest()``, not some other digest."""
   token, digest = _mint()
   assert digest == hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def test_sec010_the_digest_is_64_lowercase_hex_characters() -> None:
+def test_the_digest_is_64_lowercase_hex_characters() -> None:
   """A SHA-256 hex digest is always 64 lowercase hex characters."""
   _token, digest = _mint()
   assert len(digest) == 64
@@ -41,7 +41,7 @@ def test_sec010_the_digest_is_64_lowercase_hex_characters() -> None:
   assert all(character in "0123456789abcdef" for character in digest)
 
 
-def test_sec010_the_token_carries_at_least_256_bits_of_entropy() -> None:
+def test_the_token_carries_at_least_256_bits_of_entropy() -> None:
   """The raw token, decoded from its wire encoding, is at least 256 bits.
 
   ``mint_token`` does not pin an encoding (hex, URL-safe base64, ...), so
@@ -65,7 +65,7 @@ def test_sec010_the_token_carries_at_least_256_bits_of_entropy() -> None:
   )
 
 
-def test_sec010_tokens_are_unique_across_many_mints() -> None:
+def test_tokens_are_unique_across_many_mints() -> None:
   """1,000 consecutive mints produce 1,000 distinct tokens and 1,000 distinct digests.
 
   A CSPRNG source makes a collision astronomically unlikely; a broken source
@@ -83,7 +83,7 @@ def test_sec010_tokens_are_unique_across_many_mints() -> None:
   assert len(digests) == sample_size
 
 
-def test_sec010_no_two_mints_share_the_python_random_module() -> None:
+def test_no_two_mints_share_the_python_random_module() -> None:
   """The module uses a CSPRNG (``secrets``/``os.urandom``), not ``random``.
 
   A seeded ``random.seed(0)`` around the call must not make two mints

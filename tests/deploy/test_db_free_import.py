@@ -1,9 +1,8 @@
-"""``import app.main`` with all five names absent attempts no connection — DEP-003.
+"""``import app.main`` with all five DB env names absent attempts no connection.
 
-Authority: ``ACCESS_MATRIX.md`` §7 (DEP-003); ``slice-a.md`` §1.1 (lifespan
-order: ``load_config() -> create_pool(config, open=False) -> ...`` — nothing
-connects at import or at lifespan *start*; ``open_pool`` runs lazily on the
-first acquisition).
+Startup order: ``load_config() -> create_pool(config, open=False) -> ...`` —
+nothing connects at import or at lifespan *start*; ``open_pool`` runs lazily
+on the first acquisition.
 
 Runs a **fresh subprocess** interpreter (never the pytest process's own,
 which may already have cached ``app.main`` from an earlier test in the same
@@ -27,7 +26,7 @@ VENV_PYTHON: Final[Path] = SUBMODULE_ROOT / ".venv" / "bin" / "python"
 _PROBE = "import app.main"
 
 
-def test_dep003_import_app_main_with_all_five_db_names_absent(tmp_path: Path) -> None:
+def test_import_app_main_with_all_five_db_names_absent(tmp_path: Path) -> None:
   """A fresh interpreter with ``DB_SERVER/PORT/USER/PASSWORD/NAME`` unset imports cleanly."""
   env = {
     "PATH": "/usr/bin:/bin",
@@ -48,16 +47,16 @@ def test_dep003_import_app_main_with_all_five_db_names_absent(tmp_path: Path) ->
   )
 
 
-def test_dep001_import_app_main_contacts_no_database_even_with_a_deliberately_unreachable_host(
+def test_import_app_main_contacts_no_database_even_with_a_deliberately_unreachable_host(
   tmp_path: Path,
 ) -> None:
   """Setting the five names to an unreachable host still imports fast — proving no eager connect.
 
   If ``import app.main`` opened a connection eagerly, this would hang for
-  the libpq connect timeout (contracted at 5 s, ``CONNECT_TIMEOUT_S``) or
-  longer; a bare import returns near-instantly regardless of whether the
-  configured host is reachable, because nothing reads the five names until
-  ``load_config()`` is actually called inside ``create_app``/lifespan.
+  the libpq connect timeout (``CONNECT_TIMEOUT_S``, 5 s) or longer; a bare
+  import returns near-instantly regardless of whether the configured host is
+  reachable, because nothing reads the five names until ``load_config()`` is
+  actually called inside ``create_app``/lifespan.
   """
   env = {
     "PATH": "/usr/bin:/bin",
