@@ -1,0 +1,80 @@
+<!--
+  auth/login.html — CONTRACTS.md §8.2 context (beyond base): `form {email}`,
+  `errors {field: [str]}`, `next | None`, `signed_out: bool`,
+  `session_ended: bool`, `retry_after_seconds | None`.
+
+  UX_FLOWS.md §4.1: centred card, public shell, no Primary navigation.
+  Regions, in DOM order: text wordmark (base.html's public-brand, no image
+  — §1.3.1) -> <h1>Sign in</h1> -> alert region -> form. This screen does
+  NOT use the shared error-summary/field-error pattern: §3.1 is explicit
+  that login failure is a single, non-field message (CP-01) so no
+  enumeration oracle exists across email/password/disabled-account. A
+  non-empty `errors` dict therefore always renders the fixed CP-01 text,
+  regardless of its contents; this is the frontend lane's reading of the
+  frozen `errors` key for this one screen and is flagged in the session
+  report for backend-security to confirm.
+
+  Focus (R28): `autofocus` on email on a fresh load; withheld only on an
+  actual failed attempt (`errors` or `retry_after_seconds` set) — not
+  withheld for the informational `session_ended`/`signed_out` notices,
+  which are not "failures" in R28's sense.
+-->
+{% extends "base.html" %}
+{# The wordmark lives inside the centred card (UX_FLOWS.md §4.1's region
+   order: wordmark -> h1 -> alert -> form), not as a page-top banner like
+   every other public-shell page, so base.html's default public-brand
+   block is suppressed here and rendered once, below, inside .auth-card. #}
+{% block public_brand %}{% endblock %}
+{% block main %}
+<div class="auth-shell">
+  <div class="auth-card">
+    <p class="public-brand">{{ app_name }}</p>
+    <h1>Sign in</h1>
+
+    {% if errors %}
+    <p class="alert alert-danger" role="alert">
+      <svg class="icon" aria-hidden="true"><use href="/static/img/icons.svg#icon-warning"></use></svg>
+      <span>We could not sign you in. Check the email address and password, then try again.</span>
+    </p>
+    {% elif retry_after_seconds is not none %}
+    {# CP-02 substitutes only {n}; "minutes" is fixed copy, never pluralized
+       by the template (R14 — UX_FLOWS.md §6 is the sole source of wording).
+       Minimum "a minute" per UX_FLOWS.md §3.2. #}
+    {% set _minutes = ((retry_after_seconds + 59) // 60) if retry_after_seconds > 0 else 1 %}
+    <p class="alert alert-warn" role="alert">
+      <svg class="icon" aria-hidden="true"><use href="/static/img/icons.svg#icon-warning"></use></svg>
+      <span>Too many sign-in attempts right now. Wait about {{ _minutes }} minutes, then reload this page and try again.</span>
+    </p>
+    {% elif session_ended %}
+    <p class="alert alert-info" role="status">
+      <svg class="icon" aria-hidden="true"><use href="/static/img/icons.svg#icon-info"></use></svg>
+      <span>Your session ended. Sign in to continue.</span>
+    </p>
+    {% elif signed_out %}
+    <p class="alert alert-success" role="status">
+      <svg class="icon" aria-hidden="true"><use href="/static/img/icons.svg#icon-success"></use></svg>
+      <span>You are signed out.</span>
+    </p>
+    {% endif %}
+
+    <form method="post" action="/login">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+      <div class="field">
+        <label for="login-email">Email</label>
+        <input id="login-email" name="email" type="email" required autocomplete="username"
+               value="{{ form.email }}"
+               {% if not errors and retry_after_seconds is none %}autofocus{% endif %}>
+      </div>
+      <div class="field">
+        <label for="login-password">Password</label>
+        <input id="login-password" name="password" type="password" required
+               autocomplete="current-password">
+      </div>
+      <button type="submit" class="btn btn-primary btn-block btn-form-submit">Sign in</button>
+    </form>
+
+    <p class="auth-help">Password help comes from your administrator.</p>
+  </div>
+</div>
+{% endblock %}
