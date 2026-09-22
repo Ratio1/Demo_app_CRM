@@ -157,10 +157,9 @@ def test_login_forced_reset_change_password_logout_back_button(
   page.get_by_label("Repeat new password").fill(new_password)
   page.get_by_role("button", name="Change password").click()
 
-  # /dashboard is not registered by every route table this module might
-  # run against — the 303 lands there and the destination itself may be
-  # out of scope. What this test *can* assert: the browser left
-  # /account/password's forced state, i.e. the redirect fired at all.
+  # The 303 lands on /dashboard; this test asserts only that the browser
+  # left /account/password's forced state, i.e. that the redirect fired,
+  # not the dashboard's own content (covered in tests/access).
   page.wait_for_url(lambda url: "/account/password" not in url, timeout=10_000)
 
   # Confirm the account is no longer forced: a direct visit to the change-

@@ -21,19 +21,19 @@ import pytest
 #: because the last case below is the missing-field shape (`None`, not
 #: `""`), which `parse_amount` must classify identically to the empty string.
 _AMOUNT_REJECTIONS: tuple[tuple[str | None, str], ...] = (
-  ("", "CP_68_AMOUNT_REQUIRED"),
-  ("-1.00", "CP_69_AMOUNT_NEGATIVE"),
-  ("1.005", "CP_69A_TOO_MANY_DECIMALS"),
-  ("-1.005", "CP_69_AMOUNT_NEGATIVE"),  # classification order: sign before scale (§2(a))
-  ("10000000000.00", "CP_69B_TOO_LARGE"),
-  ("1,250.00", "CP_69C_MALFORMED"),
-  ("+1", "CP_69C_MALFORMED"),
-  ("1e3", "CP_69C_MALFORMED"),
-  ("NaN", "CP_69C_MALFORMED"),
-  ("Infinity", "CP_69C_MALFORMED"),
-  ("abc", "CP_69C_MALFORMED"),
-  (" ", "CP_68_AMOUNT_REQUIRED"),
-  (None, "CP_68_AMOUNT_REQUIRED"),
+  ("", "AMOUNT_REQUIRED_MESSAGE"),
+  ("-1.00", "AMOUNT_NEGATIVE_MESSAGE"),
+  ("1.005", "AMOUNT_TOO_MANY_DECIMALS_MESSAGE"),
+  ("-1.005", "AMOUNT_NEGATIVE_MESSAGE"),  # classification order: sign before scale
+  ("10000000000.00", "AMOUNT_TOO_LARGE_MESSAGE"),
+  ("1,250.00", "AMOUNT_FORMAT_MESSAGE"),
+  ("+1", "AMOUNT_FORMAT_MESSAGE"),
+  ("1e3", "AMOUNT_FORMAT_MESSAGE"),
+  ("NaN", "AMOUNT_FORMAT_MESSAGE"),
+  ("Infinity", "AMOUNT_FORMAT_MESSAGE"),
+  ("abc", "AMOUNT_FORMAT_MESSAGE"),
+  (" ", "AMOUNT_REQUIRED_MESSAGE"),
+  (None, "AMOUNT_REQUIRED_MESSAGE"),
 )
 
 
@@ -73,11 +73,11 @@ def test_parse_amount_10000000000_00_is_rejected_but_9999999999_99_is_accepted()
   """The `DECIMAL(12,2)` boundary is exact: one digit over the cap is rejected as too large."""
   from decimal import Decimal
 
-  from app.services.money import CP_69B_TOO_LARGE, AmountError, parse_amount
+  from app.services.money import AMOUNT_TOO_LARGE_MESSAGE, AmountError, parse_amount
 
   just_over = parse_amount("10000000000.00")
   assert isinstance(just_over, AmountError)
-  assert just_over.message == CP_69B_TOO_LARGE
+  assert just_over.message == AMOUNT_TOO_LARGE_MESSAGE
 
   at_the_cap = parse_amount("9999999999.99")
   assert isinstance(at_the_cap, Decimal)

@@ -141,7 +141,7 @@ async def test_docs_routes_are_404_on_a_server_whose_lifespan_ran(
   provisioned" path — not the ``404`` this test actually needs).
   ``live_server`` (via ``http_client_factory``) already waited for
   ``/health/live`` and ran ``manage set-origin`` before this test runs, so
-  its lifespan has genuinely started: this is the live half that needs.
+  its lifespan has genuinely started: this is the live half that needs it.
   """
   client: httpx.AsyncClient = http_client_factory()
   for path in ("/docs", "/redoc", "/openapi.json"):

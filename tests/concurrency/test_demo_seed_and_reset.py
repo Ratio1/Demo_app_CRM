@@ -36,7 +36,7 @@ from conftest import (
   write_password_fixture,
 )
 
-from app.security.passwords import CP_73_BLOCKLISTED, MIN_PASSWORD_LENGTH
+from app.security.passwords import BLOCKLISTED_MESSAGE, MIN_PASSWORD_LENGTH
 
 #: Every table `reset-demo` touches, plus the four it must leave alone
 #: (`app/db/repositories/maintenance.py`'s `DEMO_DELETE_ORDER` and its own
@@ -242,5 +242,5 @@ def test_seed_demo_refuses_a_blocklisted_agent_password(tmp_path: Path) -> None:
     f"seed-demo accepted a blocklisted demo-agent password (exit {exit_code}) — see {log_path}"
   )
   text = log_path.read_text(encoding="utf-8")
-  assert CP_73_BLOCKLISTED in text, f"the policy message was not reported — see {log_path}"
+  assert BLOCKLISTED_MESSAGE in text, f"the policy message was not reported — see {log_path}"
   assert _BLOCKLISTED_AGENT_PASSWORD not in text, "manage echoed the refused password"
