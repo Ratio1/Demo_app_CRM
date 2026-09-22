@@ -54,13 +54,14 @@
 # `python -B` so nothing writes bytecode on the read-only root filesystem; the
 # .pyc files for the dependencies are baked in at build time by pip.
 #
-# uvicorn's --ssl-certfile/--ssl-keyfile are added below, conditional on BOTH
-# app/certs/dev-server.crt and app/certs/dev-server.key being present in the
-# image. Without them the container would serve plain HTTP, and then `__Host-`
-# cookies (Secure) and the stored HTTPS origin could never match — so the pair is the
-# difference between a container that serves and one that refuses every
-# request. Nothing else is added: no http:// exception, no reloader, no second
-# process, and no environment variable selects TLS — the files decide.
+# This process serves plain HTTP and holds no certificate and no private key:
+# TLS is terminated in front of it, and the deployer publishes port 3000 to
+# that terminator. The browser-facing scheme is therefore not this script's to
+# know — the public origin stored in the database is what says it, and that
+# stored scheme alone decides the session cookie's name and `Secure` flag and
+# whether `Strict-Transport-Security` is sent. No flag and no environment
+# variable here can move any of it. (The database connection is a separate
+# matter and is unconditionally `sslmode=verify-full`; see app/config.py.)
 
 set -Eeuo pipefail
 
@@ -69,20 +70,6 @@ for pg_name in "${!PG@}"; do
   unset "$pg_name"
 done
 unset pg_name
-
-# Resolved from this script's own location, never from the working directory:
-# the image's WORKDIR is /app today, and a cwd-relative path would silently
-# become "no certificate" — which reads as a deliberate plain-HTTP run rather
-# than as the misconfiguration it is.
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-root_dir="$(cd -- "${script_dir}/.." && pwd)"
-cert_file="${root_dir}/app/certs/dev-server.crt"
-key_file="${root_dir}/app/certs/dev-server.key"
-
-tls_args=()
-if [ -f "$cert_file" ] && [ -f "$key_file" ]; then
-  tls_args=(--ssl-certfile "$cert_file" --ssl-keyfile "$key_file")
-fi
 
 exec python -B -m uvicorn app.main:app \
   --host 0.0.0.0 \
@@ -93,5 +80,4 @@ exec python -B -m uvicorn app.main:app \
   --no-access-log \
   --limit-concurrency 64 \
   --backlog 128 \
-  --timeout-graceful-shutdown 20 \
-  "${tls_args[@]}"
+  --timeout-graceful-shutdown 20

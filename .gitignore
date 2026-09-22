@@ -14,8 +14,6 @@
 # generated TLS material (never committed)
 app/certs/roots.dev/
 app/certs/ca-bundle.pem
-app/certs/dev-server.crt
-app/certs/dev-server.key
 
 # python
 __pycache__/

@@ -2,7 +2,7 @@
 #
 # run-local — run demo-crm-app:local against the shared PostgreSQL.
 #
-#   scripts/run-local          start the container on https://127.0.0.1:3002
+#   scripts/run-local          start the container on http://127.0.0.1:3002
 #   scripts/run-local stop     stop and remove it
 #
 # The flags are the contract, not preferences:
@@ -64,4 +64,4 @@ docker run -d \
   --stop-timeout 25 \
   "$IMAGE"
 
-printf 'run-local: %s serving on https://127.0.0.1:%s\n' "$NAME" "$HOST_PORT" >&2
+printf 'run-local: %s serving on http://127.0.0.1:%s\n' "$NAME" "$HOST_PORT" >&2

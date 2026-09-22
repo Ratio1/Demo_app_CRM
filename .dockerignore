@@ -1,14 +1,15 @@
 # Build context for `demo-crm-app:local`.
 #
 # What must NOT be listed here, and why:
-#   app/certs/ca-bundle.pem      built by scripts/build-ca-bundle immediately
-#   app/certs/dev-server.crt     before `docker build` and baked into the image
-#   app/certs/dev-server.key     — excluding them would break the TLS chain and
-#                                  the dev HTTPS listener.
+#   app/certs/ca-bundle.pem      written by scripts/build-image immediately
+#                                before `docker build` and baked into the
+#                                image — excluding it would leave the database
+#                                connection's `verify-full` with no trust
+#                                anchor. It is a CA's public certificate.
 # Only `app/certs/roots.dev/` is excluded, so the machine-local dev CA reaches
 # a local image through the built bundle and never as a loose directory. The
 # image is checked after every build for .env* files, roots.dev/ and .git; none
-# of them may be present.
+# of them may be present, and neither may a private key of any kind.
 
 # credentials — never in an image, not even the example
 .env*

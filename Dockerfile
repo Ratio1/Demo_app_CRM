@@ -68,18 +68,14 @@ RUN python -B -m pip install --require-hashes --no-cache-dir -r requirements.loc
 
 FROM deps AS runtime
 
+# app/certs/ca-bundle.pem travels in with app/, root-owned and world-readable,
+# which is all it needs to be: it is a CA's PUBLIC certificate and the only
+# thing under app/certs/ that ships. No private key of any kind is in this
+# image — the container serves plain HTTP on 3000 and a terminator in front of
+# it holds the public certificate.
 COPY app/ ./app/
 COPY migrations/ ./migrations/
 COPY scripts/ ./scripts/
-
-# app/certs/ again, this time owned by the runtime user. scripts/dev-run.sh and
-# scripts/build-image generate app/certs/dev-server.key mode 0600, and a
-# root-owned 0600 key is unreadable by uid 10001 — uvicorn would then fail to
-# start the TLS listener scripts/start adds. Changing the OWNER rather than
-# widening the MODE keeps the key readable by exactly one account inside the
-# image. The trust anchor beside it (ca-bundle.pem) is world-readable either
-# way; it is a public certificate.
-COPY --chown=10001:10001 app/certs/ ./app/certs/
 
 # Non-root from here on, by number so it holds even if /etc/passwd were absent.
 # Everything above is owned by root and mode 0755/0644: the application user can
