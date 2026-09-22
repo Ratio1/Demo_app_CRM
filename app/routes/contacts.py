@@ -176,6 +176,15 @@ _CP_43_EMPTY: Final = (
 #: active user, which a 409-stale reassign panel can legitimately hold.
 _CP_38_UNKNOWN_USER: Final = "removed user"
 
+#: **R64** (**R31**, ``UX_FLOWS.md`` §4.5 *"Type (radio pair, ``lead``
+#: default)"*, §2(f)). The create form renders this value pre-selected, so
+#: the pair a user never touches still submits one — which is what makes
+#: "the form never answers 400 for an untouched radio pair" true of the
+#: shipped form rather than of the validator. The **value**, not a label:
+#: it is compared against ``contact.kind`` in the template and against
+#: :data:`~app.services.contacts.KIND_LABELS` in the service.
+_DEFAULT_KIND: Final = "lead"
+
 #: The field limits ``contacts/form.html`` renders as ``maxlength``
 #: (``CONTRACTS.md`` §8.2). A progressive convenience only: the
 #: server-rendered error summary stays authoritative (**R28**, **R31**).
@@ -1041,13 +1050,23 @@ async def contacts_page(request: Request) -> Response:
 
 @router.get("/contacts/new", name="contact_new")
 async def contact_new(request: Request) -> Response:
-  """Render the empty create form.
+  """Render the empty create form, with ``kind`` pre-selected (**R64**).
 
   Notes
   -----
   Registered **before** ``/contacts/{contact_id}``: Starlette matches in
   registration order, and the other way round ``new`` would be read as a
   non-canonical id and answered ``404``.
+
+  ``kind`` is the one field that arrives pre-filled:
+  :data:`_DEFAULT_KIND` selects the ``Lead`` radio, because an unselected
+  radio pair submits **no** field at all and would meet ``CP-66`` on a
+  form the user never touched (**R64**). Every other field is empty — a
+  default a user did not choose is a value nobody typed, and only this one
+  is pinned by ``UX_FLOWS.md`` §4.5. The re-render after a failed ``POST``
+  deliberately does **not** apply it: there the echo is what was
+  submitted, so ``CP-66`` still reaches anyone who cleared the pair by
+  hand.
   """
   principal = await _start_read(request)
   return render(
@@ -1059,7 +1078,7 @@ async def contact_new(request: Request) -> Response:
       mode="new",
       action_url=CONTACTS_URL,
       cancel_url=CONTACTS_URL,
-      contact=_submitted_contact({}, contact_id=None, version=None),
+      contact=_submitted_contact({"kind": _DEFAULT_KIND}, contact_id=None, version=None),
       owner_label=_CP_32_SELF,
       errors={},
       idempotency_key=mint_key(),
