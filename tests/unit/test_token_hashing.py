@@ -3,10 +3,6 @@
 Authority: ``ACCESS_MATRIX.md`` §7 (SEC-010: "Session tokens are 256-bit
 CSPRNG and only their SHA-256 is in the database"); ``slice-a.md`` §1.1
 (``app.security.sessions.mint_token() -> tuple[str, str]``).
-
-``app/security/sessions.py`` does not exist in this tree yet (Backend
-lane); every test below is expected to fail with ``ModuleNotFoundError``
-until then.
 """
 
 from __future__ import annotations
@@ -25,8 +21,7 @@ def _mint() -> tuple[str, str]:
   tuple[str, str]
     ``(token, sha256_hex)`` exactly as ``slice-a.md`` §1.1 pins.
   """
-  # Deferred import: app/security/sessions.py is contracted but not shipped.
-  from app.security.sessions import mint_token  # type: ignore[import-not-found]
+  from app.security.sessions import mint_token
 
   token, digest = mint_token()
   return str(token), str(digest)

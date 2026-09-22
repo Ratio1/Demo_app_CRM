@@ -3,47 +3,61 @@
 Authority: ``ACCESS_MATRIX.md`` §7 (SEC-008, SEC-009, ARC-020);
 ``slice-a.md`` §1.1 (``PasswordService.validate``/``hash``/``verify``), §7.4
 (the fast test profile, never used for these three assertions themselves).
-
-``app/security/passwords.py`` does not exist in this tree yet (Backend
-lane), so every test below imports it inside the test body and is expected
-to fail with ``ModuleNotFoundError`` until then — reported, not hidden.
 """
 
 from __future__ import annotations
 
+import asyncio
+from typing import TYPE_CHECKING
+
 import pytest
 
+if TYPE_CHECKING:
+  from collections.abc import Coroutine
 
-def _make_service(fast_hasher: object) -> object:
+  from argon2 import PasswordHasher
+
+  from app.security.passwords import PasswordService
+
+
+def _make_service(fast_hasher: PasswordHasher) -> PasswordService:
   """Build a ``PasswordService`` with the documented fast test profile.
 
   Parameters
   ----------
-  fast_hasher : object
-    The ``fast_password_hasher`` fixture's real ``argon2.PasswordHasher``.
+  fast_hasher : argon2.PasswordHasher
+    The ``fast_password_hasher`` fixture's real hasher.
 
   Returns
   -------
   app.security.passwords.PasswordService
   """
-  # Deferred import: app/security/passwords.py is contracted (slice-a.md
-  # §1.1) but not yet shipped.
-  from app.security.passwords import PasswordService  # type: ignore[import-not-found]
+  from app.security.clock import SystemClock
+  from app.security.passwords import PasswordService
 
   return PasswordService(
     fast_hasher,
     blocklist=frozenset({"demo_app_crm", "crm", "example.test", "admin", "agent"}),
-    clock=_system_clock(),
+    clock=SystemClock(),
     max_active=1,
     max_queued=8,
   )
 
 
-def _system_clock() -> object:
-  """Return a real ``SystemClock`` — ``PasswordService`` needs a ``Clock``, not a timer."""
-  from app.security.clock import SystemClock  # type: ignore[import-not-found]
+def _run[T](awaitable: Coroutine[object, object, T]) -> T:
+  """Run a coroutine to completion from a synchronous test function.
 
-  return SystemClock()
+  Parameters
+  ----------
+  awaitable : Coroutine[object, object, T]
+    A coroutine returned by one of ``PasswordService``'s async methods.
+
+  Returns
+  -------
+  T
+    Whatever the coroutine returned.
+  """
+  return asyncio.run(awaitable)
 
 
 # ---------------------------------------------------------------------------
@@ -51,64 +65,46 @@ def _system_clock() -> object:
 # ---------------------------------------------------------------------------
 
 
-def test_sec008_a_14_character_password_is_rejected(fast_password_hasher: object) -> None:
+def test_sec008_a_14_character_password_is_rejected(fast_password_hasher: PasswordHasher) -> None:
   """14 characters is one below the 15-character floor and is rejected."""
   service = _make_service(fast_password_hasher)
-  errors = service.validate("a" * 14, context=())  # type: ignore[attr-defined]
+  errors = service.validate("a" * 14, context=())
   assert errors != []
 
 
 @pytest.mark.parametrize("length", [15, 128])
 def test_sec008_15_and_128_characters_are_accepted(
-  fast_password_hasher: object, length: int
+  fast_password_hasher: PasswordHasher, length: int
 ) -> None:
   """15 (the floor) and 128 (the ceiling) are both accepted."""
   service = _make_service(fast_password_hasher)
   # A varied, non-dictionary string so no blocklist/context rule fires.
   candidate = "".join(chr(ord("a") + (i % 26)) for i in range(length))
-  errors = service.validate(candidate, context=())  # type: ignore[attr-defined]
+  errors = service.validate(candidate, context=())
   assert errors == []
 
 
-def test_sec008_a_129_character_password_is_rejected(fast_password_hasher: object) -> None:
+def test_sec008_a_129_character_password_is_rejected(
+  fast_password_hasher: PasswordHasher,
+) -> None:
   """129 characters is one above the 128-character ceiling and is rejected."""
   service = _make_service(fast_password_hasher)
   candidate = "".join(chr(ord("a") + (i % 26)) for i in range(129))
-  errors = service.validate(candidate, context=())  # type: ignore[attr-defined]
+  errors = service.validate(candidate, context=())
   assert errors != []
 
 
 def test_sec008_no_truncation_a_128_character_password_authenticates_unchanged(
-  fast_password_hasher: object,
+  fast_password_hasher: PasswordHasher,
 ) -> None:
   """Hashing and verifying the full 128 characters round-trips — no silent truncation."""
   service = _make_service(fast_password_hasher)
   candidate = "".join(chr(ord("a") + (i % 26)) for i in range(128))
-  encoded = _run(service.hash(candidate))  # type: ignore[attr-defined]
-  assert _run(service.verify(encoded, candidate)) is True  # type: ignore[attr-defined]
+  encoded = _run(service.hash(candidate))
+  assert _run(service.verify(encoded, candidate)) is True
   # Any single truncated or altered character must not still verify.
   altered = candidate[:-1] + ("b" if candidate[-1] != "b" else "c")
-  assert _run(service.verify(encoded, altered)) is False  # type: ignore[attr-defined]
-
-
-def _run(awaitable: object) -> object:
-  """Run a coroutine to completion from a synchronous test function.
-
-  Parameters
-  ----------
-  awaitable : object
-    Actually a ``Coroutine[Any, Any, Any]``; typed loosely because the
-    return type of the not-yet-existing ``PasswordService`` methods is not
-    something this module can import a stub for.
-
-  Returns
-  -------
-  object
-    Whatever the coroutine returned.
-  """
-  import asyncio
-
-  return asyncio.run(awaitable)  # type: ignore[arg-type]
+  assert _run(service.verify(encoded, altered)) is False
 
 
 # ---------------------------------------------------------------------------
@@ -126,33 +122,29 @@ def _run(awaitable: object) -> object:
   ],
 )
 def test_sec009_blocklisted_and_context_words_are_rejected(
-  fast_password_hasher: object, candidate: str
+  fast_password_hasher: PasswordHasher, candidate: str
 ) -> None:
   """A password built around the app name, ``crm``, the fictional domain or a role name fails."""
   service = _make_service(fast_password_hasher)
-  errors = service.validate(candidate, context=())  # type: ignore[attr-defined]
+  errors = service.validate(candidate, context=())
   assert errors != []
 
 
 def test_sec009_caller_supplied_context_words_are_also_rejected(
-  fast_password_hasher: object,
+  fast_password_hasher: PasswordHasher,
 ) -> None:
   """The per-call ``context`` sequence (e.g. the user's own name/email local part) is honoured."""
   service = _make_service(fast_password_hasher)
-  errors = service.validate(  # type: ignore[attr-defined]
-    "AdaAdminAdaAdmin", context=("ada", "admin")
-  )
+  errors = service.validate("AdaAdminAdaAdmin", context=("ada", "admin"))
   assert errors != []
 
 
 def test_sec009_an_unrelated_long_random_password_is_accepted(
-  fast_password_hasher: object,
+  fast_password_hasher: PasswordHasher,
 ) -> None:
   """A password containing none of the blocklist or context words passes."""
   service = _make_service(fast_password_hasher)
-  errors = service.validate(  # type: ignore[attr-defined]
-    "correct horse battery staple 9", context=("someone-else",)
-  )
+  errors = service.validate("correct horse battery staple 9", context=("someone-else",))
   assert errors == []
 
 
@@ -162,7 +154,7 @@ def test_sec009_an_unrelated_long_random_password_is_accepted(
 
 
 def test_arc020_passwords_module_reads_no_environment_variable(
-  monkeypatch: pytest.MonkeyPatch, fast_password_hasher: object
+  monkeypatch: pytest.MonkeyPatch, fast_password_hasher: PasswordHasher
 ) -> None:
   """Setting an env var that *would* select a cost profile changes nothing.
 
@@ -173,16 +165,15 @@ def test_arc020_passwords_module_reads_no_environment_variable(
   for plausible_name in ("PASSWORD_HASH_PROFILE", "ARGON2_FAST", "CRM_TEST_MODE", "PYTEST_FAST"):
     monkeypatch.setenv(plausible_name, "1")
   service = _make_service(fast_password_hasher)
-  encoded = _run(service.hash("a fictional passphrase 12345"))  # type: ignore[attr-defined]
-  assert str(encoded).startswith("$argon2id$v=19$m=8,t=1,p=1$")
+  encoded = _run(service.hash("a fictional passphrase 12345"))
+  assert encoded.startswith("$argon2id$v=19$m=8,t=1,p=1$")
 
 
 def test_arc020_no_environ_read_in_module_source() -> None:
   """Static half of ARC-020: the module source names no environment read at all."""
   import inspect
 
-  # Deferred import: see module docstring.
-  from app.security import passwords  # type: ignore[import-not-found]
+  from app.security import passwords
 
   source = inspect.getsource(passwords)
   assert "os.environ" not in source
