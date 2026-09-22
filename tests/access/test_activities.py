@@ -1,4 +1,4 @@
-"""``POST /activities`` and the ``#timeline`` region — plan §4 task 6.
+"""``POST /activities`` and the ``#timeline`` region.
 
 Every test drives the real HTTP surface over ``live_server`` using the
 three-principal fixtures ``tests/conftest.py`` defines (``admin``,
@@ -30,12 +30,12 @@ from conftest import (
 )
 
 from app.services.activities import (
-  CP_75_DATE_MALFORMED,
-  CP_76_KIND_MISSING,
-  CP_77_SUMMARY_EMPTY,
-  CP_77_SUMMARY_LONG,
+  ACTIVITY_KIND_REQUIRED_MESSAGE,
+  DATE_MALFORMED_MESSAGE,
   KIND_LABELS,
   SUMMARY_MAX,
+  SUMMARY_REQUIRED_MESSAGE,
+  SUMMARY_TOO_LONG_MESSAGE,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -91,7 +91,7 @@ def _activity_post_body(
 
 
 # ---------------------------------------------------------------------------
-# own / foreign / missing / archived parent (ACC-405..ACC-409 shape).
+# own / foreign / missing / archived parent.
 # ---------------------------------------------------------------------------
 
 
@@ -281,7 +281,7 @@ async def test_summary_bounds_0_1_1000_1001(agent_a: LoggedInPrincipal) -> None:
     ),
   )
   assert empty.status_code == 400
-  assert CP_77_SUMMARY_EMPTY in empty.text
+  assert SUMMARY_REQUIRED_MESSAGE in empty.text
 
   over = await agent_a.client.post(
     "/activities",
@@ -295,7 +295,7 @@ async def test_summary_bounds_0_1_1000_1001(agent_a: LoggedInPrincipal) -> None:
     ),
   )
   assert over.status_code == 400
-  assert CP_77_SUMMARY_LONG in over.text
+  assert SUMMARY_TOO_LONG_MESSAGE in over.text
 
   one_char = await agent_a.client.post(
     "/activities",
@@ -341,7 +341,7 @@ async def test_whitespace_only_summary_is_400_empty(agent_a: LoggedInPrincipal) 
     ),
   )
   assert response.status_code == 400
-  assert CP_77_SUMMARY_EMPTY in response.text
+  assert SUMMARY_REQUIRED_MESSAGE in response.text
 
 
 async def test_malformed_date_is_400(agent_a: LoggedInPrincipal) -> None:
@@ -361,7 +361,7 @@ async def test_malformed_date_is_400(agent_a: LoggedInPrincipal) -> None:
     ),
   )
   assert response.status_code == 400
-  assert CP_75_DATE_MALFORMED in response.text
+  assert DATE_MALFORMED_MESSAGE in response.text
 
 
 # ---------------------------------------------------------------------------
@@ -387,7 +387,7 @@ async def test_kind_outside_the_allowlist_is_400(agent_a: LoggedInPrincipal) -> 
       ),
     )
     assert response.status_code == 400, f"kind {bad_kind!r} should be rejected with 400"
-    assert CP_76_KIND_MISSING in response.text
+    assert ACTIVITY_KIND_REQUIRED_MESSAGE in response.text
 
 
 @pytest.mark.parametrize("kind", sorted(KIND_LABELS))
@@ -401,7 +401,7 @@ async def test_every_allowlisted_kind_is_accepted(agent_a: LoggedInPrincipal, ki
 
 
 # ---------------------------------------------------------------------------
-# duplicate submission (ACC-225/226 shape, sequential HTTP-level).
+# duplicate submission (sequential HTTP-level).
 # ---------------------------------------------------------------------------
 
 

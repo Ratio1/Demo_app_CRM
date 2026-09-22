@@ -1,22 +1,10 @@
-"""O1 contact record and O2 contact list/search/count — ACC-001 through ACC-113.
-
-Authority: ``ACCESS_MATRIX.md`` §3.1 (O1, `ACC-0xx`), §3.2 (O2, `ACC-1xx`), §5
-(field-level authorization), §7 (this file's register); ``contracts/slice-b.md``
-§2(c) (route table), §2(f) (form field sets), §2(g) (test hooks — three
-principals, the identical-404 rule); the Slice B architecture pins (PIN 2
-ownership predicate, PIN 6 allowlists, PIN 8 identical 404).
+"""Contact record and contact list/search/count access control.
 
 Every test drives the real HTTP surface over ``live_server`` (wire-level:
 real cookies, real status codes, real headers) using the three-principal
 fixtures ``tests/conftest.py`` defines (``admin``, ``agent_a``, ``agent_b``).
-None of this could pass before Slice B's implementation landed — no route
-under ``/contacts`` existed in ``app/routes/**`` — and this module is
-written so a run against an unshipped route fails with a plain, honest
-``404``/``405``/``AssertionError`` rather than a collection error, exactly
-as ``tests/security``/``tests/concurrency`` did for Slice A before it
-shipped.
 
-One test per ID where the cell is a single behaviour; a handful of IDs
+One test per cell where the cell is a single behaviour; a handful of cases
 whose contract is inherently a pair (own vs. foreign, active vs. archived)
 keep both cases in one test rather than splitting an atomic assertion.
 """
@@ -42,7 +30,7 @@ from conftest import (
 
 pytestmark = pytest.mark.asyncio
 
-#: `contracts/slice-b.md` §2(f) — the exact create/edit form field sets.
+#: The exact create/edit form field set.
 _CREATE_FIELDS = {
   "name": "Beatrix Kiddo",
   "company": "Acme Corp",
@@ -55,9 +43,8 @@ _CREATE_FIELDS = {
 async def _forced_reset_client(http_client_factory: Any, provision_agent: Any) -> httpx.AsyncClient:
   """Log in a freshly provisioned agent but deliberately skip the forced password change.
 
-  For the `FRST` actor cells (``ACC-004``, ``ACC-008``, ``ACC-025``,
-  ``ACC-030``, ``ACC-034``, ``ACC-106``): the returned client carries a
-  full session whose ``must_change_password`` is still ``TRUE``.
+  For the `FRST` actor cells: the returned client carries a full session
+  whose ``must_change_password`` is still ``TRUE``.
   """
   user: ProvisionedUser = provision_agent()
   client: httpx.AsyncClient = http_client_factory()
@@ -68,18 +55,18 @@ async def _forced_reset_client(http_client_factory: Any, provision_agent: Any) -
 
 
 # ---------------------------------------------------------------------------
-# O1 — detail (ACC-001 .. ACC-006)
+# Contact — detail
 # ---------------------------------------------------------------------------
 
 
-async def test_acc001_owner_can_read_own_contact(agent_a: LoggedInPrincipal) -> None:
+async def test_owner_can_read_own_contact(agent_a: LoggedInPrincipal) -> None:
   """`AG-O` reading their own contact gets `200` (`P_contact` short-circuits on ownership)."""
   contact = await create_contact(agent_a, **_CREATE_FIELDS)
   response = await agent_a.client.get(f"/contacts/{contact.id}")
   assert response.status_code == 200
 
 
-async def test_acc002_agent_cannot_read_foreign_contact(
+async def test_agent_cannot_read_foreign_contact(
   agent_a: LoggedInPrincipal, agent_b: LoggedInPrincipal
 ) -> None:
   """`AG-X` reading another agent's contact gets a `404` identical to a missing one."""
@@ -88,7 +75,7 @@ async def test_acc002_agent_cannot_read_foreign_contact(
   assert response.status_code == 404
 
 
-async def test_acc003_admin_can_read_any_contact(
+async def test_admin_can_read_any_contact(
   agent_a: LoggedInPrincipal, admin: LoggedInPrincipal
 ) -> None:
   """`ADM` reads any agent's contact — the predicate short-circuits on `is_admin`."""
@@ -97,7 +84,7 @@ async def test_acc003_admin_can_read_any_contact(
   assert response.status_code == 200
 
 
-async def test_acc004_forced_reset_session_cannot_read_a_contact(
+async def test_forced_reset_session_cannot_read_a_contact(
   http_client_factory: Any, provision_agent: Any
 ) -> None:
   """`FRST` gets `403` at order step 2, before any object is even resolved."""
@@ -106,16 +93,15 @@ async def test_acc004_forced_reset_session_cannot_read_a_contact(
   assert response.status_code == 403
 
 
-async def test_acc005_no_session_redirects_to_login_invariant_to_existence(
+async def test_no_session_redirects_to_login_invariant_to_existence(
   anon_client: httpx.AsyncClient,
 ) -> None:
   """`NOSESS` reading any contact id — real or fabricated — gets the same `303 /login...`.
 
   The target carries a validated ``?next=`` back to the page that was
-  asked for (``app/routes/errors.py::no_session_handler``, shipped Slice A
-  behaviour, unchanged by Slice B) — this only asserts the *path*, not the
-  full query string, since the exact encoding is Slice A's contract, not
-  this cell's.
+  asked for (``app/routes/errors.py::no_session_handler``) — this only
+  asserts the *path*, not the full query string, since the exact encoding
+  is a separate concern from this cell's.
   """
   path = "/contacts/00000000-0000-4000-8000-000000000000"
   response = await anon_client.get(path)
@@ -127,7 +113,7 @@ async def test_acc005_no_session_redirects_to_login_invariant_to_existence(
   )
 
 
-async def test_acc006_owner_can_read_own_archived_contact(agent_a: LoggedInPrincipal) -> None:
+async def test_owner_can_read_own_archived_contact(agent_a: LoggedInPrincipal) -> None:
   """An archived contact stays readable by its owner (the detail view offers restore only)."""
   contact = await create_contact(agent_a, **_CREATE_FIELDS)
   detail = await agent_a.client.get(f"/contacts/{contact.id}")
@@ -144,18 +130,18 @@ async def test_acc006_owner_can_read_own_archived_contact(agent_a: LoggedInPrinc
 
 
 # ---------------------------------------------------------------------------
-# O1 — create (ACC-007 .. ACC-013)
+# Contact — create
 # ---------------------------------------------------------------------------
 
 
-async def test_acc007_agent_create_sets_owner_to_self(agent_a: LoggedInPrincipal) -> None:
+async def test_agent_create_sets_owner_to_self(agent_a: LoggedInPrincipal) -> None:
   """`owner_id := scope.actor_id`, set by the service — never read from the request body."""
   contact = await create_contact(agent_a, **_CREATE_FIELDS)
   detail = await agent_a.client.get(f"/contacts/{contact.id}")
   assert detail.status_code == 200
 
 
-async def test_acc008_forced_reset_session_cannot_create(
+async def test_forced_reset_session_cannot_create(
   http_client_factory: Any, provision_agent: Any
 ) -> None:
   """`FRST` gets `403` on `POST /contacts`."""
@@ -167,7 +153,7 @@ async def test_acc008_forced_reset_session_cannot_create(
   assert response.status_code == 403
 
 
-async def test_acc009_no_session_cannot_create(anon_client: httpx.AsyncClient) -> None:
+async def test_no_session_cannot_create(anon_client: httpx.AsyncClient) -> None:
   """`NOSESS` on an unsafe method gets `403`, never the `303`-to-login a safe `GET` gets."""
   response = await anon_client.post(
     "/contacts",
@@ -177,7 +163,7 @@ async def test_acc009_no_session_cannot_create(anon_client: httpx.AsyncClient) -
   assert response.status_code == 403
 
 
-async def test_acc010_create_with_missing_csrf_is_403(agent_a: LoggedInPrincipal) -> None:
+async def test_create_with_missing_csrf_is_403(agent_a: LoggedInPrincipal) -> None:
   """A mutation with a missing/foreign CSRF token is `403` — step 0b, before the handler runs."""
   response = await agent_a.client.post(
     "/contacts",
@@ -186,7 +172,7 @@ async def test_acc010_create_with_missing_csrf_is_403(agent_a: LoggedInPrincipal
   assert response.status_code == 403
 
 
-async def test_acc011_create_with_an_unknown_field_is_400(agent_a: LoggedInPrincipal) -> None:
+async def test_create_with_an_unknown_field_is_400(agent_a: LoggedInPrincipal) -> None:
   """An unknown body field is rejected with `400`, never silently ignored (mass-assignment)."""
   new_form = await agent_a.client.get("/contacts/new")
   csrf_token = extract_csrf_token(new_form.text)
@@ -204,15 +190,15 @@ async def test_acc011_create_with_an_unknown_field_is_400(agent_a: LoggedInPrinc
 
 
 @pytest.mark.parametrize("forbidden_field", ["id", "owner_id", "version", "archived_at", "role"])
-async def test_acc012_create_supplying_a_non_writable_field_is_400(
+async def test_create_supplying_a_non_writable_field_is_400(
   agent_a: LoggedInPrincipal, forbidden_field: str
 ) -> None:
   """`owner_id` and the other non-allowlisted fields are rejected, not silently dropped.
 
   Covers the "owner injection via body ignored or 400" requirement:
-  §5.1 puts `owner_id` in no agent allowlist at all, so the contracted
-  answer is `400`, never a silent ignore that leaves the row correctly
-  owned but gives no signal a client could rely on.
+  `owner_id` is in no agent allowlist at all, so the contracted answer is
+  `400`, never a silent ignore that leaves the row correctly owned but
+  gives no signal a client could rely on.
   """
   new_form = await agent_a.client.get("/contacts/new")
   csrf_token = extract_csrf_token(new_form.text)
@@ -229,18 +215,18 @@ async def test_acc012_create_supplying_a_non_writable_field_is_400(
   assert response.status_code == 400
 
 
-async def test_acc013_duplicate_email_across_owners_both_succeed(
+async def test_duplicate_email_across_owners_both_succeed(
   agent_a: LoggedInPrincipal, agent_b: LoggedInPrincipal
 ) -> None:
   """`contacts.email` carries no unique constraint — two owners may share one address."""
-  shared_email = "shared+acc013@example.test"
+  shared_email = "shared+duplicate-email-probe@example.test"
   contact_a = await create_contact(agent_a, **{**_CREATE_FIELDS, "email": shared_email})
   contact_b = await create_contact(agent_b, **{**_CREATE_FIELDS, "email": shared_email})
   assert contact_a.id != contact_b.id
 
 
 # ---------------------------------------------------------------------------
-# O1 — edit (ACC-014 .. ACC-020)
+# Contact — edit
 # ---------------------------------------------------------------------------
 
 
@@ -255,7 +241,7 @@ async def _edit_form_tokens(client: httpx.AsyncClient, contact_id: str) -> tuple
   )
 
 
-async def test_acc014_owner_can_edit_own_contact_at_the_current_version(
+async def test_owner_can_edit_own_contact_at_the_current_version(
   agent_a: LoggedInPrincipal,
 ) -> None:
   """A same-version edit by the owner succeeds and bumps `version` in the same statement."""
@@ -273,7 +259,7 @@ async def test_acc014_owner_can_edit_own_contact_at_the_current_version(
   assert response.status_code == 303
 
 
-async def test_acc015_agent_cannot_edit_foreign_contact(
+async def test_agent_cannot_edit_foreign_contact(
   agent_a: LoggedInPrincipal, agent_b: LoggedInPrincipal
 ) -> None:
   """`AG-X` posting an edit to another agent's contact gets `404`, identical to missing."""
@@ -282,7 +268,7 @@ async def test_acc015_agent_cannot_edit_foreign_contact(
   assert response.status_code == 404
 
 
-async def test_acc016_admin_can_edit_any_contact(
+async def test_admin_can_edit_any_contact(
   agent_a: LoggedInPrincipal, admin: LoggedInPrincipal
 ) -> None:
   """`ADM` edits any agent's contact — the admin short-circuit."""
@@ -300,14 +286,14 @@ async def test_acc016_admin_can_edit_any_contact(
   assert response.status_code == 303
 
 
-async def test_acc017_stale_version_edit_returns_409_preserving_submitted_values(
+async def test_stale_version_edit_returns_409_preserving_submitted_values(
   agent_a: LoggedInPrincipal,
 ) -> None:
   """Two sessions read version *n*; the second save gets `409` with its own values preserved.
 
-  Mechanism (`SQL-010`): `UPDATE ... WHERE id=%s AND version=%s` updates
-  zero rows on the second save, and PIN 3 requires the recovery view to
-  preserve exactly what the second session submitted, not what won.
+  Mechanism: `UPDATE ... WHERE id=%s AND version=%s` updates zero rows on
+  the second save, and the recovery view is required to preserve exactly
+  what the second session submitted, not what won.
   """
   contact = await create_contact(agent_a, **_CREATE_FIELDS)
   csrf_token, idempotency_key, version = await _edit_form_tokens(agent_a.client, contact.id)
@@ -337,17 +323,16 @@ async def test_acc017_stale_version_edit_returns_409_preserving_submitted_values
   assert "Loser Submitted Co" in second.text
 
 
-async def test_acc018_edit_an_archived_contact_is_409_archived_parent(
+async def test_edit_an_archived_contact_is_409_archived_parent(
   agent_a: LoggedInPrincipal,
 ) -> None:
-  """Editing an archived contact is `409` with `context="archived_parent"` (`body="cp_13"`).
+  """Editing an archived contact is `409` with the "restore it first" body.
 
   Tokens for the ``POST`` are read off the **detail** page, never the edit
-  form: since ruling **R63**, ``GET /contacts/{id}/edit`` on an archived
-  contact answers ``303`` -> the detail page (``test_r63_...`` above)
-  rather than rendering — the detail page stays readable for an archived
-  record (``ACC-006``) and carries its own valid ``csrf_token``/``version``
-  regardless.
+  form: ``GET /contacts/{id}/edit`` on an archived contact answers ``303``
+  -> the detail page (see the redirect test below) rather than rendering —
+  the detail page stays readable for an archived record and carries its
+  own valid ``csrf_token``/``version`` regardless.
   """
   contact = await create_contact(agent_a, **_CREATE_FIELDS)
   detail = await agent_a.client.get(f"/contacts/{contact.id}")
@@ -375,7 +360,7 @@ async def test_acc018_edit_an_archived_contact_is_409_archived_parent(
 
 
 @pytest.mark.parametrize("immutable_field", ["id", "owner_id", "created_at"])
-async def test_acc019_editing_an_immutable_field_is_400(
+async def test_editing_an_immutable_field_is_400(
   agent_a: LoggedInPrincipal, immutable_field: str
 ) -> None:
   """`id`, `owner_id` and `created_at` are rejected wherever submitted on an edit."""
@@ -394,7 +379,7 @@ async def test_acc019_editing_an_immutable_field_is_400(
   assert response.status_code == 400
 
 
-async def test_acc020_editing_an_archived_foreign_contact_is_404_not_409(
+async def test_editing_an_archived_foreign_contact_is_404_not_409(
   agent_a: LoggedInPrincipal, agent_b: LoggedInPrincipal
 ) -> None:
   """Ordering rule: scope is checked before archived state, so this is never a 409 oracle."""
@@ -413,13 +398,13 @@ async def test_acc020_editing_an_archived_foreign_contact_is_404_not_409(
   assert response.status_code == 404
 
 
-async def test_r63_get_edit_on_an_archived_contact_redirects_to_the_detail_page(
+async def test_get_edit_on_an_archived_contact_redirects_to_the_detail_page(
   agent_a: LoggedInPrincipal,
 ) -> None:
-  """Ruling R63: `GET /contacts/{id}/edit` on an ARCHIVED contact is `303` -> `/contacts/{id}`.
+  """`GET /contacts/{id}/edit` on an ARCHIVED contact is `303` -> `/contacts/{id}`.
 
-  The detail view offers restore only (`ACC-006`); the edit **form** must
-  never render for an archived record — only the ``POST`` stays `409`.
+  The detail view offers restore only; the edit **form** must never
+  render for an archived record — only the ``POST`` stays `409`.
   """
   contact = await create_contact(agent_a, **_CREATE_FIELDS)
   csrf_token, idempotency_key, version = await _archive_form_tokens(agent_a.client, contact.id)
@@ -431,25 +416,24 @@ async def test_r63_get_edit_on_an_archived_contact_redirects_to_the_detail_page(
 
   response = await agent_a.client.get(f"/contacts/{contact.id}/edit")
   assert response.status_code == 303, (
-    "R63: GET /contacts/{id}/edit on an archived contact must redirect, never render the "
+    "GET /contacts/{id}/edit on an archived contact must redirect, never render the "
     f"edit form; got {response.status_code}"
   )
   assert response.headers.get("location") == f"/contacts/{contact.id}"
 
 
-async def test_r64_new_contact_form_preselects_lead_so_an_untouched_submit_never_400s(
+async def test_new_contact_form_preselects_lead_so_an_untouched_submit_never_400s(
   agent_a: LoggedInPrincipal,
 ) -> None:
-  """Ruling R64: `GET /contacts/new` pre-selects `kind=lead`; an untouched radio never 400s."""
+  """`GET /contacts/new` pre-selects `kind=lead`; an untouched radio never 400s."""
   new_form = await agent_a.client.get("/contacts/new")
   assert new_form.status_code == 200
 
   lead_input = re.search(r'<input[^>]*id="contact-kind-lead"[^>]*>', new_form.text)
   assert lead_input is not None, "no id=contact-kind-lead radio input found in the rendered form"
   assert "checked" in lead_input.group(0), (
-    "R64: the lead radio must be pre-selected by default (R31, UX_FLOWS.md §4.5, "
-    "slice-b.md §2(f)) so a client that never touches the radio pair still submits "
-    "a valid kind"
+    "the lead radio must be pre-selected by default so a client that never touches "
+    "the radio pair still submits a valid kind"
   )
   customer_input = re.search(r'<input[^>]*id="contact-kind-customer"[^>]*>', new_form.text)
   assert customer_input is not None, "no id=contact-kind-customer radio input found"
@@ -464,21 +448,21 @@ async def test_r64_new_contact_form_preselects_lead_so_an_untouched_submit_never
     data={
       "csrf_token": csrf_token,
       "idempotency_key": idempotency_key,
-      "name": "R64 Untouched Radio Contact",
+      "name": "Preselected Lead Contact",
       "company": "Acme Corp",
-      "email": "r64-untouched@example.test",
+      "email": "preselected-lead@example.test",
       "phone": "",
       "kind": "lead",
     },
   )
   assert response.status_code == 303, (
-    "R64: posting the form's own pre-selected default kind must never answer 400; "
+    "posting the form's own pre-selected default kind must never answer 400; "
     f"got {response.status_code}"
   )
 
 
-async def test_acc035_stage_change_has_no_route_on_a_contact(agent_a: LoggedInPrincipal) -> None:
-  """`stage change` is n/a for O1 (a deal-only action, Slice C) — `404`, no such path.
+async def test_stage_change_has_no_route_on_a_contact(agent_a: LoggedInPrincipal) -> None:
+  """`stage change` is n/a for a contact (a deal-only action) — `404`, no such path.
 
   Reaches the router's own 404 (never step 0's 403): the client already
   carries a valid `Host` and, being an unsafe method through
@@ -493,7 +477,7 @@ async def test_acc035_stage_change_has_no_route_on_a_contact(agent_a: LoggedInPr
   assert response.status_code == 404
 
 
-async def test_acc036_safe_get_with_no_origin_header_is_served_normally(
+async def test_safe_get_with_no_origin_header_is_served_normally(
   agent_a: LoggedInPrincipal,
 ) -> None:
   """A safe `GET` on a contacts route carrying NO `Origin` header at all is served normally.
@@ -503,8 +487,7 @@ async def test_acc036_safe_get_with_no_origin_header_is_served_normally(
   here would 403 every page load. ``agent_a.client`` never stamps `Origin`
   on a safe method (the stamping hook is scoped to unsafe methods only —
   ``conftest._default_origin_on_unsafe_methods``), so this is already the
-  ordinary shape of every `GET` in this suite; this test names it
-  explicitly as `ACC-036`.
+  ordinary shape of every `GET` in this suite.
   """
   contact = await create_contact(agent_a, **_CREATE_FIELDS)
   response = await agent_a.client.get(f"/contacts/{contact.id}")
@@ -515,7 +498,7 @@ async def test_acc036_safe_get_with_no_origin_header_is_served_normally(
 
 
 # ---------------------------------------------------------------------------
-# O1 — archive / restore (ACC-021 .. ACC-030)
+# Contact — archive / restore
 # ---------------------------------------------------------------------------
 
 
@@ -529,7 +512,7 @@ async def _archive_form_tokens(client: httpx.AsyncClient, contact_id: str) -> tu
   )
 
 
-async def test_acc021_owner_can_archive_own_active_contact(agent_a: LoggedInPrincipal) -> None:
+async def test_owner_can_archive_own_active_contact(agent_a: LoggedInPrincipal) -> None:
   """`UPDATE ... SET archived_at = %(at)s WHERE ... AND P_contact AND archived_at IS NULL`."""
   contact = await create_contact(agent_a, **_CREATE_FIELDS)
   csrf_token, idempotency_key, version = await _archive_form_tokens(agent_a.client, contact.id)
@@ -540,19 +523,18 @@ async def test_acc021_owner_can_archive_own_active_contact(agent_a: LoggedInPrin
   assert response.status_code == 303
 
 
-async def test_acc022_agent_cannot_archive_foreign_contact(
+async def test_agent_cannot_archive_foreign_contact(
   agent_a: LoggedInPrincipal, agent_b: LoggedInPrincipal
 ) -> None:
   """`P_contact` — a foreign archive attempt is `404`.
 
   The CSRF token must be real and bound to ``agent_b``'s own session:
-  order step 3 (`require_csrf`, `contracts/slice-b.md` §2(c)) runs before
-  the service call that decides the object-scope `404`, so a placeholder
-  value is rejected there with a `403` and this test would never reach
-  the ownership check it exists to prove. Any page ``agent_b`` can GET
-  regardless of ownership (``/contacts/new``) carries a token good for
-  any of its own POSTs, per `csrf.py`'s per-session (not per-resource)
-  derivation.
+  order step 3 (`require_csrf`) runs before the service call that decides
+  the object-scope `404`, so a placeholder value is rejected there with a
+  `403` and this test would never reach the ownership check it exists to
+  prove. Any page ``agent_b`` can GET regardless of ownership
+  (``/contacts/new``) carries a token good for any of its own POSTs, per
+  `csrf.py`'s per-session (not per-resource) derivation.
   """
   contact = await create_contact(agent_a, **_CREATE_FIELDS)
   new_form = await agent_b.client.get("/contacts/new")
@@ -564,10 +546,10 @@ async def test_acc022_agent_cannot_archive_foreign_contact(
   assert response.status_code == 404
 
 
-async def test_acc023_archiving_an_already_archived_contact_is_409(
+async def test_archiving_an_already_archived_contact_is_409(
   agent_a: LoggedInPrincipal,
 ) -> None:
-  """Zero rows matched on `archived_at IS NULL` -> `409` (`context="archived_parent"`, `cp_23`)."""
+  """Zero rows matched on `archived_at IS NULL` -> `409` (the "already done" body)."""
   contact = await create_contact(agent_a, **_CREATE_FIELDS)
   csrf_token, idempotency_key, version = await _archive_form_tokens(agent_a.client, contact.id)
   first = await agent_a.client.post(
@@ -584,7 +566,7 @@ async def test_acc023_archiving_an_already_archived_contact_is_409(
   assert second.status_code == 409
 
 
-async def test_acc024_admin_can_archive_any_contact(
+async def test_admin_can_archive_any_contact(
   agent_a: LoggedInPrincipal, admin: LoggedInPrincipal
 ) -> None:
   """The admin short-circuit reaches archive too."""
@@ -597,7 +579,7 @@ async def test_acc024_admin_can_archive_any_contact(
   assert response.status_code == 303
 
 
-async def test_acc025_archive_denied_for_forced_reset_and_no_session(
+async def test_archive_denied_for_forced_reset_and_no_session(
   http_client_factory: Any, provision_agent: Any, anon_client: httpx.AsyncClient
 ) -> None:
   """Steps 2 and 1 both deny archive with `403`."""
@@ -616,7 +598,7 @@ async def test_acc025_archive_denied_for_forced_reset_and_no_session(
   assert anon_response.status_code == 403
 
 
-async def test_acc026_owner_can_restore_own_archived_contact(agent_a: LoggedInPrincipal) -> None:
+async def test_owner_can_restore_own_archived_contact(agent_a: LoggedInPrincipal) -> None:
   """`UPDATE ... SET archived_at = NULL WHERE ... AND archived_at IS NOT NULL`."""
   contact = await create_contact(agent_a, **_CREATE_FIELDS)
   csrf_token, idempotency_key, version = await _archive_form_tokens(agent_a.client, contact.id)
@@ -634,13 +616,14 @@ async def test_acc026_owner_can_restore_own_archived_contact(agent_a: LoggedInPr
   assert restored.status_code == 303
 
 
-async def test_acc027_agent_cannot_restore_foreign_contact(
+async def test_agent_cannot_restore_foreign_contact(
   agent_a: LoggedInPrincipal, agent_b: LoggedInPrincipal
 ) -> None:
   """`P_contact` — a foreign restore attempt is `404`.
 
-  Same reasoning as `test_acc022` above: the token must be real, or the
-  request never gets past order step 3 to the ownership check.
+  Same reasoning as the foreign-archive test above: the token must be
+  real, or the request never gets past order step 3 to the ownership
+  check.
   """
   contact = await create_contact(agent_a, **_CREATE_FIELDS)
   new_form = await agent_b.client.get("/contacts/new")
@@ -652,8 +635,8 @@ async def test_acc027_agent_cannot_restore_foreign_contact(
   assert response.status_code == 404
 
 
-async def test_acc028_restoring_an_active_contact_is_409(agent_a: LoggedInPrincipal) -> None:
-  """Zero rows matched on `archived_at IS NOT NULL` -> `409` (`cp_23`, "already done")."""
+async def test_restoring_an_active_contact_is_409(agent_a: LoggedInPrincipal) -> None:
+  """Zero rows matched on `archived_at IS NOT NULL` -> `409` (the "already done" body)."""
   contact = await create_contact(agent_a, **_CREATE_FIELDS)
   csrf_token, idempotency_key, version = await _archive_form_tokens(agent_a.client, contact.id)
   response = await agent_a.client.post(
@@ -663,7 +646,7 @@ async def test_acc028_restoring_an_active_contact_is_409(agent_a: LoggedInPrinci
   assert response.status_code == 409
 
 
-async def test_acc029_admin_can_restore_any_contact(
+async def test_admin_can_restore_any_contact(
   agent_a: LoggedInPrincipal, admin: LoggedInPrincipal
 ) -> None:
   """The admin short-circuit reaches restore too."""
@@ -683,7 +666,7 @@ async def test_acc029_admin_can_restore_any_contact(
   assert response.status_code == 303
 
 
-async def test_acc030_restore_denied_for_forced_reset_and_no_session(
+async def test_restore_denied_for_forced_reset_and_no_session(
   http_client_factory: Any, provision_agent: Any, anon_client: httpx.AsyncClient
 ) -> None:
   """Steps 2 and 1 both deny restore with `403`."""
@@ -703,11 +686,11 @@ async def test_acc030_restore_denied_for_forced_reset_and_no_session(
 
 
 # ---------------------------------------------------------------------------
-# O1 — reassign (ACC-031 .. ACC-034)
+# Contact — reassign
 # ---------------------------------------------------------------------------
 
 
-async def test_acc031_admin_can_reassign_to_an_active_user(
+async def test_admin_can_reassign_to_an_active_user(
   agent_a: LoggedInPrincipal, agent_b: LoggedInPrincipal, admin: LoggedInPrincipal
 ) -> None:
   """One `UPDATE contacts SET owner_id=%s` in one `SERIALIZABLE` transaction."""
@@ -734,7 +717,7 @@ async def test_acc031_admin_can_reassign_to_an_active_user(
   )
 
 
-async def test_acc032_reassign_to_a_disabled_or_missing_target_is_400(
+async def test_reassign_to_a_disabled_or_missing_target_is_400(
   agent_a: LoggedInPrincipal, admin: LoggedInPrincipal
 ) -> None:
   """The target is validated as an existing, active user before the update; else `400`."""
@@ -755,14 +738,14 @@ async def test_acc032_reassign_to_a_disabled_or_missing_target_is_400(
   assert response.status_code == 400
 
 
-async def test_acc033_agent_cannot_reassign(
+async def test_agent_cannot_reassign(
   agent_a: LoggedInPrincipal, agent_b: LoggedInPrincipal
 ) -> None:
   """The function-level role check (order step 3) is constant over objects: `403`, not `404`.
 
   Deliberately posts to a garbage contact id: step 3 runs *before* the
-  path-id parse (`contracts/slice-b.md` §2(c)), so an agent gets `403`
-  regardless of whether the target exists.
+  path-id parse, so an agent gets `403` regardless of whether the target
+  exists.
   """
   response = await agent_a.client.post(
     "/contacts/not-a-real-id/reassign",
@@ -777,7 +760,7 @@ async def test_acc033_agent_cannot_reassign(
   del agent_b  # fixture named only to document both agents are equally denied
 
 
-async def test_acc034_reassign_denied_for_forced_reset_and_no_session(
+async def test_reassign_denied_for_forced_reset_and_no_session(
   http_client_factory: Any, provision_agent: Any, anon_client: httpx.AsyncClient
 ) -> None:
   """Steps 2 and 1 both deny reassign with `403`."""
@@ -807,8 +790,8 @@ async def test_acc034_reassign_denied_for_forced_reset_and_no_session(
 
 
 # ---------------------------------------------------------------------------
-# The identical-404 rule (test hook 4, PIN 8) — six surfaces, foreign vs.
-# missing vs. non-canonical, for the SAME principal.
+# The identical-404 rule — six surfaces, foreign vs. missing vs.
+# non-canonical, for the SAME principal.
 # ---------------------------------------------------------------------------
 
 _MISSING_ID = "ffffffff-ffff-4fff-8fff-ffffffffffff"
@@ -830,12 +813,12 @@ async def test_identical_404_foreign_missing_and_noncanonical_are_byte_identical
 ) -> None:
   """A foreign, a missing and a non-canonical id all render the identical 404, for one principal.
 
-  Slice B test hook 4: ``normalize(foreign) == normalize(missing)`` byte for
-  byte (correlation id normalized out — see ``conftest.normalize_body``),
-  headers equal minus ``Date``/``Content-Length``. Run for `detail`,
-  `edit`, `update`, `archive`, `restore` here (`reassign` is admin-only and
-  covered separately by ``ACC-033``'s own ordering assertion, since an
-  agent never reaches object resolution on that route at all).
+  ``normalize(foreign) == normalize(missing)`` byte for byte (correlation
+  id normalized out — see ``conftest.normalize_body``), headers equal
+  minus ``Date``/``Content-Length``. Run for `detail`, `edit`, `update`,
+  `archive`, `restore` here (`reassign` is admin-only and covered
+  separately by its own ordering assertion above, since an agent never
+  reaches object resolution on that route at all).
   """
   foreign_contact = await create_contact(agent_b, **_CREATE_FIELDS)
   path = f"/contacts/{foreign_contact.id}{suffix}"
@@ -866,11 +849,11 @@ async def test_identical_404_foreign_missing_and_noncanonical_are_byte_identical
 
 
 # ---------------------------------------------------------------------------
-# O2 — list / search / count (ACC-101 .. ACC-113)
+# Contact — list / search / count
 # ---------------------------------------------------------------------------
 
 
-async def test_acc101_agent_list_shows_only_own_rows(
+async def test_agent_list_shows_only_own_rows(
   agent_a: LoggedInPrincipal, agent_b: LoggedInPrincipal
 ) -> None:
   """A foreign row is never a result, over `WHERE P_visible`."""
@@ -905,7 +888,7 @@ def _detail_link_count(html: str) -> int:
   return len(_CONTACT_DETAIL_LINK_PATTERN.findall(html))
 
 
-async def test_acc102_count_and_pagination_total_are_scoped(
+async def test_count_and_pagination_total_are_scoped(
   agent_a: LoggedInPrincipal, agent_b: LoggedInPrincipal
 ) -> None:
   """The `COUNT(*)` carries the same predicate as the list — a foreign row never changes it.
@@ -915,8 +898,8 @@ async def test_acc102_count_and_pagination_total_are_scoped(
   contact) — both unaffected by a contact ``agent_b`` creates in between.
   ``?per_page=100`` keeps both fixtures on a single page.
   """
-  await create_contact(agent_a, **{**_CREATE_FIELDS, "name": "ACC-102 Own One"})
-  await create_contact(agent_a, **{**_CREATE_FIELDS, "name": "ACC-102 Own Two"})
+  await create_contact(agent_a, **{**_CREATE_FIELDS, "name": "Pagination Own One"})
+  await create_contact(agent_a, **{**_CREATE_FIELDS, "name": "Pagination Own Two"})
   before = await agent_a.client.get("/contacts", params={"per_page": "100"})
   assert before.status_code == 200
   before_total = _pagination_total(before.text)
@@ -926,7 +909,7 @@ async def test_acc102_count_and_pagination_total_are_scoped(
     f"(rows={before_rows}, total={before_total})"
   )
 
-  await create_contact(agent_b, **{**_CREATE_FIELDS, "name": "ACC-102 Foreign"})
+  await create_contact(agent_b, **{**_CREATE_FIELDS, "name": "Pagination Foreign"})
   after = await agent_a.client.get("/contacts", params={"per_page": "100"})
   assert after.status_code == 200
   after_total = _pagination_total(after.text)
@@ -942,7 +925,7 @@ async def test_acc102_count_and_pagination_total_are_scoped(
   )
 
 
-async def test_acc103_search_is_prefix_only_not_containment(agent_a: LoggedInPrincipal) -> None:
+async def test_search_is_prefix_only_not_containment(agent_a: LoggedInPrincipal) -> None:
   """A term occurring only mid-string in every searched column of the owner's own row misses.
 
   The exact fixture the register names: `full_name_lower` is ``"the acme
@@ -964,7 +947,7 @@ async def test_acc103_search_is_prefix_only_not_containment(agent_a: LoggedInPri
   assert "The Acme Corp" not in response.text
 
 
-async def test_acc104_foreign_rows_are_absent_not_403_or_404(
+async def test_foreign_rows_are_absent_not_403_or_404(
   agent_a: LoggedInPrincipal, agent_b: LoggedInPrincipal
 ) -> None:
   """No 403/404 for a foreign agent's rows on the list surface — they simply do not exist."""
@@ -974,7 +957,7 @@ async def test_acc104_foreign_rows_are_absent_not_403_or_404(
   assert "Only Bs Contact" not in response.text
 
 
-async def test_acc105_admin_sees_all_rows(
+async def test_admin_sees_all_rows(
   agent_a: LoggedInPrincipal, agent_b: LoggedInPrincipal, admin: LoggedInPrincipal
 ) -> None:
   """The admin short-circuit applies to list/search/count as it does to every other cell."""
@@ -986,23 +969,21 @@ async def test_acc105_admin_sees_all_rows(
   assert "Admin Visible B" in response.text
 
 
-async def test_acc106_list_denied_for_forced_reset(
-  http_client_factory: Any, provision_agent: Any
-) -> None:
+async def test_list_denied_for_forced_reset(http_client_factory: Any, provision_agent: Any) -> None:
   """`FRST` gets `403` on `GET /contacts`."""
   client = await _forced_reset_client(http_client_factory, provision_agent)
   response = await client.get("/contacts")
   assert response.status_code == 403
 
 
-async def test_acc107_list_denied_no_session(anon_client: httpx.AsyncClient) -> None:
-  """`NOSESS` gets `303 /login...` (see `test_acc005`'s docstring on the `?next=` tail)."""
+async def test_list_denied_no_session(anon_client: httpx.AsyncClient) -> None:
+  """`NOSESS` gets `303 /login...` (the `?next=` tail is covered by the detail-read test above)."""
   response = await anon_client.get("/contacts")
   assert response.status_code == 303
   assert response.headers.get("location", "").split("?", 1)[0] == "/login"
 
 
-async def test_acc108_default_filter_excludes_archived(agent_a: LoggedInPrincipal) -> None:
+async def test_default_filter_excludes_archived(agent_a: LoggedInPrincipal) -> None:
   """`P_visible` adds `archived_at IS NULL` unless `?status=archived`/`?status=all`."""
   contact = await create_contact(agent_a, **{**_CREATE_FIELDS, "name": "Archived Default Test"})
   csrf_token, idempotency_key, version = await _archive_form_tokens(agent_a.client, contact.id)
@@ -1020,25 +1001,25 @@ async def test_acc108_default_filter_excludes_archived(agent_a: LoggedInPrincipa
   assert "Archived Default Test" in all_list.text
 
 
-async def test_acc109_bad_status_value_is_400(agent_a: LoggedInPrincipal) -> None:
+async def test_bad_status_value_is_400(agent_a: LoggedInPrincipal) -> None:
   """`?status=` outside `{active, archived, all}` is `400` (filter allowlist)."""
   response = await agent_a.client.get("/contacts", params={"status": "definitely-not-a-status"})
   assert response.status_code == 400
 
 
-async def test_acc110_bad_sort_value_is_400(agent_a: LoggedInPrincipal) -> None:
+async def test_bad_sort_value_is_400(agent_a: LoggedInPrincipal) -> None:
   """`?sort=` outside the five allowed keys is `400` — user text never reaches `ORDER BY`."""
   response = await agent_a.client.get("/contacts", params={"sort": "1; DROP TABLE contacts;--"})
   assert response.status_code == 400
 
 
-async def test_acc111_bad_dir_value_is_400(agent_a: LoggedInPrincipal) -> None:
+async def test_bad_dir_value_is_400(agent_a: LoggedInPrincipal) -> None:
   """`?dir=` outside `{asc, desc}` is `400`."""
   response = await agent_a.client.get("/contacts", params={"dir": "sideways"})
   assert response.status_code == 400
 
 
-async def test_acc112_page_and_per_page_bounds(agent_a: LoggedInPrincipal) -> None:
+async def test_page_and_per_page_bounds(agent_a: LoggedInPrincipal) -> None:
   """Non-positive `page` is 400; past-the-end is an empty 200; `per_page` clamps above 100."""
   await create_contact(agent_a, **_CREATE_FIELDS)
 
@@ -1064,7 +1045,7 @@ async def test_acc112_page_and_per_page_bounds(agent_a: LoggedInPrincipal) -> No
     '"><img src=x onerror=alert(1)>',
   ],
 )
-async def test_acc113_hostile_search_terms_are_treated_as_data(
+async def test_hostile_search_terms_are_treated_as_data(
   agent_a: LoggedInPrincipal, payload: str
 ) -> None:
   """SQL metacharacters and an XSS payload in `?q=` are parameterized data, never an error."""

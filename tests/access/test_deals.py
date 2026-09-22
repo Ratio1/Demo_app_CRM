@@ -1,32 +1,15 @@
-"""O3 deal record and O4 deal list/pipeline — ACC-201 through ACC-231, ACC-301 through ACC-309.
-
-Authority: ``ACCESS_MATRIX.md`` §3.3 (O3, `ACC-2xx`), §3.4 (O4, `ACC-3xx`),
-§5 (field-level authorization), §7 (this file's register);
-``contracts/slice-c.md`` §2(c) (route table, notices), §2(d) (the stage
-control's exact fields, R22), §1(b) (the repository shapes and the
-parent-check ordering PIN C3 fixes).
+"""Deal record and deal list/pipeline access control.
 
 Every test drives the real HTTP surface over ``live_server`` (wire-level:
 real cookies, real status codes, real headers) using the three-principal
 fixtures ``tests/conftest.py`` defines (``admin``, ``agent_a``, ``agent_b``)
-and the Slice C deal helpers added alongside them (``create_deal``,
-``archive_contact``). **Nothing here can pass before Slice C's Data,
-Backend and Frontend lanes ship**: no ``migrations/0004_deals``, no
-``app/routes/deals.py``, no ``deals/*.html`` template exists yet
-(``contracts/slice-c.md`` §1(g)/§2(j)). Every test is written so a run
-against the unshipped surface fails with a plain, honest
-``404``/``AssertionError`` rather than a collection error — exactly the
-posture ``tests/access/test_contacts.py`` used for Slice B before it
-shipped.
+and the deal helpers added alongside them (``create_deal``,
+``archive_contact``).
 
-Path note (ask **A-16**, not yet ruled). ``ACCESS_MATRIX.md`` §3.3 names
-the reference-as-parent GET as ``GET /deals/new?contact_id=``; the route
-table ``contracts/slice-c.md`` §2(c) actually pins is
-``GET /contacts/{contact_id}/deals/new``. This file drives the **shipped**
-path — the verdicts and statuses `A-16` says are unchanged, only the URL
-shape — and cites `ACC-228`..`ACC-231` against it.
+The reference-as-parent GET this file drives is the shipped
+``GET /contacts/{contact_id}/deals/new`` path.
 
-One test per cell where the cell is a single behaviour; a handful of IDs
+One test per cell where the cell is a single behaviour; a handful of cases
 whose contract is inherently a pair (own vs. foreign, active vs. archived)
 keep both cases in one test rather than splitting an atomic assertion,
 mirroring ``test_contacts.py``'s own convention.
@@ -54,7 +37,7 @@ from conftest import (
 
 pytestmark = pytest.mark.asyncio
 
-#: A canonical-shaped id that names nothing — the `ACC-202`/`ACC-207` "missing" half.
+#: A canonical-shaped id that names nothing — the "missing" half of every pair.
 _MISSING_ID = "00000000-0000-4000-8000-000000000000"
 
 _CONTACT_FIELDS = {
@@ -68,9 +51,9 @@ _CONTACT_FIELDS = {
 async def _forced_reset_client(http_client_factory: Any, provision_agent: Any) -> httpx.AsyncClient:
   """Log in a freshly provisioned agent but deliberately skip the forced password change.
 
-  For the `FRST` actor cells (`ACC-204`, `ACC-209`, `ACC-223`): the
-  returned client carries a full session whose `must_change_password` is
-  still `TRUE`. Mirrors `tests/access/test_contacts.py`'s private helper of
+  For the `FRST` actor cells: the returned client carries a full session
+  whose `must_change_password` is still `TRUE`. Mirrors
+  `tests/access/test_contacts.py`'s private helper of
   the same name and shape (each access module keeps its own copy, per
   that file's own convention).
   """
@@ -89,11 +72,11 @@ async def _own_contact(agent: LoggedInPrincipal) -> str:
 
 
 # ---------------------------------------------------------------------------
-# O3 — read (ACC-201 .. ACC-204)
+# Deal — read
 # ---------------------------------------------------------------------------
 
 
-async def test_acc201_owner_can_read_own_deal(agent_a: LoggedInPrincipal) -> None:
+async def test_owner_can_read_own_deal(agent_a: LoggedInPrincipal) -> None:
   """`AG-O` reading a deal under their own contact gets `200`."""
   contact_id = await _own_contact(agent_a)
   deal = await create_deal(agent_a, contact_id=contact_id)
@@ -101,7 +84,7 @@ async def test_acc201_owner_can_read_own_deal(agent_a: LoggedInPrincipal) -> Non
   assert response.status_code == 200
 
 
-async def test_acc202_agent_cannot_read_foreign_deal(
+async def test_agent_cannot_read_foreign_deal(
   agent_a: LoggedInPrincipal, agent_b: LoggedInPrincipal
 ) -> None:
   """`AG-X` reading another agent's deal gets a `404` identical to a missing one."""
@@ -111,7 +94,7 @@ async def test_acc202_agent_cannot_read_foreign_deal(
   assert response.status_code == 404
 
 
-async def test_acc203_admin_can_read_any_deal(
+async def test_admin_can_read_any_deal(
   agent_a: LoggedInPrincipal, admin: LoggedInPrincipal
 ) -> None:
   """`ADM` reads any agent's deal — the predicate short-circuits on `is_admin`."""
@@ -121,7 +104,7 @@ async def test_acc203_admin_can_read_any_deal(
   assert response.status_code == 200
 
 
-async def test_acc204_forced_reset_and_no_session_cannot_read_a_deal(
+async def test_forced_reset_and_no_session_cannot_read_a_deal(
   http_client_factory: Any, provision_agent: Any, anon_client: httpx.AsyncClient
 ) -> None:
   """`FRST` gets `403` at step 2; `NOSESS` gets `303 /login...` at step 1."""
@@ -135,18 +118,18 @@ async def test_acc204_forced_reset_and_no_session_cannot_read_a_deal(
 
 
 # ---------------------------------------------------------------------------
-# O3 — create (ACC-205 .. ACC-212)
+# Deal — create
 # ---------------------------------------------------------------------------
 
 
-async def test_acc205_owner_can_create_under_own_active_contact(agent_a: LoggedInPrincipal) -> None:
+async def test_owner_can_create_under_own_active_contact(agent_a: LoggedInPrincipal) -> None:
   """`AG-O` creating a deal under their own, active contact gets a `303`."""
   contact_id = await _own_contact(agent_a)
   deal = await create_deal(agent_a, contact_id=contact_id)
   assert deal.contact_id == contact_id
 
 
-async def test_acc206_admin_can_create_under_any_active_contact(
+async def test_admin_can_create_under_any_active_contact(
   agent_a: LoggedInPrincipal, admin: LoggedInPrincipal
 ) -> None:
   """`ADM` creating a deal under an agent's active contact gets a `303` (admin short-circuit)."""
@@ -155,7 +138,7 @@ async def test_acc206_admin_can_create_under_any_active_contact(
   assert deal.contact_id == contact_id
 
 
-async def test_acc207_create_referencing_a_foreign_or_missing_contact_is_identical_404(
+async def test_create_referencing_a_foreign_or_missing_contact_is_identical_404(
   agent_a: LoggedInPrincipal, agent_b: LoggedInPrincipal
 ) -> None:
   """A foreign `contact_id` and a missing one both answer `404`, byte-identical modulo the cid."""
@@ -197,7 +180,7 @@ async def test_acc207_create_referencing_a_foreign_or_missing_contact_is_identic
   assert missing_post.status_code == 404
 
 
-async def test_acc208_create_under_own_archived_contact_is_409_archived_parent(
+async def test_create_under_own_archived_contact_is_409_archived_parent(
   agent_a: LoggedInPrincipal,
 ) -> None:
   """`AG-O`/`ADM` creating a deal under their own **archived** contact gets `409`."""
@@ -206,7 +189,7 @@ async def test_acc208_create_under_own_archived_contact_is_409_archived_parent(
   assert archive_response.status_code == 303
 
   new_form = await agent_a.client.get(f"/contacts/{contact_id}/deals/new")
-  assert new_form.status_code == 409, "GET .../deals/new under an archived parent, per ACC-229"
+  assert new_form.status_code == 409, "GET .../deals/new under an archived parent must be 409"
 
   post_response = await agent_a.client.post(
     f"/contacts/{contact_id}/deals",
@@ -224,7 +207,7 @@ async def test_acc208_create_under_own_archived_contact_is_409_archived_parent(
   )
 
 
-async def test_acc209_forced_reset_and_no_session_cannot_create(
+async def test_forced_reset_and_no_session_cannot_create(
   http_client_factory: Any, provision_agent: Any, anon_client: httpx.AsyncClient
 ) -> None:
   """`FRST` and `NOSESS` both get `403` creating a deal (steps 2 and 1 of the check order)."""
@@ -256,12 +239,12 @@ async def test_acc209_forced_reset_and_no_session_cannot_create(
   )
 
 
-async def test_acc210_amount_out_of_bounds_is_400(agent_a: LoggedInPrincipal) -> None:
+async def test_amount_out_of_bounds_is_400(agent_a: LoggedInPrincipal) -> None:
   """A negative amount, >2 decimal places, or a magnitude over `DECIMAL(12,2)` is `400`.
 
-  PIN C1: the server-side `decimal.Decimal` pattern is the first and, for
-  scale, the *only* line of defence — `DECIMAL(12,2)` rounds rather than
-  rejecting a third decimal place (`contracts/slice-c.md` §1(g) probe 6).
+  The server-side `decimal.Decimal` pattern is the first and, for scale,
+  the *only* line of defence — `DECIMAL(12,2)` rounds rather than
+  rejecting a third decimal place.
   """
   contact_id = await _own_contact(agent_a)
   new_form = await agent_a.client.get(f"/contacts/{contact_id}/deals/new")
@@ -283,7 +266,7 @@ async def test_acc210_amount_out_of_bounds_is_400(agent_a: LoggedInPrincipal) ->
     assert response.status_code == 400, f"amount {bad_amount!r} should be rejected with 400"
 
 
-async def test_acc211_unknown_or_non_writable_field_is_400(agent_a: LoggedInPrincipal) -> None:
+async def test_unknown_or_non_writable_field_is_400(agent_a: LoggedInPrincipal) -> None:
   """A create/edit body carrying an unknown or non-writable field (e.g. `stage`) is `400`."""
   contact_id = await _own_contact(agent_a)
   new_form = await agent_a.client.get(f"/contacts/{contact_id}/deals/new")
@@ -305,7 +288,7 @@ async def test_acc211_unknown_or_non_writable_field_is_400(agent_a: LoggedInPrin
   assert response.status_code == 400, "`stage` is not writable on create — a new deal is always new"
 
 
-async def test_acc212_supplying_owner_id_on_create_is_400(agent_a: LoggedInPrincipal) -> None:
+async def test_supplying_owner_id_on_create_is_400(agent_a: LoggedInPrincipal) -> None:
   """A create body carrying `owner_id` is `400` — no allowlist, no such column on `deals`."""
   contact_id = await _own_contact(agent_a)
   new_form = await agent_a.client.get(f"/contacts/{contact_id}/deals/new")
@@ -328,11 +311,11 @@ async def test_acc212_supplying_owner_id_on_create_is_400(agent_a: LoggedInPrinc
 
 
 # ---------------------------------------------------------------------------
-# O3 — edit (ACC-213 .. ACC-217)
+# Deal — edit
 # ---------------------------------------------------------------------------
 
 
-async def test_acc213_owner_can_edit_own_deal_at_the_current_version(
+async def test_owner_can_edit_own_deal_at_the_current_version(
   agent_a: LoggedInPrincipal,
 ) -> None:
   """`AG-O`/`ADM` editing their own deal at the current version gets `303`."""
@@ -358,7 +341,7 @@ async def test_acc213_owner_can_edit_own_deal_at_the_current_version(
   assert response.status_code == 303
 
 
-async def test_acc214_agent_cannot_edit_foreign_deal(
+async def test_agent_cannot_edit_foreign_deal(
   agent_a: LoggedInPrincipal, agent_b: LoggedInPrincipal
 ) -> None:
   """`AG-X` editing another agent's deal gets a `404` identical to a missing one."""
@@ -368,7 +351,7 @@ async def test_acc214_agent_cannot_edit_foreign_deal(
   assert response.status_code == 404
 
 
-async def test_acc215_edit_with_a_stale_version_is_409(agent_a: LoggedInPrincipal) -> None:
+async def test_edit_with_a_stale_version_is_409(agent_a: LoggedInPrincipal) -> None:
   """A submitted `version` that no longer matches the row is `409` (stale-edit recovery)."""
   contact_id = await _own_contact(agent_a)
   deal = await create_deal(agent_a, contact_id=contact_id)
@@ -404,7 +387,7 @@ async def test_acc215_edit_with_a_stale_version_is_409(agent_a: LoggedInPrincipa
   assert second.status_code == 409
 
 
-async def test_acc216_edit_under_an_archived_parent_is_409_archived_parent(
+async def test_edit_under_an_archived_parent_is_409_archived_parent(
   agent_a: LoggedInPrincipal,
 ) -> None:
   """Editing a deal whose parent contact is now archived gets `409`, not `303`."""
@@ -414,10 +397,10 @@ async def test_acc216_edit_under_an_archived_parent_is_409_archived_parent(
   assert archive_response.status_code == 303
 
   edit_form = await agent_a.client.get(f"/deals/{deal.id}/edit")
-  assert edit_form.status_code == 409, "A-8: the edit form GET itself answers 409 archived_parent"
+  assert edit_form.status_code == 409, "the edit form GET itself must answer 409 archived_parent"
 
 
-async def test_acc217_editing_contact_id_is_400(agent_a: LoggedInPrincipal) -> None:
+async def test_editing_contact_id_is_400(agent_a: LoggedInPrincipal) -> None:
   """A crafted edit body carrying `contact_id` is `400` — the parent is immutable after create."""
   contact_id = await _own_contact(agent_a)
   other_contact_id = await _own_contact(agent_a)
@@ -443,11 +426,11 @@ async def test_acc217_editing_contact_id_is_400(agent_a: LoggedInPrincipal) -> N
 
 
 # ---------------------------------------------------------------------------
-# O3 — stage change (ACC-218 .. ACC-223)
+# Deal — stage change
 # ---------------------------------------------------------------------------
 
 
-async def test_acc218_a_valid_lateral_transition_is_303(agent_a: LoggedInPrincipal) -> None:
+async def test_a_valid_lateral_transition_is_303(agent_a: LoggedInPrincipal) -> None:
   """A lateral stage move (`new` -> `qualified`) under an own active parent gets `303`."""
   contact_id = await _own_contact(agent_a)
   deal = await create_deal(agent_a, contact_id=contact_id)
@@ -469,7 +452,7 @@ async def test_acc218_a_valid_lateral_transition_is_303(agent_a: LoggedInPrincip
   assert response.status_code == 303
 
 
-async def test_acc219_stage_change_to_the_current_stage_is_400(agent_a: LoggedInPrincipal) -> None:
+async def test_stage_change_to_the_current_stage_is_400(agent_a: LoggedInPrincipal) -> None:
   """Posting `to_stage` equal to the deal's current stage is `400` — a no-op earns no receipt."""
   contact_id = await _own_contact(agent_a)
   deal = await create_deal(agent_a, contact_id=contact_id)
@@ -490,7 +473,7 @@ async def test_acc219_stage_change_to_the_current_stage_is_400(agent_a: LoggedIn
   assert response.status_code == 400
 
 
-async def test_acc220_stage_change_out_of_a_terminal_stage_is_409(
+async def test_stage_change_out_of_a_terminal_stage_is_409(
   agent_a: LoggedInPrincipal,
 ) -> None:
   """Moving a `won` deal to any other stage is `409 stage_terminal`."""
@@ -509,8 +492,8 @@ async def test_acc220_stage_change_out_of_a_terminal_stage_is_409(
   after_won = await agent_a.client.get(f"/deals/{deal.id}")
   assert after_won.status_code == 200
   new_csrf = extract_csrf_token(after_won.text)
-  # §2(d): a TERMINAL deal renders no stage control at all (CP-35), so no
-  # `version` hidden field is scrapable here — the move to `won` is known
+  # A TERMINAL deal renders no stage control at all, so no `version`
+  # hidden field is scrapable here — the move to `won` is known
   # to bump `version` 1 -> 2 (every accepted mutation does), so that is
   # used directly rather than trying to scrape a field the page no longer
   # carries.
@@ -527,7 +510,7 @@ async def test_acc220_stage_change_out_of_a_terminal_stage_is_409(
   assert reopen_response.status_code == 409
 
 
-async def test_acc221_agent_cannot_move_a_foreign_deals_stage(
+async def test_agent_cannot_move_a_foreign_deals_stage(
   agent_a: LoggedInPrincipal, agent_b: LoggedInPrincipal
 ) -> None:
   """`AG-X` posting a stage change to another agent's deal is `404`, identical to a missing one."""
@@ -551,7 +534,7 @@ async def test_acc221_agent_cannot_move_a_foreign_deals_stage(
   assert response.status_code == 404
 
 
-async def test_acc222_stage_change_under_an_archived_parent_is_409(
+async def test_stage_change_under_an_archived_parent_is_409(
   agent_a: LoggedInPrincipal,
 ) -> None:
   """A stage change on a deal whose parent is now archived gets `409 archived_parent`."""
@@ -577,7 +560,7 @@ async def test_acc222_stage_change_under_an_archived_parent_is_409(
   assert response.status_code == 409
 
 
-async def test_acc223_forced_reset_and_no_session_cannot_change_stage(
+async def test_forced_reset_and_no_session_cannot_change_stage(
   http_client_factory: Any, provision_agent: Any, anon_client: httpx.AsyncClient
 ) -> None:
   """`FRST` and `NOSESS` both get `403` posting a stage change."""
@@ -606,11 +589,11 @@ async def test_acc223_forced_reset_and_no_session_cannot_change_stage(
 
 
 # ---------------------------------------------------------------------------
-# O3 — routes that structurally do not exist (ACC-224, ACC-227)
+# Deal — routes that structurally do not exist
 # ---------------------------------------------------------------------------
 
 
-async def test_acc224_no_archive_or_restore_route_exists_for_a_deal(
+async def test_no_archive_or_restore_route_exists_for_a_deal(
   agent_a: LoggedInPrincipal,
 ) -> None:
   """`POST /deals/{id}/archive` and `/restore` are `404` — a deal has no archive route."""
@@ -624,7 +607,7 @@ async def test_acc224_no_archive_or_restore_route_exists_for_a_deal(
     assert response.status_code == 404
 
 
-async def test_acc227_no_direct_reassign_route_exists_for_a_deal(
+async def test_no_direct_reassign_route_exists_for_a_deal(
   agent_a: LoggedInPrincipal,
 ) -> None:
   """`POST /deals/{id}/reassign` is `404` — ownership moves only with the parent contact."""
@@ -643,12 +626,12 @@ async def test_acc227_no_direct_reassign_route_exists_for_a_deal(
 
 
 # ---------------------------------------------------------------------------
-# O3 — duplicate submission (ACC-225, ACC-226) — sequential HTTP-level cases;
-# the true concurrent races live in tests/concurrency/test_deals_concurrency.py.
+# Deal — duplicate submission, sequential HTTP-level cases; the true
+# concurrent races live in tests/concurrency/test_deals_concurrency.py.
 # ---------------------------------------------------------------------------
 
 
-async def test_acc225_duplicate_submission_same_key_and_payload_replays(
+async def test_duplicate_submission_same_key_and_payload_replays(
   agent_a: LoggedInPrincipal,
 ) -> None:
   """Resubmitting the identical create (same key, same payload) replays the `303`; no new row."""
@@ -670,7 +653,7 @@ async def test_acc225_duplicate_submission_same_key_and_payload_replays(
   assert first.headers.get("location") == second.headers.get("location")
 
 
-async def test_acc226_same_key_different_payload_is_409_duplicate(
+async def test_same_key_different_payload_is_409_duplicate(
   agent_a: LoggedInPrincipal,
 ) -> None:
   """The same idempotency key with a different payload is `409 duplicate`."""
@@ -704,11 +687,11 @@ async def test_acc226_same_key_different_payload_is_409_duplicate(
 
 
 # ---------------------------------------------------------------------------
-# O3 — the reference-as-parent GET (ACC-228 .. ACC-231)
+# Deal — the reference-as-parent GET
 # ---------------------------------------------------------------------------
 
 
-async def test_acc228_deals_new_with_a_foreign_or_missing_parent_is_identical_404(
+async def test_deals_new_with_a_foreign_or_missing_parent_is_identical_404(
   agent_a: LoggedInPrincipal, agent_b: LoggedInPrincipal
 ) -> None:
   """`GET .../deals/new` with a foreign or missing `contact_id` is `404`, one code path."""
@@ -720,7 +703,7 @@ async def test_acc228_deals_new_with_a_foreign_or_missing_parent_is_identical_40
   assert normalize_body(foreign_response.text) == normalize_body(missing_response.text)
 
 
-async def test_acc229_deals_new_under_an_own_archived_parent_is_409(
+async def test_deals_new_under_an_own_archived_parent_is_409(
   agent_a: LoggedInPrincipal,
 ) -> None:
   """`GET /contacts/{id}/deals/new` under an own, now-archived parent is `409`, never the 404."""
@@ -731,18 +714,15 @@ async def test_acc229_deals_new_under_an_own_archived_parent_is_409(
   assert response.status_code == 409
 
 
-async def test_acc230_deals_new_echoes_only_the_permitted_parent_attributes(
+async def test_deals_new_echoes_only_the_permitted_parent_attributes(
   agent_a: LoggedInPrincipal,
 ) -> None:
   """The pre-filled form echoes only what `GET /contacts/{id}` already permitted this caller.
 
-  `ACCESS_MATRIX.md` §3.3's `ACC-230` cell names an upper bound — "echoes
-  **only** the parent's id... and `full_name` and `company`" — and the
-  shipped route table (`contracts/slice-c.md` §2(c)) narrows that to
-  exactly `contact {id, full_name}`: a stricter, still-conforming
-  implementation (a subset of what the matrix permits, never more). This
-  asserts what is actually frozen: `full_name` is echoed, and nothing
-  from another principal's data ever is.
+  The shipped route only ever echoes `contact {id, full_name}` — a strict
+  subset of the parent's fields, never more. This asserts what is
+  actually frozen: `full_name` is echoed, and nothing from another
+  principal's data ever is.
   """
   contact = await create_contact(agent_a, **_CONTACT_FIELDS)
   contact_detail = await agent_a.client.get(f"/contacts/{contact.id}")
@@ -753,15 +733,15 @@ async def test_acc230_deals_new_echoes_only_the_permitted_parent_attributes(
   assert _CONTACT_FIELDS["name"] in new_form.text
 
 
-async def test_acc231_malformed_contact_id_on_deals_new_is_400(agent_a: LoggedInPrincipal) -> None:
+async def test_malformed_contact_id_on_deals_new_is_400(agent_a: LoggedInPrincipal) -> None:
   """A `contact_id` that is not a canonical 36-character UUID is `400`, never a 404."""
   response = await agent_a.client.get("/contacts/not-a-uuid/deals/new")
   assert response.status_code == 400
 
 
 # ---------------------------------------------------------------------------
-# Identical-404 across every deal surface (test hook 7, slice-b.md §2(g)
-# hook 4 re-run over the five deal surfaces plus a non-canonical id).
+# Identical-404 across every deal surface (the same byte-identical-404
+# rule re-run over the five deal surfaces plus a non-canonical id).
 # ---------------------------------------------------------------------------
 
 
@@ -788,11 +768,11 @@ async def test_identical_404_across_every_deal_surface(agent_b: LoggedInPrincipa
 
 
 # ---------------------------------------------------------------------------
-# O4 — list / pipeline (ACC-301 .. ACC-309)
+# Deal — list / pipeline
 # ---------------------------------------------------------------------------
 
 
-async def test_acc301_and_acc302_owner_sees_only_own_deals_with_correct_aggregates(
+async def test_owner_sees_only_own_deals_with_correct_aggregates(
   agent_a: LoggedInPrincipal,
 ) -> None:
   """`AG-O` lists and pipelines show only their own rows, with SQL-computed per-stage aggregates."""
@@ -809,7 +789,7 @@ async def test_acc301_and_acc302_owner_sees_only_own_deals_with_correct_aggregat
   assert pipeline_response.status_code == 200
 
 
-async def test_acc303_foreign_deals_are_simply_absent_not_403_or_404(
+async def test_foreign_deals_are_simply_absent_not_403_or_404(
   agent_a: LoggedInPrincipal, agent_b: LoggedInPrincipal
 ) -> None:
   """`AG-X`'s list/pipeline never 403s or 404s — the foreign rows are simply not in the results."""
@@ -824,9 +804,7 @@ async def test_acc303_foreign_deals_are_simply_absent_not_403_or_404(
   assert pipeline_response.status_code == 200
 
 
-async def test_acc304_admin_sees_all_deals(
-  agent_a: LoggedInPrincipal, admin: LoggedInPrincipal
-) -> None:
+async def test_admin_sees_all_deals(agent_a: LoggedInPrincipal, admin: LoggedInPrincipal) -> None:
   """`ADM` lists every agent's deals (admin short-circuit)."""
   contact_id = await _own_contact(agent_a)
   await create_deal(agent_a, contact_id=contact_id, title="Admin-visible deal beta9")
@@ -836,7 +814,7 @@ async def test_acc304_admin_sees_all_deals(
   assert "Admin-visible deal beta9" in response.text
 
 
-async def test_acc305_forced_reset_and_no_session_cannot_list_deals(
+async def test_forced_reset_and_no_session_cannot_list_deals(
   http_client_factory: Any, provision_agent: Any, anon_client: httpx.AsyncClient
 ) -> None:
   """`FRST` gets `403`; `NOSESS` gets `303 /login...` listing deals."""
@@ -849,7 +827,7 @@ async def test_acc305_forced_reset_and_no_session_cannot_list_deals(
   assert anon_response.headers.get("location", "").split("?", 1)[0] == "/login"
 
 
-async def test_acc306_deals_under_archived_contacts_are_hidden_by_default(
+async def test_deals_under_archived_contacts_are_hidden_by_default(
   agent_a: LoggedInPrincipal,
 ) -> None:
   """A deal under an archived contact drops out of the default (`status=active`) list."""
@@ -871,7 +849,7 @@ async def test_acc306_deals_under_archived_contacts_are_hidden_by_default(
   assert "Soon-archived-parent deal" in all_list.text
 
 
-async def test_acc307_sort_and_dir_outside_the_allowlist_are_400(
+async def test_sort_and_dir_outside_the_allowlist_are_400(
   agent_a: LoggedInPrincipal,
 ) -> None:
   """`?sort=` or `?dir=` outside the five-key/two-direction allowlist is `400`."""
@@ -881,7 +859,7 @@ async def test_acc307_sort_and_dir_outside_the_allowlist_are_400(
   assert bad_dir.status_code == 400
 
 
-async def test_acc308_stage_filter_outside_the_five_stages_is_400(
+async def test_stage_filter_outside_the_five_stages_is_400(
   agent_a: LoggedInPrincipal,
 ) -> None:
   """`?stage=` outside `{new, qualified, proposal, won, lost}` is `400`."""
@@ -889,7 +867,7 @@ async def test_acc308_stage_filter_outside_the_five_stages_is_400(
   assert response.status_code == 400
 
 
-async def test_acc309_per_page_and_page_abuse_is_clamped_not_rejected(
+async def test_per_page_and_page_abuse_is_clamped_not_rejected(
   agent_a: LoggedInPrincipal,
 ) -> None:
   """`?per_page=` above 100 is clamped to 100, not rejected; a non-positive value is `400`."""
