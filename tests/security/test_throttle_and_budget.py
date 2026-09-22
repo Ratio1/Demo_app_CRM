@@ -160,10 +160,20 @@ async def _failed_login(client: httpx.AsyncClient, *, email: str) -> httpx.Respo
   )
 
 
-async def test_sec030_five_failures_trip_a_temporary_backoff_that_recovers(
+async def test_sec030_five_failures_trip_a_temporary_backoff(
   http_client_factory: Any, provision_agent: Any
 ) -> None:
   """The 6th failed attempt within 15 minutes for one account is ``429``, not ``401``.
+
+  Renamed under ruling **R61** (2026-09-22): this test only drives the
+  *trip*, never the window rolling over, so its name no longer claims
+  ``...that_recovers``. Recovery is
+  ``tests/inprocess/test_throttle_and_budget_windows.py``'s
+  ``test_login_lock_engages_at_the_6th_failure_and_lifts_after_login_lock_elapses``,
+  which advances a ``ManualClock`` past the lock window rather than sleeping
+  — this module's ``live_server`` runs the real, unswappable
+  ``SystemClock``, so it cannot prove recovery without either sleeping or
+  risking the ``:00``-boundary flake ruling R57 exists to avoid.
 
   Targets a freshly provisioned, dedicated agent (R52) — never the shared
   session admin — so this test's own throttle trip cannot lock out
