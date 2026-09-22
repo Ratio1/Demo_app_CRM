@@ -129,3 +129,11 @@ This task adds no new deferral beyond the table above. F2/F3/F5's "accepted low,
 ## Privacy fence (binding, restated)
 
 This build (`demo-crm-app:local`, commit `f12e159` and this review commit) holds **fictional `example.test` data only** — every account, contact, deal and activity created or verified in this task used invented `example.test` identities and fictional passphrases. It must not hold real personal data until subject export, erasure, retention pruning and verified administrator MFA exist (deferred table above). The real `crm` database was touched only by `migrate` (by the builder, prior to this task) and was never bootstrapped, seeded or reset by anyone to date; this task ran `migrate`/`bootstrap`/`set-origin`/`seed-demo`/`reset-demo` against `crm_test` exclusively.
+
+## 2026-09-23 — Local HTTP, production TLS at the edge
+
+Operator decision: no TLS listener in the app; Cloudflare terminates TLS in production, so `scripts/start` serves plain HTTP on `0.0.0.0:3000` everywhere, dev and prod alike. Session-cookie and header behaviour are derived from the *stored* public origin's scheme, never from an environment variable — `https://…` gets `__Host-crm_session`, `Secure`, and HSTS; `http://…` gets `crm_session`, no `Secure`, no HSTS — `HttpOnly`, `SameSite=Lax`, `Path=/`, no `Domain`, exact `Origin`/`Host` matching, CSRF and `Clear-Site-Data` on logout stay identical either way. `manage bootstrap`/`set-origin` accept both `http://` and `https://` origins.
+
+The canonical suite proves both halves: `tests/inprocess/test_origin_scheme.py` drives one client at a fixed `https://crm.test` origin (asserting `Secure`, the `__Host-` name, HSTS) and a second at `http://crm.test` (asserting their absence and the bare cookie name) through the same request pipeline; `live_server`'s real-socket tests exercise the plain-HTTP half end to end, matching production's own listener.
+
+`crm`'s stored origin is now `http://127.0.0.1:3002` (`manage set-origin`, this task). The running container's live `/login` response confirms `crm_session` without `Secure` and no `Strict-Transport-Security` header; a same-session POST with the wrong `Origin` still gets `403` while the matching `Origin` reaches the credential check. The database connection is unchanged: `sslmode=verify-full` against the shared CA, always.
