@@ -18,8 +18,9 @@ Exit codes, one meaning each (§1.2):
   4  database unreachable or privilege denied
   5  not provisioned, or the migration state is unusable
 
-`--password-stdin` reads exactly one line, strips exactly one trailing
-newline and nothing else — a password may legitimately begin or end with a
+`--password-stdin` (and `seed-demo`'s `--agent-password-stdin`) reads
+exactly one line, strips exactly one trailing newline and nothing else —
+a password may legitimately begin or end with a
 space — rejects an empty line with exit 2, and never echoes. Without it,
 entry is a hidden getpass prompt. A password never appears in argv, in an
 environment variable, or in any line this script prints.
@@ -63,7 +64,7 @@ from app.security.passwords import (  # noqa: E402
   PasswordService,
   production_hasher,
 )
-from app.services import accounts  # noqa: E402
+from app.services import accounts, demo  # noqa: E402
 
 if TYPE_CHECKING:
   from collections.abc import Awaitable, Callable
@@ -279,6 +280,64 @@ async def _set_origin(arguments: argparse.Namespace) -> str:
   return "set-origin: the public origin is stored"
 
 
+async def _seed_demo(arguments: argparse.Namespace) -> str:
+  """Create the two demo agents if absent, then write the small data set."""
+  if arguments.scale != demo.SCALE_SMALL:
+    raise UsageError("--scale accepts 'small' only")
+  password = _read_password(from_stdin=arguments.agent_password_stdin)
+  passwords = _password_service()
+  reports: list[demo.SeedReport] = []
+
+  async def _work(*, pool: Any, clock: Any) -> None:
+    correlation_id = new_correlation_id()
+    agent_ids = []
+    for email, display_name in demo.DEMO_AGENTS:
+      agent_ids.append(
+        await accounts.ensure_demo_agent(
+          pool=pool,
+          clock=clock,
+          passwords=passwords,
+          email=email,
+          display_name=display_name,
+          password=password,
+          correlation_id=correlation_id,
+        )
+      )
+    reports.append(
+      await demo.seed_demo(
+        pool=pool,
+        clock=clock,
+        agent_ids=tuple(agent_ids),
+        correlation_id=correlation_id,
+      )
+    )
+
+  await _with_pool(_work)
+  report = reports[0]
+  return (
+    f"seed-demo: wrote {report.contacts_written} contact(s), "
+    f"{report.deals_written} deal(s), {report.activities_written} activity(ies); "
+    f"now {report.contacts_total}/{report.deals_total}/{report.activities_total}"
+  )
+
+
+async def _reset_demo(arguments: argparse.Namespace) -> str:
+  """Delete the demo business rows, keeping accounts, settings and audit."""
+  if not arguments.yes:
+    raise UsageError("reset-demo needs --yes: it deletes every contact, deal and activity")
+  reports: list[demo.ResetReport] = []
+
+  async def _work(*, pool: Any, clock: Any) -> None:
+    reports.append(
+      await demo.reset_demo(pool=pool, clock=clock, correlation_id=new_correlation_id())
+    )
+
+  await _with_pool(_work)
+  removed = reports[0].removed
+  counts = ", ".join(f"{table} {removed[table]}" for table in demo.DEMO_DELETE_ORDER)
+  return f"reset-demo: removed {counts}"
+
+
 def _build_parser() -> argparse.ArgumentParser:
   """Return the argument parser for every subcommand."""
   parser = argparse.ArgumentParser(
@@ -312,6 +371,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
   set_origin = subcommands.add_parser("set-origin", help="store the public HTTPS origin")
   set_origin.add_argument("--origin", required=True)
+
+  seed_demo = subcommands.add_parser("seed-demo", help="write the fictional demo data set")
+  seed_demo.add_argument("--scale", default=demo.SCALE_SMALL, choices=(demo.SCALE_SMALL,))
+  seed_demo.add_argument("--agent-password-stdin", action="store_true", dest="agent_password_stdin")
+
+  reset_demo = subcommands.add_parser("reset-demo", help="delete every demo business row")
+  reset_demo.add_argument("--yes", action="store_true")
   return parser
 
 
@@ -331,6 +397,10 @@ async def _dispatch(arguments: argparse.Namespace) -> str:
     return await _disable_user(arguments)
   if arguments.command == "set-origin":
     return await _set_origin(arguments)
+  if arguments.command == "seed-demo":
+    return await _seed_demo(arguments)
+  if arguments.command == "reset-demo":
+    return await _reset_demo(arguments)
   raise UsageError(f"unknown command: {arguments.command}")
 
 

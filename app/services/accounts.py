@@ -72,6 +72,7 @@ __all__ = [
   "bootstrap",
   "create_user",
   "disable_user",
+  "ensure_demo_agent",
   "reset_password",
   "set_origin",
 ]
@@ -534,3 +535,91 @@ async def set_origin(
     )
 
   await run_serializable(pool, _work, op="set-origin")
+
+
+async def ensure_demo_agent(
+  *,
+  pool: Pool,
+  clock: Clock,
+  passwords: PasswordService,
+  email: str,
+  display_name: str,
+  password: str,
+  correlation_id: str,
+) -> UUID:
+  """Return the demo agent's id, creating the account on the first run only.
+
+  Parameters
+  ----------
+  pool : Pool
+    The process pool, under the maintenance role.
+  clock : Clock
+    Injected time source.
+  passwords : PasswordService
+    For the Argon2 hash, computed before the transaction opens.
+  email : str
+    One of the two fixed ``example.test`` demo addresses.
+  display_name : str
+    Their display name.
+  password : str
+    The shared demo password, read from a hidden prompt or one stdin line.
+  correlation_id : str
+    This command's id.
+
+  Returns
+  -------
+  UUID
+    The existing account's id when one is already there — **the password is
+    then left alone**, so a second ``seed-demo`` never silently re-issues a
+    credential the operator may have changed — or the new account's id.
+
+  Notes
+  -----
+  ``must_change_password`` is **false**, which is the one way this differs
+  from :func:`create_user`, and it is a deliberate, narrow exception
+  (``S1``): a demo agent that had to change its password at first login
+  could not be signed into during a demo without changing it. It is
+  justified only because these two accounts hold fictional ``example.test``
+  data and are named in the README as demo accounts; every human account
+  still goes through ``create-user`` and its forced reset.
+
+  ``role`` is ``agent``, set at INSERT like every other account (``H-07``,
+  ``ARC-018``) — this module remains the only one that references
+  :func:`~app.db.repositories.users.insert_user`.
+  """
+  now = clock.now()
+  password_hash = await passwords.hash(password)
+  user_id = uuid.uuid4()
+  email_norm = normalize_email(email)
+  resolved: list[UUID] = []
+
+  async def _work(conn: PoolConnection) -> None:
+    existing = await find_user_for_auth(conn, email_norm=email_norm)
+    if existing is not None:
+      resolved.append(existing.id)
+      return
+    await insert_user(
+      conn,
+      user_id=user_id,
+      email=email.strip(),
+      email_norm=email_norm,
+      display_name=display_name,
+      role=ROLE_AGENT,
+      password_hash=password_hash,
+      must_change_password=False,
+      now=now,
+    )
+    await record(
+      conn,
+      actor_id=None,
+      object_type=OBJECT_USER,
+      object_id=user_id,
+      action=ACTION_USER_CREATED,
+      outcome=OUTCOME_SUCCESS,
+      correlation_id=correlation_id,
+      at=now,
+    )
+    resolved.append(user_id)
+
+  await run_serializable(pool, _work, op="ensure-demo-agent")
+  return resolved[0]
