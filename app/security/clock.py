@@ -74,8 +74,12 @@ class ManualClock:
   """A clock tests construct and advance by hand; never selected by anything.
 
   There is no environment variable, configuration key or branch anywhere in
-  ``app/`` that selects this class: a test constructs it and injects it
-  through the constructor of the service under test (``slice-a.md`` §7.3).
+  ``app/`` that selects this class: a test constructs it and injects it —
+  either through the constructor of the one service under test
+  (``slice-a.md`` §7.3), or through ``create_app(clock=…)`` (**R54**), which
+  hands the same instance to ``CorrelationMiddleware`` and to every service
+  the lifespan builds, so an in-process request through the whole
+  application can be driven by advancing it.
   """
 
   def __init__(self, start: datetime) -> None:

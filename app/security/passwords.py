@@ -9,7 +9,9 @@ shows).
 Three properties this module exists to hold:
 
 *Parameters are injected, never selected.* The :class:`argon2.PasswordHasher`
-is a constructor argument. There is no environment variable, no
+is a constructor argument — reached from outside through
+``create_app(password_hasher=…)`` (**R54**), whose default is
+:func:`production_hasher`. There is no environment variable, no
 configuration key and no branch here that could pick a cheaper profile, so
 a production process cannot be talked into test-grade hashing
 (``ARC-020``); the module source names no environment read at all.

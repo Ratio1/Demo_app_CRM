@@ -22,8 +22,9 @@
 #      credential reaches a process here.
 #
 # Port 3002 is this app's dev assignment (BRIEF.md) and it binds 127.0.0.1
-# only. Tests never use it: every automated test starts its own uvicorn on an
-# ephemeral port (ruling R41).
+# only. Tests never use it (rulings R41 item 5, R46): the suite's protocol
+# tests run the application in process over httpx.ASGITransport, and the one
+# real TLS server it still starts is session-scoped on an ephemeral port.
 #
 # The stored public origin is NOT written here — this script never touches the
 # database. Point it at this server once, by hand:
