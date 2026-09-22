@@ -6,10 +6,20 @@ Authority: ``ACCESS_MATRIX.md`` §7; ``slice-a.md`` §1.1 (``app/security/sessio
 
 Split by how the assertion is observable (module docstring of
 ``conftest.py`` explains why): expiry and revocation (SEC-013, SEC-014,
-SEC-015) are **in-process**, driving the repository's own ``now`` parameter
-against ``crm_test`` directly — the only way to test them without sleeping,
-since the live server's clock cannot be swapped. Everything else here is
-wire-observable and uses ``live_server``.
+SEC-015) are **in-process, at the repository layer**, driving the
+repository's own ``now`` parameter against ``crm_test`` directly, without
+sleeping. ``live_server``'s own clock is the real, production
+``SystemClock`` and cannot be swapped, so nothing driven through it can be
+clock-tested this way — that half is why this module still exists at the
+repository layer rather than being subsumed entirely. As of ruling **R54**
+there is now a *third* way to test the same properties without sleeping:
+``tests/inprocess`` builds the whole app with an injected ``ManualClock``
+and drives it through ``httpx.ASGITransport``, which is the stronger,
+full-stack version of SEC-013's pre-auth-expiry case (see
+``tests/inprocess/test_session_expiry.py``) — kept here *as well*, not
+replaced, because this module proves the repository's own contract
+independently of the route/middleware stack above it. Everything else
+here is wire-observable and uses ``live_server``.
 
 Typing note: ``db_connection`` and ``clock`` are typed ``Any`` in this file,
 not ``object``. Both come from fixtures whose real implementation

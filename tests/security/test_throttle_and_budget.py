@@ -27,9 +27,24 @@ Instead, every test in this module:
    ``autouse`` fixture (function-scoped — see its own docstring for why
    that, and not a single ``scope="module"`` instance, is what "after
    EVERY test" requires) that clears every row from ``login_throttle`` and
-   ``rate_budget`` (owner role, its own subprocess) both before and after
+   ``rate_budget`` (owner role, its own subprocess, via
+   ``conftest.clear_throttle_and_budget_state``) both before and after
    each test, so a global budget one test trips can never leak into the
    next.
+
+SEC-031a/SEC-031b moved (ruling R57)
+--------------------------------------
+The global-budget trip-and-recovery pair used to live here, driven over
+``live_server`` with a real burst of requests. Counting a threshold this
+way is sound, but *proving recovery* needs the budget window to actually
+roll over, and a wall-clock version of that is exactly what R57 flags:
+depending on where in the real minute the burst happens to land, it can
+straddle the ``:00`` window boundary and flake. Both are now in
+``tests/inprocess/test_throttle_and_budget_windows.py``, against the
+``in_process_client``/``ManualClock`` fixtures: the whole burst is sent
+at one fixed instant (so it cannot straddle a boundary), and recovery is
+proved by advancing the clock past ``BUDGET_WINDOW``, never by waiting on
+the wall clock.
 """
 
 from __future__ import annotations
@@ -45,51 +60,15 @@ import pytest
 if TYPE_CHECKING:
   from argon2 import PasswordHasher
 from conftest import (
-  OWNER_ENV_FILE,
-  VENV_PYTHON,
   ProvisionedUser,
+  clear_throttle_and_budget_state,
   extract_csrf_token,
   login_via_http,
-  run_with_env,
 )
 
 pytestmark = pytest.mark.asyncio
 
 LOGIN_FAILURE_THRESHOLD = 5
-
-#: Owner-role, autocommit: expiry/eviction is maintenance's job elsewhere,
-#: this is a blunt test-isolation wipe of exactly the two counter tables
-#: R52 names, nothing else (``crm`` is never touched; this only ever runs
-#: against ``crm_test``, via ``OWNER_ENV_FILE``).
-_CLEAR_THROTTLE_AND_BUDGET_SNIPPET = """
-import asyncio
-from typing import Any, cast
-from psycopg import AsyncConnection
-from app.config import load_config
-
-async def main() -> None:
-  kwargs = cast('dict[str, Any]', load_config().connect_kwargs())
-  conn = await AsyncConnection.connect(autocommit=True, **kwargs)
-  try:
-    await conn.execute('DELETE FROM public.login_throttle')
-    await conn.execute('DELETE FROM public.rate_budget')
-  finally:
-    await conn.close()
-
-asyncio.run(main())
-"""
-
-
-def _clear_throttle_and_budget_state(*, log_path: Path) -> None:
-  """Delete every row from ``login_throttle`` and ``rate_budget`` (owner role)."""
-  run_with_env(
-    OWNER_ENV_FILE,
-    str(VENV_PYTHON),
-    "-B",
-    "-c",
-    _CLEAR_THROTTLE_AND_BUDGET_SNIPPET,
-    log_path=log_path,
-  )
 
 
 @pytest.fixture(autouse=True)
@@ -104,15 +83,13 @@ def _reset_throttle_and_budget_between_tests(
   individual tests, which is exactly what "after EVERY test" requires — so
   "module-scoped" is read here as "scoped to this module's tests" (an
   autouse fixture defined in this file, applying to every test it
-  collects), not as the literal pytest scope keyword. Depending on
-  ``crm_test_schema`` (session-scoped) rather than assuming some earlier
-  module already requested it means this module is meant to also be
-  collectible and runnable on its own
-  (``pytest tests/security/test_throttle_and_budget.py``), not only as
-  part of the full suite — verified: schema/data isolation hold either
-  way. ``test_sec034`` is a separate matter regardless of scope: it drives
-  10 genuinely concurrent Argon2 hashes against a real, timed queue depth.
-  An earlier revision staged its 10 attempts as free-running
+  collects), not as the literal pytest scope keyword. Naming
+  ``crm_test_schema`` explicitly is now belt-and-suspenders (it is
+  session-scoped **autouse** as of ruling R57, so it already ran before
+  this fixture regardless) but is kept as documentation of the real
+  dependency. ``test_sec034`` is a separate matter regardless of scope: it
+  drives 10 genuinely concurrent Argon2 hashes against a real, timed queue
+  depth. An earlier revision staged its 10 attempts as free-running
   ``GET``-then-``POST`` pairs under one ``asyncio.gather`` and that shape
   flaked roughly 1 run in 3, standalone or full-suite, independent of this
   fixture; the test now fetches every CSRF token first and releases all
@@ -121,9 +98,9 @@ def _reset_throttle_and_budget_between_tests(
   own docstring for the detail; this fixture's before/after clear is
   unrelated to that timing and was never the cause.
   """
-  _clear_throttle_and_budget_state(log_path=tmp_path / "clear-before.log")
+  clear_throttle_and_budget_state(log_path=tmp_path / "clear-before.log")
   yield
-  _clear_throttle_and_budget_state(log_path=tmp_path / "clear-after.log")
+  clear_throttle_and_budget_state(log_path=tmp_path / "clear-after.log")
 
 
 #: Matches the hidden ``csrf_token`` field's value exactly as
@@ -201,41 +178,6 @@ async def test_sec030_five_failures_trip_a_temporary_backoff_that_recovers(
   ]
   assert statuses[:LOGIN_FAILURE_THRESHOLD] == [401] * LOGIN_FAILURE_THRESHOLD
   assert statuses[LOGIN_FAILURE_THRESHOLD] == 429
-
-
-async def test_sec031a_the_global_login_budget_trips_with_a_sanitized_429(
-  http_client_factory: Any,
-) -> None:
-  """A burst of 130 pre-auth ``GET /login`` requests (over the 120/min budget) yields a 429.
-
-  Uses unique never-registered emails on ``POST`` would also trip the
-  per-account throttle at 5, confounding the measurement, so this drives
-  the **pre-auth** budget via repeated ``GET /login`` instead, which
-  ``ARC-017``'s own ordering half already treats as the anonymous,
-  budget-gated write.
-  """
-  client: httpx.AsyncClient = http_client_factory()
-  statuses = [(await client.get("/login")).status_code for _ in range(130)]
-  assert 429 in statuses
-
-
-async def test_sec031b_the_budget_recovers_without_operator_action(
-  http_client_factory: Any,
-) -> None:
-  """A successful login still works after a burst that trips the global budget subsides.
-
-  This is a coarse, real-clock check (no sleep long enough to cross a
-  1-minute window is taken here; it only asserts that *not every* request
-  in a moderate burst is refused, which is the weakest true statement this
-  suite can make without waiting out a live minute — a stronger version
-  belongs to a longer-running acceptance run, not this suite). Drives
-  anonymous ``GET /login`` only, so it needs no account of its own — no
-  ``bootstrap_admin`` dependency (R52: this module never targets the
-  shared session admin).
-  """
-  client: httpx.AsyncClient = http_client_factory()
-  statuses = [(await client.get("/login")).status_code for _ in range(20)]
-  assert 200 in statuses
 
 
 async def test_sec032_unknown_user_and_wrong_password_are_indistinguishable(
