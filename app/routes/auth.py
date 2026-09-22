@@ -32,13 +32,14 @@ from app.routes.errors import DASHBOARD_URL, LOGIN_URL, PASSWORD_URL, bad_reques
 from app.routes.rendering import base_context, csrf_token_for_request, notice_for, render
 from app.security.authz import (
   charge_account_budget,
+  deny_forced_reset,
   form_content_type_ok,
   read_form,
   require_csrf,
   require_session,
 )
 from app.security.context import context_of
-from app.security.failures import BudgetExceeded, ForcedResetRequired
+from app.security.failures import BudgetExceeded
 from app.security.headers import apply_security_headers
 from app.security.origin import is_safe_relative
 from app.security.principal import resolve_session
@@ -230,7 +231,7 @@ async def root(request: Request) -> Response:
   principal = await require_session(request)
   await charge_account_budget(request, principal, safe=True)
   if principal.must_change_password:
-    raise ForcedResetRequired
+    await deny_forced_reset(request, principal)
   return _redirect(DASHBOARD_URL, request)
 
 

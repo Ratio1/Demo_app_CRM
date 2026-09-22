@@ -69,6 +69,7 @@ from app.routes.errors import (
   ambiguous_commit_handler,
   budget_handler,
   contact_not_found_handler,
+  deal_not_found_handler,
   forbidden,
   forced_reset_handler,
   hash_queue_handler,
@@ -88,6 +89,7 @@ from app.security.context import AppContext
 from app.security.failures import (
   BudgetExceeded,
   ContactNotFound,
+  DealNotFound,
   ForcedResetRequired,
   NoSession,
   NotProvisioned,
@@ -494,6 +496,7 @@ def create_app(
     HashQueueFull: hash_queue_handler,
     TooLarge: too_large_handler,
     ContactNotFound: contact_not_found_handler,
+    DealNotFound: deal_not_found_handler,
     AmbiguousCommit: ambiguous_commit_handler,
     Exception: unhandled_exception_handler,
   }

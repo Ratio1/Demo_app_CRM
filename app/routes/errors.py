@@ -44,7 +44,7 @@ from starlette.responses import RedirectResponse, Response
 
 from app.logging import current_correlation_id
 from app.routes.rendering import base_context, csrf_token_for_request, render
-from app.security.audit import ACTION_ACCESS_DENIED, OBJECT_CONTACT, record_denial
+from app.security.audit import ACTION_ACCESS_DENIED, OBJECT_CONTACT, OBJECT_DEAL, record_denial
 from app.security.headers import apply_security_headers
 from app.security.origin import is_safe_relative
 from app.security.principal import resolve_principal
@@ -66,6 +66,7 @@ __all__ = [
   "budget_handler",
   "conflict",
   "contact_not_found_handler",
+  "deal_not_found_handler",
   "forbidden",
   "forced_reset_handler",
   "hash_queue_handler",
@@ -76,6 +77,7 @@ __all__ = [
   "not_provisioned_handler",
   "redirect",
   "region_error",
+  "retry_exhausted_handler",
   "role_required_handler",
   "step_zero_handler",
   "too_large_handler",
@@ -106,6 +108,15 @@ _REGION_TEXT: Final[dict[int, str]] = {
   429: "Demo_App_CRM is busy with your requests. Wait a moment, then try again.",
   503: "Demo_App_CRM is temporarily unavailable. Nothing you did caused this.",
 }
+
+#: **R70**. The ``401`` fragment body is a **pair**, selected by whether a
+#: session cookie was presented — the same evidence **R65** already uses for
+#: the ``?notice=session_ended`` suffix. With a cookie the region keeps
+#: ``CP-07``'s two sentences above; **without one**, "Your session ended" is
+#: a claim about a client that never had a session, so the region says only
+#: this. One rule, both shapes: a first-time visitor is never told a session
+#: ended, whether they asked for a page or for a fragment (``ACC-037``).
+_REGION_TEXT_401_COOKIELESS: Final = "Sign in to continue."
 
 
 def is_fragment(request: Request) -> bool:
@@ -227,6 +238,7 @@ def region_error(
   status: int,
   redirect: str | None = None,
   retry_after: int | None = None,
+  presented_cookie: bool = True,
 ) -> Response:
   """Render the compact fragment an htmx request gets instead of a page.
 
@@ -245,6 +257,12 @@ def region_error(
     instead of nothing (**R26**).
   retry_after : int | None, optional
     Whole seconds, rendered in the fragment and sent as ``Retry-After``.
+  presented_cookie : bool, optional
+    Whether this request carried a session cookie (**R70**). It selects the
+    ``401`` body only and is ignored on every other status; the default is
+    ``True`` so the three other callers keep ``CP-07`` unchanged. The
+    cookie's *value* is never parsed — it is evidence that this client once
+    had a session and nothing more.
 
   Returns
   -------
@@ -255,9 +273,12 @@ def region_error(
     headers["HX-Redirect"] = redirect
   if retry_after is not None:
     headers["Retry-After"] = str(retry_after)
+  text = _REGION_TEXT.get(status, _REGION_TEXT[503])
+  if status == 401 and not presented_cookie:
+    text = _REGION_TEXT_401_COOKIELESS
   context = {
     "status": status,
-    "text": _REGION_TEXT.get(status, _REGION_TEXT[503]),
+    "text": text,
     "retry_after": retry_after,
   }
   response = render(
@@ -589,12 +610,19 @@ async def no_session_handler(request: Request, exc: Exception) -> Response:
   had a session and no more: its value is never parsed here, so a
   fabricated one only buys the sentence a genuine expiry would have
   earned.
+
+  **R70** takes the same flag one step further: it also selects the
+  fragment's **body**, so a cookieless htmx ``401`` reads *"Sign in to
+  continue."* rather than announcing an ending that never happened. The
+  header and the body now say the same thing.
   """
   del exc
   presented_cookie = bool(request.cookies.get(COOKIE_NAME))
   if is_fragment(request):
     login_target = f"{LOGIN_URL}?notice=session_ended" if presented_cookie else LOGIN_URL
-    return region_error(request, status=401, redirect=login_target)
+    return region_error(
+      request, status=401, redirect=login_target, presented_cookie=presented_cookie
+    )
   if request.method not in SAFE_METHODS:
     return await forbidden(request)
 
@@ -699,6 +727,95 @@ async def contact_not_found_handler(request: Request, exc: Exception) -> Respons
       at=context.clock.now(),
     )
   return await not_found(request)
+
+
+async def deal_not_found_handler(request: Request, exc: Exception) -> Response:
+  """Answer step 4's deal denial: one deny row, then the one ``404`` body.
+
+  Parameters
+  ----------
+  request : Request
+    The inbound request. Step 1 has already run on every route that can
+    raise this, so the principal is memoized on ``request.state``.
+  exc : Exception
+    The :class:`app.security.failures.DealNotFound` decision; carries the
+    requested id **iff** it was canonical.
+
+  Returns
+  -------
+  Response
+    ``404`` with ``errors/404.html`` — the **same** body
+    :func:`contact_not_found_handler` renders, from the same
+    :func:`not_found`, so a foreign deal, a missing deal, a non-canonical
+    deal id and a foreign *contact* are one answer for one principal
+    modulo the correlation id (``ACC-202``, **PIN 8**, **R27**).
+
+  Notes
+  -----
+  The single emission point of ``ACCESS_MATRIX.md`` §4.5 **row 2**
+  (``deal`` / ``access_denied`` / ``denied``), so five deal surfaces cannot
+  write five different rows. It differs from row 1 in exactly one field —
+  ``object_type`` — and that is the whole reason the two handlers exist
+  separately rather than one guessing the surface.
+
+  A **parent** miss never reaches here: ``POST /contacts/{id}/deals`` and
+  ``GET /contacts/{id}/deals/new`` raise ``ContactNotFound`` instead, so
+  the deny row names the contact the caller was actually refused (§4.5
+  rule 2). The write is best-effort, in its own short transaction opened
+  after the denying one unwound, and a denial with no resolved principal
+  writes nothing at all.
+  """
+  object_id = getattr(exc, "object_id", None)
+  principal: Principal | None = getattr(request.state, "crm_principal", None)
+  context = getattr(request.app.state, "context", None)
+  if principal is not None and context is not None:
+    await record_denial(
+      context.pool,
+      actor_id=principal.id,
+      object_type=OBJECT_DEAL,
+      object_id=object_id,
+      action=ACTION_ACCESS_DENIED,
+      correlation_id=current_correlation_id(),
+      at=context.clock.now(),
+    )
+  return await not_found(request)
+
+
+async def retry_exhausted_handler(request: Request, exc: Exception) -> Response:
+  """Answer a spent retry budget with the ``unavailable`` ``503`` (ask **A-2**).
+
+  Parameters
+  ----------
+  request : Request
+    The inbound request.
+  exc : Exception
+    The :class:`app.db.retry.RetryExhausted` signal. Its message names the
+    operation and the attempt counts only — no SQL, no parameters, no
+    record values — and is not rendered.
+
+  Returns
+  -------
+  Response
+    ``503`` with ``context="unavailable"`` and ``record_url=None``.
+
+  Notes
+  -----
+  This is the **opposite** of :func:`ambiguous_commit_handler` and takes
+  the other of ``errors/503.html``'s two frozen contexts on purpose. A
+  serialization failure that spent its budget is a *confirmed* abort:
+  every attempt rolled back, nothing was written, and the honest copy is
+  the ``unavailable`` page's *"temporarily unavailable. Nothing you did
+  caused this."* — the user may simply try again. ``CP-19``'s *"do not
+  resubmit; open the record and check"* must stay reserved for the commit
+  whose outcome is genuinely unknown, or the one sentence that matters
+  there stops meaning anything.
+
+  Registering it is what keeps an exhausted budget off the ``500`` page:
+  a 500 reads as a defect in the application rather than as the momentary
+  contention it is (``contracts/slice-c.md`` §2(b) note 5).
+  """
+  del exc
+  return await unavailable(request)
 
 
 async def ambiguous_commit_handler(request: Request, exc: Exception) -> Response:

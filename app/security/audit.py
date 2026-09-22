@@ -47,6 +47,9 @@ __all__ = [
   "ACTION_CONTACT_REASSIGNED",
   "ACTION_CONTACT_RESTORED",
   "ACTION_CONTACT_UPDATED",
+  "ACTION_DEAL_CREATED",
+  "ACTION_DEAL_STAGE_CHANGED",
+  "ACTION_DEAL_UPDATED",
   "ACTION_FORCED_RESET_BLOCKED",
   "ACTION_INPUT_REJECTED",
   "ACTION_LOGIN_FAILED",
@@ -61,6 +64,7 @@ __all__ = [
   "ACTION_USER_CREATED",
   "ACTION_USER_DISABLED",
   "OBJECT_CONTACT",
+  "OBJECT_DEAL",
   "OUTCOME_DENIED",
   "OUTCOME_FAILURE",
   "OUTCOME_SUCCESS",
@@ -100,8 +104,20 @@ ACTION_ACCESS_DENIED: Final = "access_denied"
 ACTION_ROLE_DENIED: Final = "role_denied"
 ACTION_INPUT_REJECTED: Final = "input_rejected"
 
+#: Slice C. ``DATA_CONTRACT.md`` §6.8 rows 10-12 and §3.6's emission map:
+#: each rides the ``SERIALIZABLE`` transaction of the mutation it describes,
+#: carries ``object_type='deal'`` and the deal's id, and never
+#: ``outcome='denied'``. All three stage moves — lateral, Won and Lost —
+#: record the **one** action ``deal_stage_changed``: they are one statement
+#: and one receipt vocabulary, and the stage that was reached is a fact of
+#: the row, not of the action name (``contracts/slice-c.md`` §1(e)).
+ACTION_DEAL_CREATED: Final = "deal_created"
+ACTION_DEAL_UPDATED: Final = "deal_updated"
+ACTION_DEAL_STAGE_CHANGED: Final = "deal_stage_changed"
+
 OBJECT_USER: Final = "user"
 OBJECT_CONTACT: Final = "contact"
+OBJECT_DEAL: Final = "deal"
 OBJECT_SESSION: Final = "session"
 OBJECT_SETTINGS: Final = "settings"
 OBJECT_SYSTEM: Final = "system"

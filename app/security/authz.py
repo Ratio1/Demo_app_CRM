@@ -19,10 +19,15 @@ route exists to an account that may not use it at all.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, NoReturn
 
 from app.logging import current_correlation_id
-from app.security.audit import ACTION_BUDGET_DENIED, OBJECT_USER, record_denial
+from app.security.audit import (
+  ACTION_BUDGET_DENIED,
+  ACTION_FORCED_RESET_BLOCKED,
+  OBJECT_USER,
+  record_denial,
+)
 from app.security.context import context_of
 from app.security.csrf import verify_csrf
 from app.security.failures import (
@@ -49,6 +54,7 @@ __all__ = [
   "MAX_FORM_FIELDS",
   "MAX_FORM_PART_BYTES",
   "charge_account_budget",
+  "deny_forced_reset",
   "form_content_type_ok",
   "read_form",
   "require_active_session",
@@ -92,6 +98,53 @@ async def require_session(request: Request) -> Principal:
   return principal
 
 
+async def deny_forced_reset(request: Request, principal: Principal) -> NoReturn:
+  """Record the step-2 block, then refuse the request (**R67**).
+
+  Parameters
+  ----------
+  request : Request
+    The inbound request, for the application context.
+  principal : Principal
+    The resolved actor, whose ``must_change_password`` is set. The deny row
+    names **the actor as the object** — ``ACCESS_MATRIX.md`` §4.5 row 5 is
+    ``(user, forced_reset_blocked, denied)`` with the actor's own user id,
+    which is always a canonical UUID — because the denial is about the
+    account's state and not about whatever it was reaching for.
+
+  Raises
+  ------
+  ForcedResetRequired
+    Always. The function exists to make the row and the refusal one thing:
+    **R67** records that ``forced_reset_blocked`` had no emitter at all
+    until now, and a per-site write would have left three of the four raise
+    sites silent (``slice-c.md`` §2(j) probe 1).
+
+  Notes
+  -----
+  The write is best-effort and opens its **own** short ``READ COMMITTED``
+  transaction: :func:`app.security.audit.record_denial` swallows its own
+  failures, so a database hiccup can never turn this ``403`` into a
+  ``503``. It happens **before** the raise rather than in the handler
+  because the principal is the row's subject and is in hand here; the
+  handler would have to re-derive it.
+
+  ``ACCESS_MATRIX.md`` §4.5's set-equality then holds in the direction it
+  could not hold before: every triple the CHECK admits has an emitter.
+  """
+  context = context_of(request)
+  await record_denial(
+    context.pool,
+    actor_id=principal.id,
+    object_type=OBJECT_USER,
+    object_id=principal.id,
+    action=ACTION_FORCED_RESET_BLOCKED,
+    correlation_id=current_correlation_id(),
+    at=context.clock.now(),
+  )
+  raise ForcedResetRequired
+
+
 async def require_active_session(request: Request) -> Principal:
   """Demand a live session that is not barred by a forced reset (steps 1, 2).
 
@@ -109,13 +162,15 @@ async def require_active_session(request: Request) -> Principal:
   NoSession
     As :func:`require_session`.
   ForcedResetRequired
-    When the account must change its password. Only ``GET``/``POST
-    /account/password`` and ``POST /logout`` proceed; every other route is
-    refused, so a forced account can neither read nor write anything else.
+    When the account must change its password, through
+    :func:`deny_forced_reset` so the denial is audited (**R67**). Only
+    ``GET``/``POST /account/password`` and ``POST /logout`` proceed; every
+    other route is refused, so a forced account can neither read nor write
+    anything else.
   """
   principal = await require_session(request)
   if principal.must_change_password:
-    raise ForcedResetRequired
+    await deny_forced_reset(request, principal)
   return principal
 
 

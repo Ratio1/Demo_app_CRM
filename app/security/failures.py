@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 __all__ = [
   "BudgetExceeded",
   "ContactNotFound",
+  "DealNotFound",
   "ForcedResetRequired",
   "NoSession",
   "NotProvisioned",
@@ -126,4 +127,41 @@ class ContactNotFound(Exception):
       The canonical id, or ``None`` when the segment was not canonical.
     """
     super().__init__("contact not found")
+    self.object_id = object_id
+
+
+class DealNotFound(Exception):
+  """Step 4: the join to ``contacts`` admitted no deal — foreign **or** missing.
+
+  The deal twin of :class:`ContactNotFound`, and for the same reason
+  (``contracts/slice-c.md`` §2(a) decision 1): raised rather than returned,
+  so the five deal surfaces — detail, edit form, update, stage change and
+  the two terminal moves — reach **one** handler, which writes
+  ``ACCESS_MATRIX.md`` §4.5 **row 2** (``deal`` / ``access_denied``) and
+  renders the one ``404`` body. A foreign deal and a missing one are then
+  byte-identical for the same principal modulo the correlation id
+  (``ACC-202``, **PIN 8**, **R27**).
+
+  A **parent** miss is not this exception. ``POST /contacts/{id}/deals`` and
+  ``GET /contacts/{id}/deals/new`` raise :class:`ContactNotFound` instead,
+  because §4.5 rule 2 says a reference-as-parent denial names the *parent*:
+  the object the caller was refused is the contact (``ACC-207``,
+  ``ACC-228``).
+
+  Attributes
+  ----------
+  object_id : UUID | None
+    The requested id, **iff** it was already validated as a canonical
+    36-character UUID; ``None`` otherwise (§4.5 rule 1).
+  """
+
+  def __init__(self, object_id: UUID | None) -> None:
+    """Record the id the deny row may carry.
+
+    Parameters
+    ----------
+    object_id : UUID | None
+      The canonical id, or ``None`` when the segment was not canonical.
+    """
+    super().__init__("deal not found")
     self.object_id = object_id

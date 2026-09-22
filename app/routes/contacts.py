@@ -62,6 +62,7 @@ from app.security.audit import (
 )
 from app.security.authz import (
   charge_account_budget,
+  deny_forced_reset,
   form_content_type_ok,
   read_form,
   require_admin,
@@ -69,7 +70,7 @@ from app.security.authz import (
   require_session,
 )
 from app.security.context import context_of
-from app.security.failures import ContactNotFound, ForcedResetRequired, RoleRequired
+from app.security.failures import ContactNotFound, RoleRequired
 from app.security.idempotency import mint_key, parse_canonical
 from app.security.principal import scope_of
 from app.services.contacts import (
@@ -983,7 +984,7 @@ async def _start_mutation(
     return await bad_request(request)
   await charge_account_budget(request, principal, safe=False)
   if principal.must_change_password:
-    raise ForcedResetRequired
+    await deny_forced_reset(request, principal)
   if admin_for is not None:
     await _require_admin(request, principal, admin_for)
   body = _read_body(form, form_fields)
@@ -993,11 +994,19 @@ async def _start_mutation(
 
 
 async def _start_read(request: Request) -> Principal:
-  """Run the safe-method pipeline: session, budget, forced-reset gate."""
+  """Run the safe-method pipeline: session, budget, forced-reset gate.
+
+  Notes
+  -----
+  The gate refuses through :func:`~app.security.authz.deny_forced_reset`,
+  so the block writes ``ACCESS_MATRIX.md`` §4.5 row 5 (**R67**). The same
+  helper is called from the three other raise sites, and
+  ``app/routes/deals.py`` inherits it by using these two starters.
+  """
   principal = await require_session(request)
   await charge_account_budget(request, principal, safe=True)
   if principal.must_change_password:
-    raise ForcedResetRequired
+    await deny_forced_reset(request, principal)
   return principal
 
 
