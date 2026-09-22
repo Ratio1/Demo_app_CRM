@@ -34,7 +34,6 @@ import getpass
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, cast
-from urllib.parse import urlsplit
 from uuid import UUID
 
 # Running a script by path puts the script's own directory on sys.path[0],
@@ -58,6 +57,7 @@ from app.db.journal import (  # noqa: E402
 from app.db.pool import close_pool, create_pool, open_pool  # noqa: E402
 from app.logging import new_correlation_id  # noqa: E402
 from app.security.clock import SystemClock  # noqa: E402
+from app.security.origin import OriginError, checked_origin  # noqa: E402
 from app.security.passwords import (  # noqa: E402
   DEFAULT_BLOCKLIST,
   MAX_PASSWORD_LENGTH,
@@ -113,16 +113,18 @@ def _checked_name(value: str) -> str:
 
 
 def _checked_origin(value: str) -> str:
-  """Return an absolute HTTPS origin with no path, query or fragment."""
-  origin = value.strip()
-  parts = urlsplit(origin)
-  if parts.scheme != "https" or not parts.netloc:
-    raise UsageError("--origin must be an absolute https:// origin")
-  if parts.path not in ("", "/") or parts.query or parts.fragment:
-    raise UsageError("--origin must carry no path, query string or fragment")
-  if parts.path == "/":
-    origin = origin[:-1]
-  return origin
+  """Return an absolute http:// or https:// origin with no path, query or fragment.
+
+  The rule itself lives in `app/security/origin.py`, beside the code that
+  compares every request against the stored value and derives the session
+  cookie's attributes from its scheme, so the writer and the readers can
+  never drift apart. This wrapper only turns its refusal into this
+  script's `--origin` wording and exit code 2.
+  """
+  try:
+    return checked_origin(value)
+  except OriginError as error:
+    raise UsageError(f"--origin {error}") from error
 
 
 def _read_password(*, from_stdin: bool) -> str:
@@ -391,7 +393,7 @@ def _build_parser() -> argparse.ArgumentParser:
   disable_user = subcommands.add_parser("disable-user", help="deactivate one account")
   disable_user.add_argument("--email", required=True)
 
-  set_origin = subcommands.add_parser("set-origin", help="store the public HTTPS origin")
+  set_origin = subcommands.add_parser("set-origin", help="store the public origin")
   set_origin.add_argument("--origin", required=True)
 
   seed_demo = subcommands.add_parser("seed-demo", help="write the fictional demo data set")
