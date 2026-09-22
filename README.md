@@ -1,21 +1,160 @@
-# Demo_app_CRM
-Simple CRM system deployable on any infrastructure but loving Ratio1
+# Demo_App_CRM
 
-## Frontend assets (Slice A)
+A minimalistic CRM MVP: contacts, a five-stage deal pipeline, per-contact activity timelines, and
+ownership-scoped dashboard totals. It runs as one Docker image, `demo-crm-app:local`, against the
+shared local PostgreSQL over `verify-full` TLS — no compose file, no sidecar, no volumes. Stack:
+FastAPI + Jinja2, server-rendered (htmx 2.0.10 only enhances idempotent `GET` reads — every
+mutation is a plain form `POST`), psycopg3 + psycopg-pool, uvicorn.
 
-- `app/templates/**` — Jinja2 templates. Rendered with an explicit
-  `jinja2.Environment(loader=FileSystemLoader("app/templates"),
-  autoescape=True, undefined=StrictUndefined, auto_reload=False)` (D11).
-- `app/static/css/app.css` — the one local stylesheet (tokens + components,
-  no build step, no CDN).
-- `app/static/vendor/htmx-2.0.10.min.js` — vendored from
-  `https://cdn.jsdelivr.net/npm/htmx.org@2.0.10/dist/htmx.min.js` (R43).
-  SHA-256: `71ea67185bfa8c98c39d31717c6fce5d852370fcdfd129db4543774d3145c0de`.
-  Served locally only; the app makes no third-party network request.
-- `app/static/img/**` — icon sprite and illustrations (`design-artwork`
-  lane); see `_agents/projects/CRM/design/ARTWORK_INVENTORY.md`.
+## Prerequisites
 
-Formatting/typing commands (per `pyproject.toml`):
+- Docker Desktop running. The container reaches the database at `host.docker.internal`, which
+  Docker Desktop resolves automatically; not guaranteed on plain Linux Docker.
+- Shared local PostgreSQL: `_tools/pgsql/pg ensure`, then once (idempotent) `_tools/pgsql/pg
+  create-app crm`.
+- `uv` — for local development only (§7); the image itself never invokes it.
+
+Commands below run from the meta-repo root unless a section says otherwise.
+
+## 1. Credentials
+
+Two env files, five variables in force (`DB_SERVER`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`;
+`DB_PORT` is the optional fifth and is not written by `pg env` — the port travels inside
+`DB_SERVER` as `host:port`). Both are git-ignored: never commit, print, or read them with
+`cat`/`grep`.
+
+```
+_tools/pgsql/pg env crm --server host.docker.internal:5432 --write Demo_app_CRM/.env.docker.local
+_tools/pgsql/pg env crm --role owner --server host.docker.internal:5432 --write Demo_app_CRM/.env.docker.owner.local
+```
+
+The first (`crm_app`, runtime role) is what `scripts/run-local` (§4) hands the served container;
+the second (`crm_owner`, maintenance role) is what every `scripts/manage` command below needs.
+
+## 2. Build
+
+```
+Demo_app_CRM/scripts/build-image
+```
+
+Copies the shared PostgreSQL CA's certificate to `app/certs/ca-bundle.pem` (the `verify-full`
+trust anchor), generates a self-signed `127.0.0.1` development certificate once (git-ignored,
+reused on later builds), then `docker build -t demo-crm-app:local --target runtime .`. The image
+holds no `.env*` file, no `.git`, and no source outside `app/`, `migrations/`, `scripts/`.
+
+## 3. Provision, from the same image
+
+Every `scripts/manage` command is maintenance-only and runs as the owner role — use the **owner**
+env file for all three below:
+
+```
+docker run --rm --env-file Demo_app_CRM/.env.docker.owner.local demo-crm-app:local scripts/manage migrate
+```
+
+Create the first administrator. `--email`/`--name`/`--origin` are flags, not prompts; only the
+password is asked for, hidden — add `-it` for a real terminal (`--password-stdin` reads one
+stdin line instead, for scripting):
+
+```
+docker run --rm -it --env-file Demo_app_CRM/.env.docker.owner.local demo-crm-app:local scripts/manage bootstrap \
+  --email admin@example.test --name "Ada Admin" --origin https://127.0.0.1:3002
+```
+
+This also stores the public origin — `https://127.0.0.1:3002`, not `localhost`: the app
+exact-matches `Origin`/`Host` against it. `set-origin` only changes it later; `bootstrap` already
+sets it and refuses (exit 3) if an administrator already exists, so it is safe to repeat. The
+administrator's own password is not flagged for a forced change; only accounts created *for*
+someone else are.
+
+Then the demo data set — creates the two demo agents (`agent.one@example.test`,
+`agent.two@example.test`) if absent, sharing one password chosen at the prompt, then writes 20
+contacts, 20 deals and 100 activities on fictional `example.test` data:
+
+```
+docker run --rm -it --env-file Demo_app_CRM/.env.docker.owner.local demo-crm-app:local scripts/manage seed-demo --scale small
+```
+
+Idempotent: a second run writes nothing against unchanged seed data.
+
+## 4. Run
+
+```
+Demo_app_CRM/scripts/run-local
+```
+
+Serves `https://127.0.0.1:3002`, capped at 0.5 CPU / 1 GiB, read-only root filesystem, no
+volumes. `Demo_app_CRM/scripts/run-local stop` stops and removes the container.
+
+The self-signed certificate from step 2 earns one browser warning per host and port ("Advanced" →
+"Proceed"); it will not reappear until the certificate (`-days 30`) expires, at which point
+delete `Demo_app_CRM/app/certs/dev-server.{crt,key}` and rerun `build-image`. `/health/ready`
+answers `503` until step 3's `bootstrap` has run — correct beforehand, not a broken run.
+
+## 5. The journey
+
+Sign in at `/login` as the administrator from step 3, or as one of the two seeded agents (the
+shared password chosen at `seed-demo`). A successful login lands on `/dashboard` — `/` and the
+nav wordmark resolve there too.
+
+- **Contact** — "New contact": name, email, company, phone, kind (Lead / Customer radio). Saving
+  opens the contact workspace.
+- **Deal** — from the workspace, "New deal": title, amount (plain decimal text, e.g. `1250.00`,
+  shown elsewhere as `€ 1,250.00`), optional close date. New deals always start at the **New**
+  stage — no stage field on create.
+- **Activity** — still on the workspace, "Log activity" (kind: note / call / email / meeting,
+  date, summary up to 1000 characters) posts into the timeline right below. Once logged, an
+  activity cannot be edited or deleted — append-only by design.
+- **Won** — on the deal, move it laterally with the stage dropdown + "Move", or open the "Mark as
+  won…" (or "…lost") disclosure and confirm. Both are terminal: no drag-and-drop, no JavaScript.
+- **Dashboard totals** — three tiles (visible contacts, open deal count/value, won deal
+  count/value) plus recent activity. As an **agent** every number is that agent's own records
+  only; as **admin** the same tiles are unfiltered. Switch to the other seeded agent to see the
+  scope actually change, not just repeat.
+
+Worth trying — each is a real server response, not a client-side guess:
+
+- Sign in as `agent.one`, open a contact owned by `agent.two` by guessing its URL — an identical
+  `404` either way; ownership is never revealed.
+- Archive a contact, then try to add a deal or activity to it — `409` "archived — restore it
+  first", not a silent success.
+- Edit the same contact in two tabs, submit both — the second gets `409` "changed since you
+  loaded this" with your input preserved, not a lost update.
+
+## 6. Re-run
+
+Start the demo data over without touching accounts or the schema:
+
+```
+docker run --rm --env-file Demo_app_CRM/.env.docker.owner.local demo-crm-app:local scripts/manage reset-demo --yes
+docker run --rm -it --env-file Demo_app_CRM/.env.docker.owner.local demo-crm-app:local scripts/manage seed-demo --scale small
+```
+
+`reset-demo` deletes every contact, deal, activity, idempotency receipt, session and
+throttle/rate-limit row — every signed-in browser is logged out — but keeps `users`,
+`app_settings`, `schema_migrations` and the audit log. It refuses without `--yes`, the only
+confirmation, so read before running it against `crm`.
+
+## 7. Development
+
+From `Demo_app_CRM/` (not the container path):
+
+```
+uv sync
+scripts/dev-run.sh
+```
+
+Serves the app on the host at `https://127.0.0.1:3002` over a self-signed certificate, for
+editing. Not the container entrypoint — `scripts/start` is that, binds `0.0.0.0:3000`, and adds
+TLS only when the certificate pair is present in the image.
+
+Canonical test invocation, against the scratch database `crm_test`, never `crm`:
+
+```
+scripts/with-env .env.test.local -- .venv/bin/python -B -m pytest tests -p no:cacheprovider -q
+```
+
+A bare `pytest` is not a supported invocation — credentials only ever reach a process through
+`scripts/with-env`. Lint and types:
 
 ```
 .venv/bin/ruff check .
@@ -23,82 +162,23 @@ Formatting/typing commands (per `pyproject.toml`):
 .venv/bin/mypy
 ```
 
-## Frontend assets (Slice B)
+## 8. Deferred
 
-- `app/templates/contacts/list.html`, `partials/contact_results.html` —
-  the contacts list, search/filter and the `#contact-results` fragment
-  (`HX-Request` swap target).
-- `app/templates/contacts/form.html` — the contact editor (new and edit).
-- `app/templates/contacts/detail.html` — the contact workspace (S6):
-  details, activity/timeline, deals, record and owner panels.
-- `app/templates/errors/409.html` — the four conflict contexts (`stale`,
-  `archived_parent`, `duplicate`, `stage_terminal`).
-- `app/templates/partials/{badges,announce,pagination,field_errors,
-  confirm}.html` — shared macros/fragments the pages above compose.
+This push shipped the journey above and deferred the rest by operator decision
+(`_agents/projects/CRM/SIMPLIFICATION_PLAN.md`, 2026-09-22): the 20-minute resource-profile gate,
+the two-replica test, `manage cleanup`/`export-subject`/`erase-subject`, a standalone
+`SECURITY.md`, `DEPLOY.md`, administrator MFA, and the wider multi-reviewer process this plan
+replaced with one reviewer pass. None of it has run here and none is claimed as passing — the
+full list, with what is actually true for each item, is in `REVIEW.md`. This build holds only
+fictional `example.test` data and must not hold real data until the deferred privacy and MFA
+items close.
 
-## Frontend assets (Slice C)
+## 9. Assets
 
-- `app/templates/deals/list.html`, `partials/deal_results.html` — the
-  deals list, search/filter and the `#deal-results` fragment (`HX-Request`
-  swap target).
-- `app/templates/deals/pipeline.html`, `partials/pipeline.html` — the
-  read-only pipeline (R22): five stage columns/sections and the
-  `#pipeline-results` fragment.
-- `app/templates/deals/form.html` — the deal editor (new and edit).
-- `app/templates/deals/detail.html` — the deal detail (S10): amount,
-  stage badge, the stage-change control, breadcrumb.
-- `app/templates/partials/stage_control.html` — the non-drag stage
-  control (R22): a lateral `<select>` + Move form, and the Won/Lost
-  confirmations (via `partials/confirm.html`), shared by the deal detail
-  and every contact-workspace deal card.
-- `app/templates/contacts/detail.html`'s `#deals` region — real deal
-  cards (title, amount, stage badge, close date, the stage control) and
-  the "New deal" action, replacing Slice B's always-empty stub.
-- `app/templates/partials/badges.html` gains `archived_contact_badge()`
-  (CP-128 "Archived contact") — additive; the four macros
-  `CONTRACTS.md` §8.3 freezes are unchanged.
-- Money and date rendering use the `eur`/`day` Jinja filters
-  (`app/services/money.py`, registered in `app/routes/rendering.py`) —
-  `decimal.Decimal` end to end, never a float on a template money path
-  (PIN C1 / `ARC-021`).
-
-## Running the tests
-
-Canonical invocation (`CONTRACTS.md` §5.1, R52) — runs the suite as the
-runtime role against the scratch database `crm_test`, resetting and
-migrating it first (session-scoped, autouse):
-
-```
-scripts/with-env .env.test.local -- .venv/bin/python -B -m pytest tests -p no:cacheprovider -q
-```
-
-A bare `pytest` is not a supported invocation and its result is not
-evidence — credentials only ever reach the process through
-`scripts/with-env`, never a shell variable or a command-line argument.
-
-## Running locally
-
-```
-_tools/pgsql/pg ensure
-_tools/pgsql/pg env crm --write Demo_app_CRM/.env
-_tools/pgsql/pg env crm --role owner --write Demo_app_CRM/.env.owner.local
-```
-
-One-time, so the app's stored public origin matches the dev server
-(`scripts/dev-run.sh`'s own header comment):
-
-```
-scripts/with-env .env.owner.local -- python -B scripts/manage \
-  set-origin --origin https://127.0.0.1:3002
-```
-
-Then, from `Demo_app_CRM/`:
-
-```
-scripts/dev-run.sh
-```
-
-Serves `https://127.0.0.1:3002` over TLS with a self-signed development
-certificate generated on first run (git-ignored). Port `3002` is this
-app's dev assignment; the container entrypoint (`scripts/start`) is a
-separate script and is not used here.
+- `app/templates/**` — Jinja2, `autoescape=True`, `StrictUndefined`, no auto-reload.
+- `app/static/css/app.css` — the one local stylesheet; no build step, no CDN.
+- `app/static/vendor/htmx-2.0.10.min.js` — vendored from
+  `https://cdn.jsdelivr.net/npm/htmx.org@2.0.10/dist/htmx.min.js`, served locally only; the app
+  makes no third-party network request. SHA-256:
+  `71ea67185bfa8c98c39d31717c6fce5d852370fcdfd129db4543774d3145c0de`.
+- `app/static/img/**` — icon sprite and illustrations.
