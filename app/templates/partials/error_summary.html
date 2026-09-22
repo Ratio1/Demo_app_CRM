@@ -1,0 +1,33 @@
+<!--
+  partials/error_summary.html — CONTRACTS.md §8.3: `errors`, `field_labels`
+  (macro). The `role="alert" tabindex="-1"` page-level summary, `<main>`'s
+  first child, rendered only after a failed POST (R28: no `autofocus`
+  anywhere on this component).
+
+  Context (set by the including page template before the include, so this
+  partial never invents a top-level page context key of its own):
+    errors        {field: [str]}  — same dict the page template uses for
+                                     its own per-field markup.
+    field_labels  {field: str}    — optional; maps a field name to the HTML
+                                     id of its input, for the summary's
+                                     `href="#id"`. Falls back to the field
+                                     name itself when a page does not set it.
+
+  Link text is the field's own error message verbatim (UX_FLOWS.md §1.4:
+  "heading, then one link per message" — no invented "{Field}: {message}"
+  prefix).
+-->
+{% if errors %}
+{% set _labels = field_labels if field_labels is defined else {} %}
+{% set _n = errors|length %}
+<div class="error-summary alert alert-danger" role="alert" tabindex="-1" id="form-errors">
+  <p class="error-summary-heading">There is a problem with {{ _n }} field{{ "s" if _n != 1 else "" }}.</p>
+  <ul>
+    {% for _field, _messages in errors.items() %}
+      {% for _message in _messages %}
+        <li><a href="#{{ _labels.get(_field, _field) }}">{{ _message }}</a></li>
+      {% endfor %}
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}

@@ -1,0 +1,46 @@
+<!--
+  base.html — the shared shell for every screen.
+
+  Frozen base context (CONTRACTS.md §8.1 / slice-a.md §3): app_name,
+  page_title, principal (None | {id, display_name, role, is_admin,
+  must_change_password}), csrf_token, private, nav_active, announce,
+  scope_label, notice.
+
+  Shell selection (UX_FLOWS.md §3 "shell rule", UI_SPEC.md §3):
+    - principal is None            -> PUBLIC shell: no nav, plain-text brand.
+    - principal.must_change_password -> FORCED-RESET shell: reduced nav
+      (identity + change password + sign out, no destination links).
+    - principal present, not forced  -> FULL PRIVATE shell: sidebar/top-bar
+      nav with the three destinations.
+  The 500/503 handlers and the step-0 403 always pass principal=None
+  regardless of the real session state (R32 / ACC-010 / SEC-040) so this
+  selection alone is sufficient — no separate "shell" context key exists.
+
+  htmx-config meta tag copied character-for-character from
+  contracts/slice-a.md §3 (mergeMetaConfig is a shallow merge, so the
+  responseHandling array must be restated in full).
+-->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ page_title }} &middot; {{ app_name }}</title>
+  <link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
+  <link rel="stylesheet" href="/static/css/app.css">
+  <meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"includeIndicatorStyles":false,"selfRequestsOnly":true,"historyCacheSize":0,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"[45]..","swap":true,"error":true}]}'>
+</head>
+<body class="{{ 'shell-private' if principal else 'shell-public' }}"{% if private %} hx-history="false"{% endif %}>
+  <a class="skip-link" href="#main">Skip to main content</a>
+  {% if principal %}
+    {% include "partials/nav.html" %}
+  {% else %}
+    {% block public_brand %}<div class="public-brand">{{ app_name }}</div>{% endblock %}
+  {% endif %}
+  <main id="main" tabindex="-1">
+    {% block main %}{% endblock %}
+  </main>
+  <p id="announce" role="status" aria-live="polite" aria-atomic="true">{{ announce or "" }}</p>
+  <script src="/static/vendor/htmx-2.0.10.min.js"></script>
+</body>
+</html>

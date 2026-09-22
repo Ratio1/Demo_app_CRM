@@ -1,0 +1,766 @@
+/*
+ * Demo_App_CRM — app/static/css/app.css
+ *
+ * One local stylesheet, no build step, no CDN, no `@font-face`. Strict CSP
+ * (`style-src 'self'`, no `unsafe-inline`): every visual state is a class or
+ * an attribute selector, never an inline `style=`.
+ *
+ * Source: _agents/projects/CRM/design/UI_SPEC.md §1 (tokens), §2 (measured
+ * contrast pairs — only pairs recorded there are used), §4 (components),
+ * §6 (breakpoints), §7 (this file's own architecture note).
+ *
+ * File organization (UI_SPEC §7): tokens -> resets/base -> layout
+ * primitives -> components -> state/utility classes -> forced-colors and
+ * reduced-motion media blocks last.
+ *
+ * Slice A ships the full token set (forward-compatible with later slices)
+ * plus the components Slice A actually renders: shell (nav/topbar/menu),
+ * forms, buttons, alerts, error summary, state panels, focus rings, reduced
+ * motion, the class-based htmx-request indicator and the `.cell-label`
+ * pattern (no table yet renders it; the rule is included so the later
+ * list/table slices need no CSS addition for the pattern itself).
+ */
+
+/* ==========================================================================
+   1. Design tokens (UI_SPEC §1)
+   ========================================================================== */
+
+:root {
+  /* ---- Light workspace: neutrals ---- */
+  --color-bg-page:        #f8fafc;
+  --color-bg-surface:     #ffffff;
+  --color-bg-surface-alt: #f1f5f9;
+
+  --color-border-subtle:  #e2e8f0;
+  --color-border-control: #64748b;
+
+  --color-text-primary:     #0f172a;
+  --color-text-secondary:   #475569;
+  --color-text-placeholder: #64748b;
+  --color-text-disabled:    #94a3b8;
+
+  /* ---- Dark-slate navigation: sidebar (>=1024px) and top bar/menu (<1024px) ---- */
+  --color-nav-bg:                #1e293b;
+  --color-nav-border:            #334155;
+  --color-nav-text:              #e2e8f0;
+  --color-nav-text-muted:        #cbd5e1;
+  --color-nav-current-indicator: #60a5fa;
+
+  /* ---- Restrained blue accent (light-surface controls only) ---- */
+  --color-accent:             #2563eb;
+  --color-accent-hover:       #1d4ed8;
+  --color-accent-active:      #1e40af;
+  --color-accent-subtle-bg:   #eff6ff;
+  --color-accent-subtle-text: #1d4ed8;
+
+  /* ---- Warning weight (archive / won / lost — never the accent fill) ---- */
+  --color-warn-border: #b45309;
+
+  /* ---- Status: contact kind ---- */
+  --color-lead-bg:      #eff6ff; --color-lead-text:      #1d4ed8;
+  --color-customer-bg:  #ecfdf5; --color-customer-text:  #15803d;
+
+  /* ---- Status: deal stage ---- */
+  --color-stage-new-bg:        #f1f5f9; --color-stage-new-text:        #334155;
+  --color-stage-qualified-bg:  #eff6ff; --color-stage-qualified-text:  #1d4ed8;
+  --color-stage-proposal-bg:   #f5f3ff; --color-stage-proposal-text:   #6d28d9;
+  --color-stage-won-bg:        #ecfdf5; --color-stage-won-text:        #15803d;
+  --color-stage-lost-bg:       #fef2f2; --color-stage-lost-text:       #b91c1c;
+
+  /* ---- Archived ---- */
+  --color-archived-bg: #f1f5f9; --color-archived-text: #475569;
+
+  /* ---- Feedback (alerts, notice banner, region-error, inline validation, error summary) ---- */
+  --color-success-bg: #ecfdf5; --color-success-text: #166534;
+  --color-warn-bg:     #fffbeb; --color-warn-text:    #92400e;
+  --color-danger-bg:   #fef2f2; --color-danger-text:  #b91c1c;
+  --color-danger-solid: #b91c1c; --color-danger-solid-hover: #991b1b;
+  --color-info-bg:     #eff6ff; --color-info-text:    #1d4ed8;
+
+  /* ---- Focus ---- */
+  --focus-ring:         #1d4ed8;
+  --focus-ring-on-dark: #93c5fd;
+  --focus-ring-width:   2px;
+  --focus-ring-gap:     2px;
+
+  /* ---- Typography ---- */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+               "Noto Sans", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+
+  --text-xs:   0.75rem;
+  --text-sm:   0.875rem;
+  --text-base: 1rem;
+  --text-lg:   1.125rem;
+  --text-xl:   1.375rem;
+  --text-2xl:  1.75rem;
+
+  --leading-tight:  1.25;
+  --leading-normal: 1.5;
+
+  --weight-regular:  400;
+  --weight-medium:   500;
+  --weight-semibold: 600;
+
+  /* ---- Spacing (8px rhythm) ---- */
+  --space-1: 0.25rem; --space-2: 0.5rem; --space-3: 0.75rem; --space-4: 1rem;
+  --space-5: 1.5rem;  --space-6: 2rem;   --space-7: 3rem;    --space-8: 4rem;
+
+  /* ---- Radii ---- */
+  --radius-sm: 10px; --radius-md: 12px; --radius-pill: 999px;
+
+  /* ---- Elevation ---- */
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 2px 8px rgba(15, 23, 42, 0.08);
+
+  /* ---- Motion ---- */
+  --duration-fast: 120ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  /* ---- Layout ---- */
+  --nav-width:         15rem;
+  --topbar-height:     3.5rem;
+  --content-max-width: 75rem;
+  --touch-target-min:   2.75rem;
+  --touch-target-floor: 1.5rem;
+}
+
+/* ==========================================================================
+   2. Resets / base
+   ========================================================================== */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg-page);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  font-weight: var(--weight-regular);
+}
+
+main, section, article, aside, nav, header, footer, figure { display: block; }
+
+img { max-width: 100%; height: auto; display: block; }
+
+a {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+a:hover { color: var(--color-accent-hover); }
+
+h1, h2, h3, p, dl, dd, ul, ol, fieldset { margin: 0; }
+ul, ol { padding: 0; list-style: none; }
+fieldset { border: 0; padding: 0; }
+legend { padding: 0; }
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+.icon { width: 1rem; height: 1rem; }
+.icon-16 { width: 1rem; height: 1rem; }
+.icon-20 { width: 1.25rem; height: 1.25rem; }
+.icon-24 { width: 1.5rem; height: 1.5rem; }
+
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ==========================================================================
+   3. Focus ring mechanics (UI_SPEC §1.4)
+   ========================================================================== */
+
+:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: var(--focus-ring-gap);
+  box-shadow:
+    0 0 0 var(--focus-ring-gap) var(--color-bg-surface),
+    0 0 0 calc(var(--focus-ring-gap) + var(--focus-ring-width)) var(--focus-ring);
+}
+.app-nav :focus-visible,
+.app-nav-account :focus-visible,
+.app-topbar :focus-visible {
+  box-shadow:
+    0 0 0 var(--focus-ring-gap) var(--color-nav-bg),
+    0 0 0 calc(var(--focus-ring-gap) + var(--focus-ring-width)) var(--focus-ring-on-dark);
+}
+@media (forced-colors: active) {
+  :focus-visible { outline-color: Highlight; box-shadow: none; }
+  .badge, .chip, .stat-tile, .card, .alert, .state-panel, .region-error { border: 1px solid; }
+}
+
+/* ==========================================================================
+   4. Skip link (UI_SPEC §4.25)
+   ========================================================================== */
+
+.skip-link {
+  position: absolute;
+  top: -999px;
+  left: 0;
+  z-index: 100;
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-accent-hover);
+  color: #fff;
+  text-decoration: none;
+  border-radius: 0 0 var(--radius-sm) 0;
+}
+.skip-link:focus {
+  top: 0;
+}
+
+/* ==========================================================================
+   5. Layout primitives — shell (UI_SPEC §4.1)
+   ========================================================================== */
+
+.public-brand {
+  padding: var(--space-4) var(--space-5);
+  color: var(--color-text-primary);
+  font-weight: var(--weight-semibold);
+  font-size: var(--text-lg);
+}
+
+/* Sidebar — >=1024px. `body.shell-private` becomes a two-column grid so
+   the sidebar and the account block occupy a real column instead of
+   stacking as block siblings above `<main>`; the public shell
+   (`body.shell-public`) stays single-column, untouched, at every width. */
+.app-nav {
+  display: none;
+}
+.app-nav-account {
+  display: none;
+}
+@media (min-width: 1024px) {
+  .app-nav {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-5) var(--space-4);
+    background: var(--color-nav-bg);
+    border-right: 1px solid var(--color-nav-border);
+  }
+  .app-nav-account {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4) var(--space-5);
+    background: var(--color-nav-bg);
+    border-right: 1px solid var(--color-nav-border);
+  }
+
+  body.shell-private {
+    display: grid;
+    grid-template-columns: var(--nav-width) 1fr;
+    grid-template-rows: 1fr auto;
+    min-height: 100vh;
+  }
+  body.shell-private > .app-nav { grid-column: 1; grid-row: 1; }
+  body.shell-private > .app-nav-account { grid-column: 1; grid-row: 2; }
+  body.shell-private > main#main { grid-column: 2; grid-row: 1 / span 2; }
+  body.shell-private > #announce { grid-column: 2; }
+}
+
+.app-nav-brand,
+.app-topbar-brand {
+  color: var(--color-nav-text);
+  font-weight: var(--weight-semibold);
+  font-size: var(--text-lg);
+  text-decoration: none;
+  padding: var(--space-2) var(--space-3);
+}
+.app-nav-brand:hover, .app-topbar-brand:hover { color: var(--color-nav-text); }
+
+.app-nav > a {
+  color: var(--color-nav-text);
+  text-decoration: none;
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid transparent;
+  font-weight: var(--weight-regular);
+}
+.app-nav > a:hover { background: rgba(255, 255, 255, 0.06); }
+.app-nav > a[aria-current="page"] {
+  border-left-color: var(--color-nav-current-indicator);
+  font-weight: var(--weight-semibold);
+}
+
+.menu-identity {
+  color: var(--color-nav-text-muted);
+  font-size: var(--text-sm);
+  padding: var(--space-2) var(--space-3);
+}
+.app-nav-account > a {
+  color: var(--color-nav-text);
+  padding: var(--space-2) var(--space-3);
+  text-decoration: none;
+}
+.app-nav-account form { margin: 0; padding: 0 var(--space-3); }
+.app-nav-signout {
+  width: 100%;
+  min-height: var(--touch-target-min);
+  background: transparent;
+  border: 1px solid var(--color-nav-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-nav-text);
+  cursor: pointer;
+  padding: var(--space-2) var(--space-3);
+}
+.app-nav-signout:hover { background: rgba(255, 255, 255, 0.06); }
+
+/* Top bar + native <details> menu — <1024px */
+.app-topbar {
+  position: relative; /* anchors the open <details> menu, which is
+                          absolutely positioned below */
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--topbar-height);
+  padding: 0 var(--space-4);
+  background: var(--color-nav-bg);
+  border-bottom: 1px solid var(--color-nav-border);
+}
+@media (min-width: 1024px) {
+  .app-topbar { display: none; }
+}
+
+.app-menu > details > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--touch-target-min);
+  min-width: var(--touch-target-min);
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-nav-text);
+  cursor: pointer;
+  list-style: none;
+}
+.app-menu > details > summary::-webkit-details-marker { display: none; }
+.app-menu > details > summary:hover { background: rgba(255, 255, 255, 0.06); }
+.app-menu .icon { color: var(--color-nav-text); }
+
+.app-menu > details[open] {
+  position: absolute;
+  inset-inline: 0;
+  z-index: 50;
+}
+.app-menu > details ul {
+  background: var(--color-nav-bg);
+  border-top: 1px solid var(--color-nav-border);
+  padding: var(--space-2) 0;
+}
+.app-menu > details ul li a {
+  display: block;
+  min-height: var(--touch-target-min);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-4);
+  color: var(--color-nav-text);
+  text-decoration: none;
+}
+.app-menu > details ul li a[aria-current="page"] {
+  font-weight: var(--weight-semibold);
+  border-left: 3px solid var(--color-nav-current-indicator);
+}
+.app-menu > details .menu-identity {
+  background: var(--color-nav-bg);
+  padding: var(--space-3) var(--space-4);
+}
+.app-menu > details > a {
+  display: flex;
+  align-items: center;
+  min-height: var(--touch-target-min);
+  padding: 0 var(--space-4);
+  background: var(--color-nav-bg);
+  color: var(--color-nav-text);
+  text-decoration: none;
+}
+.app-menu > details > form {
+  margin: 0;
+  padding: var(--space-2) var(--space-4) var(--space-3);
+  background: var(--color-nav-bg);
+}
+.app-menu > details > form button {
+  width: 100%;
+  min-height: var(--touch-target-min);
+  background: transparent;
+  border: 1px solid var(--color-nav-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-nav-text);
+  cursor: pointer;
+}
+
+/* ==========================================================================
+   6. Page skeleton / header (UI_SPEC §4.2)
+   ========================================================================== */
+
+main#main {
+  max-width: var(--content-max-width);
+  margin: 0 auto;
+  padding: var(--space-5) var(--space-4);
+}
+@media (min-width: 1200px) {
+  main#main { padding: var(--space-6) var(--space-5); }
+}
+
+.page-header h1 {
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+}
+
+.page-actions { margin-top: var(--space-4); }
+
+.scope-label {
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+}
+
+.note {
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  margin-top: var(--space-2);
+}
+
+/* ==========================================================================
+   7. Buttons (UI_SPEC §4.3)
+   ========================================================================== */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: var(--touch-target-min);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.btn-compact { min-height: 2.25rem; padding: var(--space-1) var(--space-3); }
+.btn-block { width: 100%; }
+.btn-form-submit { margin-top: var(--space-5); }
+
+.btn-primary {
+  background: var(--color-accent);
+  color: #fff;
+}
+.btn-primary:hover { background: var(--color-accent-hover); }
+.btn-primary:active { background: var(--color-accent-active); }
+.btn-primary:disabled { color: var(--color-text-disabled); cursor: not-allowed; }
+
+.btn-secondary {
+  background: var(--color-bg-surface);
+  color: var(--color-accent);
+  border-color: var(--color-border-control);
+}
+.btn-secondary:hover { background: var(--color-accent-subtle-bg); }
+.btn-secondary:active { border-color: var(--color-accent-active); }
+
+.btn-warning-outline {
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  border-color: var(--color-warn-border);
+}
+.btn-warning-outline:hover { background: var(--color-warn-bg); }
+
+.btn-danger-outline {
+  background: var(--color-bg-surface);
+  color: var(--color-danger-text);
+  border-color: var(--color-danger-text);
+}
+.btn-danger-outline:hover { background: var(--color-danger-bg); }
+
+/* ==========================================================================
+   8. Forms (UI_SPEC §4.5 - §4.7)
+   ========================================================================== */
+
+.field { margin-top: var(--space-4); }
+.field:first-child { margin-top: 0; }
+
+.field label {
+  display: block;
+  margin-bottom: var(--space-1);
+  font-weight: var(--weight-medium);
+}
+
+.field-required { color: var(--color-danger-text); }
+
+.field-input,
+.field input[type="text"],
+.field input[type="email"],
+.field input[type="password"],
+.field input[type="date"],
+.field input[type="search"],
+.field select,
+.field textarea {
+  width: 100%;
+  min-height: var(--touch-target-min);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  font: inherit;
+}
+.field textarea { min-height: auto; }
+
+.field input::placeholder,
+.field textarea::placeholder { color: var(--color-text-placeholder); }
+
+.field input:hover,
+.field select:hover,
+.field textarea:hover { border-color: var(--color-text-secondary); }
+
+.field input:disabled,
+.field select:disabled,
+.field textarea:disabled {
+  background: var(--color-bg-surface-alt);
+  color: var(--color-text-disabled);
+}
+
+.field-input-error,
+.field input[aria-invalid="true"],
+.field select[aria-invalid="true"],
+.field textarea[aria-invalid="true"] {
+  border-color: var(--color-danger-text);
+  border-width: 2px;
+}
+
+.field-error {
+  margin-top: var(--space-1);
+  color: var(--color-danger-text);
+  font-size: var(--text-sm);
+}
+
+.field-help {
+  margin-top: var(--space-1);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+}
+
+.radio-group { border: 0; margin-top: var(--space-4); }
+.radio-group legend { font-weight: var(--weight-medium); margin-bottom: var(--space-2); }
+.radio-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--touch-target-min);
+  padding: var(--space-1) 0;
+}
+.radio-option input[type="radio"] { accent-color: var(--color-accent); }
+
+/* ==========================================================================
+   9. Alerts / notice / error summary / region-error (UI_SPEC §4.5, §4.21)
+   ========================================================================== */
+
+.alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  margin-top: var(--space-4);
+}
+.alert:first-child { margin-top: 0; }
+.alert .icon { flex-shrink: 0; margin-top: 0.2em; }
+.alert p { margin: 0; }
+
+.alert-success { background: var(--color-success-bg); color: var(--color-success-text); }
+.alert-warn    { background: var(--color-warn-bg);    color: var(--color-warn-text); }
+/* `notice.kind` (base context, R20) is the contract-fixed string "warning",
+   not "warn" — partials/notice.html builds its class from that value
+   directly, so this alias exists rather than reshaping the template's
+   output; `.alert-warn` above stays for classes other templates set by
+   hand (e.g. the forced-reset banner, region_error.html). */
+.alert-warning { background: var(--color-warn-bg);    color: var(--color-warn-text); }
+.alert-danger  { background: var(--color-danger-bg);  color: var(--color-danger-text); }
+.alert-info    { background: var(--color-info-bg);    color: var(--color-info-text); }
+
+.alert a { color: inherit; text-decoration: underline; }
+
+.error-summary {
+  flex-direction: column;
+  align-items: stretch;
+}
+.error-summary-heading {
+  font-weight: var(--weight-semibold);
+}
+.error-summary ul {
+  margin-top: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.error-summary li { list-style: none; }
+
+.region-error {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+/* ==========================================================================
+   10. State panels — error pages (UI_SPEC §4.22 / §4.9 layout)
+   ========================================================================== */
+
+.state-panel {
+  max-width: 35rem;
+  margin: 0 auto;
+  padding: var(--space-6) 0;
+}
+.state-panel img {
+  margin-bottom: var(--space-4);
+}
+.state-panel h1 {
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+}
+.state-panel p {
+  margin-top: var(--space-3);
+}
+.state-panel-action {
+  margin-top: var(--space-4);
+}
+.correlation-id {
+  margin-top: var(--space-5);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+}
+
+/* ==========================================================================
+   11. Sign-in card (UI_SPEC §4.2 composition table)
+   ========================================================================== */
+
+.auth-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  background: var(--color-bg-page);
+  padding: var(--space-6) var(--space-4);
+}
+@media (min-width: 640px) {
+  .auth-shell { align-items: center; }
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-6) var(--space-5);
+}
+
+.auth-card h1 {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  margin-top: var(--space-4);
+}
+
+.auth-card .public-brand {
+  padding: 0;
+  margin: 0;
+}
+
+.auth-help {
+  margin-top: var(--space-5);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+}
+
+/* Change-password screen (UI_SPEC §4.2 composition table: single column, max 560px) */
+.account-shell {
+  max-width: 35rem;
+}
+
+/* ==========================================================================
+   12. Loading indicator — class-based, no spinner replaces a label (R29)
+   ========================================================================== */
+
+.htmx-indicator { opacity: 0; }
+.htmx-request .htmx-indicator, .htmx-request.htmx-indicator { opacity: 1; }
+@media (prefers-reduced-motion: no-preference) {
+  .htmx-indicator { transition: opacity var(--duration-fast) var(--ease-standard); }
+}
+
+/* ==========================================================================
+   13. Pagination / table->card pattern — reserved for the list slices
+   (UI_SPEC §4.8-4.10). Included now so later slices need no CSS addition
+   for the pattern itself.
+   ========================================================================== */
+
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+.pagination .is-disabled {
+  color: var(--color-text-secondary);
+  font-weight: var(--weight-medium);
+}
+.pagination a { min-height: var(--touch-target-min); display: inline-flex; align-items: center; }
+.pagination-current { color: var(--color-text-secondary); }
+
+table.responsive-table { width: 100%; border-collapse: collapse; }
+table.responsive-table th, table.responsive-table td {
+  text-align: left;
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+table.responsive-table tbody tr:nth-child(even) { background: var(--color-bg-surface-alt); }
+
+.cell-label { display: none; }
+
+@media (max-width: 639px) {
+  table.responsive-table thead { display: none; }
+  table.responsive-table, table.responsive-table tbody { display: block; width: 100%; }
+  table.responsive-table tr {
+    display: grid;
+    grid-template-columns: 1fr;
+    row-gap: var(--space-1);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--space-3);
+    padding: var(--space-4);
+  }
+  table.responsive-table td { display: block; border: none; padding: var(--space-1) 0; }
+  .cell-label {
+    display: block;
+    font-weight: var(--weight-medium);
+    color: var(--color-text-secondary);
+    font-size: var(--text-xs);
+  }
+}
+
+/* ==========================================================================
+   14. forced-colors / reduced-motion (last, per UI_SPEC §7)
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

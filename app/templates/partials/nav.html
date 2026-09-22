@@ -1,0 +1,59 @@
+<!--
+  partials/nav.html — CONTRACTS.md §8.3 "base only": the text wordmark,
+  the three destinations and the account block, rendered TWICE (>=1024px
+  sidebar, <1024px top bar + native <details> menu) from one link list;
+  CSS `display: none` hides whichever does not apply so exactly one
+  `aria-label="Primary"` landmark is exposed at any width
+  (UX_FLOWS.md §1.3, UI_SPEC.md §4.1).
+
+  Only included by base.html when `principal` is present. The three
+  destination links are omitted in forced-reset mode
+  (`principal.must_change_password`) — UX_FLOWS.md §3.3 / §1.3 "Forced-reset
+  shell: the menu holds the account block only, no destination links" — the
+  account block (identity, Change password, Sign out) always renders.
+  No image, no inline SVG, no `mark.svg` reference anywhere (R17).
+-->
+{% set _forced = principal.must_change_password %}
+{% set _role_label = "Administrator" if principal.is_admin else "Agent" %}
+
+<nav aria-label="Primary" class="app-nav">
+  <a class="app-nav-brand" href="/dashboard">{{ app_name }}</a>
+  {% if not _forced %}
+  <a href="/dashboard"{% if nav_active == "dashboard" %} aria-current="page"{% endif %}>Dashboard</a>
+  <a href="/contacts"{% if nav_active == "contacts" %} aria-current="page"{% endif %}>Contacts</a>
+  <a href="/deals"{% if nav_active == "deals" %} aria-current="page"{% endif %}>Deals</a>
+  {% endif %}
+</nav>
+<nav aria-label="Account" class="app-nav-account">
+  <p class="menu-identity">{{ principal.display_name }} &middot; {{ _role_label }}</p>
+  <a href="/account/password"{% if nav_active == "account" %} aria-current="page"{% endif %}>Change password</a>
+  <form method="post" action="/logout">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="app-nav-signout">Sign out</button>
+  </form>
+</nav>
+
+<div class="app-topbar">
+  <a class="app-topbar-brand" href="/dashboard">{{ app_name }}</a>
+  <nav aria-label="Primary" class="app-menu">
+    <details>
+      <summary>
+        <svg class="icon" aria-hidden="true"><use href="/static/img/icons.svg#icon-menu"></use></svg>
+        Menu
+      </summary>
+      {% if not _forced %}
+      <ul>
+        <li><a href="/dashboard"{% if nav_active == "dashboard" %} aria-current="page"{% endif %}>Dashboard</a></li>
+        <li><a href="/contacts"{% if nav_active == "contacts" %} aria-current="page"{% endif %}>Contacts</a></li>
+        <li><a href="/deals"{% if nav_active == "deals" %} aria-current="page"{% endif %}>Deals</a></li>
+      </ul>
+      {% endif %}
+      <p class="menu-identity">{{ principal.display_name }} &middot; {{ _role_label }}</p>
+      <a href="/account/password"{% if nav_active == "account" %} aria-current="page"{% endif %}>Change password</a>
+      <form method="post" action="/logout">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit">Sign out</button>
+      </form>
+    </details>
+  </nav>
+</div>
