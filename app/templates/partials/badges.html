@@ -28,6 +28,18 @@
 <span class="badge badge-archived"><svg class="icon icon-16" aria-hidden="true"><use href="/static/img/icons.svg#icon-archive"></use></svg><span>Archived</span></span>
 {%- endmacro %}
 
+{#- Additive macro (slice-c.md §2(e), CP-128 "Archived contact") — NOT one
+   of CONTRACTS.md §8.3's four frozen `partials/badges.html` macros, but
+   adding one alongside them renames/drops none of the four and no
+   consumer's signature changes. UX_FLOWS.md §4.7 S7: "A deal whose parent
+   is archived ... carries an 'Archived contact' badge with text from
+   `parent_archived`" — the deal list, the pipeline cards and the deal
+   detail's contact link all use this, distinct from `archived_badge()`
+   which reads "Archived" alone for the contact's OWN screens. #}
+{% macro archived_contact_badge() -%}
+<span class="badge badge-archived"><svg class="icon icon-16" aria-hidden="true"><use href="/static/img/icons.svg#icon-archive"></use></svg><span>Archived contact</span></span>
+{%- endmacro %}
+
 {#- CONTRACTS.md §8.3 freezes this macro's signature as `stage_badge(stage)` —
    one argument, no separate label parameter — so the five fixed CP-128
    labels are a module-level map here rather than a caller-supplied string;
