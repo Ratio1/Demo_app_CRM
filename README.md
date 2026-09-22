@@ -36,6 +36,32 @@ Formatting/typing commands (per `pyproject.toml`):
 - `app/templates/partials/{badges,announce,pagination,field_errors,
   confirm}.html` — shared macros/fragments the pages above compose.
 
+## Frontend assets (Slice C)
+
+- `app/templates/deals/list.html`, `partials/deal_results.html` — the
+  deals list, search/filter and the `#deal-results` fragment (`HX-Request`
+  swap target).
+- `app/templates/deals/pipeline.html`, `partials/pipeline.html` — the
+  read-only pipeline (R22): five stage columns/sections and the
+  `#pipeline-results` fragment.
+- `app/templates/deals/form.html` — the deal editor (new and edit).
+- `app/templates/deals/detail.html` — the deal detail (S10): amount,
+  stage badge, the stage-change control, breadcrumb.
+- `app/templates/partials/stage_control.html` — the non-drag stage
+  control (R22): a lateral `<select>` + Move form, and the Won/Lost
+  confirmations (via `partials/confirm.html`), shared by the deal detail
+  and every contact-workspace deal card.
+- `app/templates/contacts/detail.html`'s `#deals` region — real deal
+  cards (title, amount, stage badge, close date, the stage control) and
+  the "New deal" action, replacing Slice B's always-empty stub.
+- `app/templates/partials/badges.html` gains `archived_contact_badge()`
+  (CP-128 "Archived contact") — additive; the four macros
+  `CONTRACTS.md` §8.3 freezes are unchanged.
+- Money and date rendering use the `eur`/`day` Jinja filters
+  (`app/services/money.py`, registered in `app/routes/rendering.py`) —
+  `decimal.Decimal` end to end, never a float on a template money path
+  (PIN C1 / `ARC-021`).
+
 ## Running the tests
 
 Canonical invocation (`CONTRACTS.md` §5.1, R52) — runs the suite as the
