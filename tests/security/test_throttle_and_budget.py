@@ -389,18 +389,54 @@ async def test_sec034_the_tenth_concurrent_login_gets_a_sanitized_429(
   """One active plus eight queued Argon2 hashes; a 10th concurrent login is ``429``.
 
   Drives 10 concurrent ``POST /login`` attempts (each its own client, its
-  own cookie jar, its own pre-auth CSRF token fetched first) against
-  distinct never-registered accounts, so the per-account throttle (SEC-030)
-  cannot itself explain a 429 here — only the shared hash-queue depth can.
+  own cookie jar) against distinct never-registered accounts, so the
+  per-account throttle (SEC-030) cannot itself explain a 429 here — only
+  the shared hash-queue depth can.
+
+  Every client's pre-auth ``GET /login`` (CSRF token, TLS handshake) is
+  driven to completion *before* any ``POST`` fires, and an
+  :class:`asyncio.Barrier` then releases all ten ``POST``s together.
+  Without this staging, interleaving the GET-then-POST pairs freely under
+  a single ``asyncio.gather`` (the previous shape) lets the event loop
+  dispatch the ten POSTs spread out in time: on a lightly loaded machine
+  the first queued hash can finish — freeing a slot — before the tenth
+  request even connects, so the 10th sometimes lands as a plain ``401``
+  instead of the intended ``429``. Confirmed empirically: the previous
+  shape failed roughly 1 run in 3 across repeated standalone runs of just
+  this test, with no change at all to the admission logic itself
+  (``app/security/passwords.py``'s check-then-increment is not separated
+  by an ``await``, so it cannot itself race); staging the dispatch this
+  way removed the flake. This still exercises the real, timed queue depth
+  under genuine concurrent load — the fix only tightens *when* the ten
+  requests are sent, never what the assertion requires.
   """
   import asyncio
 
   from conftest import unique_email
 
-  async def _attempt(index: int) -> int:
-    client: httpx.AsyncClient = http_client_factory()
-    response = await _failed_login(client, email=unique_email(f"queue-{index}"))
+  clients = [http_client_factory() for _ in range(10)]
+  emails = [unique_email(f"queue-{index}") for index in range(10)]
+
+  async def _csrf_token(client: httpx.AsyncClient) -> str:
+    get_response = await client.get("/login")
+    return extract_csrf_token(get_response.text)
+
+  csrf_tokens = await asyncio.gather(*(_csrf_token(client) for client in clients))
+
+  barrier = asyncio.Barrier(len(clients))
+
+  async def _attempt(client: httpx.AsyncClient, email: str, csrf_token: str) -> int:
+    await barrier.wait()
+    response = await client.post(
+      "/login",
+      data={"csrf_token": csrf_token, "email": email, "password": "definitely-wrong-pw"},
+    )
     return response.status_code
 
-  statuses = await asyncio.gather(*(_attempt(i) for i in range(10)))
+  statuses = await asyncio.gather(
+    *(
+      _attempt(client, email, csrf_token)
+      for client, email, csrf_token in zip(clients, emails, csrf_tokens, strict=True)
+    )
+  )
   assert 429 in statuses
