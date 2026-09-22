@@ -16,8 +16,8 @@ environment `scripts/with-env` populated — never from a value this suite reads
 itself. `-p no:cacheprovider` avoids writing a `.pytest_cache/` the suite does not need.
 
 Owner-role steps inside the suite (schema reset and migration, `scripts/manage bootstrap` /
-`create-user` / `disable-user`, and the throttle/budget table cleanup in
-`tests/security/test_throttle_and_budget.py`) are each their own subprocess under
+`create-user` / `disable-user`, and `tests/security/test_throttle_and_budget.py`'s
+`login_throttle`/`rate_budget` cleanup) are each their own subprocess under
 `.env.test.owner.local`, started by the test process — never by hand, and never by exporting
 that role's credentials into the suite's own environment.
 
@@ -30,7 +30,7 @@ Credentials for both roles reach any process only through `scripts/with-env <env
 | Env file | Role | Used for |
 |---|---|---|
 | `.env.test.local` | `crm_test_app` (runtime) | The suite process itself; every `live_server` subprocess; `db_connection`. |
-| `.env.test.owner.local` | `crm_test_owner` | Schema reset/migration, every `scripts/manage` maintenance command, and this module's throttle/budget cleanup. |
+| `.env.test.owner.local` | `crm_test_owner` | Schema reset/migration, every `scripts/manage` maintenance command, and `test_throttle_and_budget.py`'s throttle/budget cleanup. |
 
 Both point at the scratch database `crm_test`. `crm` (the real application database) is never
 touched by this suite.
@@ -56,6 +56,9 @@ after every test in the module, so a budget one test trips can never leak into a
   real HTTP/TLS behaviour (cookies, headers, redirects, CSRF, throttle/budget over the wire,
   `tests/e2e`) starts its own server on an ephemeral `127.0.0.1` port with a throwaway
   self-signed certificate; port `3002` (the human dev-run assignment) is never used by a test.
+  **R46(b) calls for one such server per pytest *session*, not per test.** This is still the
+  R41 per-test shape — not yet migrated. Per-test is correct behaviour, just slower than the
+  ruling's target; it is not a functional gap.
 
 ## `tests/e2e`
 
