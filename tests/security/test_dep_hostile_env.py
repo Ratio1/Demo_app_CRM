@@ -181,16 +181,18 @@ asyncio.run(main())
 def test_dep004a_hostile_pg_env_still_reaches_crm_test_over_tls(tmp_path: Path) -> None:
   """A hostile ``PG*`` set injected **inside** the connecting process still yields ``verify-full``.
 
-  Scope, exactly as the register pins it: every contracted kwarg is already
-  explicit in ``connect_kwargs()`` (``host``, ``port``, ``user``,
-  ``password``, ``dbname``, ``sslmode=verify-full``, ``sslrootcert``,
-  ``connect_timeout``, ``options=""``), so libpq has no gap to fall back
-  into for *those* — this is the "cannot override" half. Today, before D1
-  lands, ``ssl_min_protocol_version``/``gssencmode``/``client_encoding`` are
-  not yet among them (tracked separately by
-  ``tests/unit/test_config.py::test_d1_connect_kwargs_is_exactly_the_twelve_key_set``);
-  this test only asserts what the *current* nine-key set already guarantees:
-  a real TLS session still negotiates against the configured host, despite
+  Scope, exactly as the register pins it: every contracted kwarg is
+  explicit in ``connect_kwargs()`` — as of ``D1`` (ruling **R34**, commit
+  ``abff0ea``), that is the full twelve-key set (``host``, ``port``,
+  ``user``, ``password``, ``dbname``, ``sslmode=verify-full``,
+  ``sslrootcert``, ``connect_timeout``, ``options=""``,
+  ``ssl_min_protocol_version=TLSv1.2``, ``gssencmode=disable``,
+  ``client_encoding=UTF8``) — so libpq has no gap to fall back into for
+  *any* of them: this is the "cannot override" half.
+  ``tests/unit/test_config.py::test_d1_connect_kwargs_is_exactly_the_twelve_key_set``
+  asserts the key set itself, statically, against ``connect_kwargs()``'s
+  return value; this test complements it with the live half — a real TLS
+  session still negotiates against the configured host, despite
   ``PGSSLMODE=disable`` and a nonexistent ``PGSSLROOTCERT`` sitting in
   ``os.environ`` at connect time (R53 — injected inside the child so
   ``with-env``'s own scrub, which would otherwise make this vacuous, is
