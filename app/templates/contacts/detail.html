@@ -33,7 +33,7 @@
   flagged as a cross-document wording overlap, not silently picked.
 -#}
 {% extends "base.html" %}
-{% from "partials/badges.html" import kind_badge, archived_badge, owner_line %}
+{% from "partials/badges.html" import kind_badge, archived_badge, stage_badge, owner_line %}
 {% from "partials/field_errors.html" import field_errors %}
 {% block main %}
 {% set _reassign_errors = reassign.errors if (reassign and reassign.errors) else {} %}
@@ -140,13 +140,28 @@
 
   <section class="workspace-deals" aria-labelledby="h-deals">
     <h2 id="h-deals">Deals</h2>
+    {#- PIN C7 (DECISIONS.md §12): "the contact detail's #deals region
+       shows the contact's deals (scoped) with a 'New deal' action."
+       slice-c.md §2(e): this region is a FULL PAGE RENDER ONLY — no
+       hx-*, no fragment route, no partial; every deal mutation already
+       lands on 303 /contacts/{id}...#deal-{id}, a full server render.
+       Gating the stage control on `not contact.is_archived` (rather
+       than a per-deal flag `deal_card` does not carry) reproduces
+       `can.change_stage`'s own rule from the deal-detail page: every
+       card here belongs to THIS contact, so its archived state is
+       exactly `contact.is_archived` for every one of them. #}
     {% if deals %}
     {% for deal in deals %}
     <article id="deal-{{ deal.id }}" class="deal-card">
-      <p><a href="{{ deal.url }}">{{ deal.title }}</a></p>
-      <p>{{ deal.amount }}</p>
-      <p>{{ deal.stage_label }}</p>
-      <p>{{ deal.close_date }}</p>
+      <p class="deal-card-title"><a href="{{ deal.url }}">{{ deal.title }}</a></p>
+      <p class="deal-card-amount">{{ deal.amount|eur }}</p>
+      <p class="badges-row">{{ stage_badge(deal.stage) }}</p>
+      {% if deal.close_date %}<p class="note">Close <time datetime="{{ deal.close_date.isoformat() }}">{{ deal.close_date|day }}</time></p>{% endif %}
+      {% if not contact.is_archived %}
+      {% with deal_id=deal.id, deal_title=deal.title, stage_form=deal_forms[deal.id] %}
+      {% include "partials/stage_control.html" %}
+      {% endwith %}
+      {% endif %}
     </article>
     {% endfor %}
     {% else %}
