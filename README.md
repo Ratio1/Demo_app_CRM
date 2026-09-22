@@ -40,9 +40,9 @@ Demo_app_CRM/scripts/build-image
 ```
 
 Copies the shared PostgreSQL CA's certificate to `app/certs/ca-bundle.pem` (the `verify-full`
-trust anchor), generates a self-signed `127.0.0.1` development certificate once (git-ignored,
-reused on later builds), then `docker build -t demo-crm-app:local --target runtime .`. The image
-holds no `.env*` file, no `.git`, and no source outside `app/`, `migrations/`, `scripts/`. When
+trust anchor for the database connection), then `docker build -t demo-crm-app:local --target
+runtime .`. The image holds no `.env*` file, no `.git`, no private key of any kind, and no
+source outside `app/`, `migrations/`, `scripts/`. When
 `../_tools/pgsql/pg` is not present (a standalone clone, outside the meta-repo checkout), pass a
 CA certificate PEM path as the script's first argument, or set `CA_CERT`, instead.
 
@@ -61,14 +61,20 @@ stdin line instead, for scripting):
 
 ```
 docker run --rm -it --env-file Demo_app_CRM/.env.docker.owner.local demo-crm-app:local scripts/manage bootstrap \
-  --email admin@example.test --name "Ada Admin" --origin https://127.0.0.1:3002
+  --email admin@example.test --name "Ada Admin" --origin http://127.0.0.1:3002
 ```
 
-This also stores the public origin — `https://127.0.0.1:3002`, not `localhost`: the app
+This also stores the public origin — `http://127.0.0.1:3002`, not `localhost`: the app
 exact-matches `Origin`/`Host` against it. `set-origin` only changes it later; `bootstrap` already
 sets it and refuses (exit 3) if an administrator already exists, so it is safe to repeat. The
 administrator's own password is not flagged for a forced change; only accounts created *for*
 someone else are.
+
+The container itself always speaks plain HTTP on port 3000; in production Cloudflare terminates
+TLS in front of it and forwards to that port, so the origin given here is the `https://…`
+hostname users type. Locally there is nothing in front of the container, so the origin is
+`http://127.0.0.1:3002` — and that stored scheme, not a setting, is what decides the session
+cookie's name and `Secure` flag and whether `Strict-Transport-Security` is sent.
 
 Then the demo data set — creates the two demo agents (`agent.one@example.test`,
 `agent.two@example.test`) if absent, sharing one password chosen at the prompt, then writes 20
@@ -86,13 +92,11 @@ Idempotent: a second run writes nothing against unchanged seed data.
 Demo_app_CRM/scripts/run-local
 ```
 
-Serves `https://127.0.0.1:3002`, capped at 0.5 CPU / 1 GiB, read-only root filesystem, no
+Serves `http://127.0.0.1:3002`, capped at 0.5 CPU / 1 GiB, read-only root filesystem, no
 volumes. `Demo_app_CRM/scripts/run-local stop` stops and removes the container.
 
-The self-signed certificate from step 2 earns one browser warning per host and port ("Advanced" →
-"Proceed"); it will not reappear until the certificate (`-days 30`) expires, at which point
-delete `Demo_app_CRM/app/certs/dev-server.{crt,key}` and rerun `build-image`. `/health/ready`
-answers `503` until step 3's `bootstrap` has run — correct beforehand, not a broken run.
+`/health/ready` answers `503` until step 3's `bootstrap` has run — correct beforehand, not a
+broken run.
 
 ## 5. The journey
 
@@ -148,9 +152,8 @@ uv sync
 scripts/dev-run.sh
 ```
 
-Serves the app on the host at `https://127.0.0.1:3002` over a self-signed certificate, for
-editing. Not the container entrypoint — `scripts/start` is that, binds `0.0.0.0:3000`, and adds
-TLS only when the certificate pair is present in the image.
+Serves the app on the host at `http://127.0.0.1:3002`, for editing. Not the container
+entrypoint — `scripts/start` is that, and binds `0.0.0.0:3000`; both speak plain HTTP.
 
 Canonical test invocation, against the scratch database `crm_test`, never `crm`:
 
