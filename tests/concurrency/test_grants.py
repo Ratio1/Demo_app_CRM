@@ -195,3 +195,31 @@ async def test_sql019_no_delete_on_deals(db_connection: Any) -> None:
   await _assert_refused_with_42501(
     db_connection, "DELETE FROM deals WHERE id = '00000000-0000-4000-8000-000000000000'"
   )
+
+
+async def test_sql019_no_update_on_activities(db_connection: Any) -> None:
+  """The runtime role holds no `UPDATE` on `activities` — a live negative probe, not a grant read.
+
+  Plan §4 task 6: "a live negative UPDATE and DELETE as crm_test_app
+  (42501)". `migrations/0005_activities` step 03 grants `SELECT, INSERT`
+  only — this is what makes "once logged, an activity cannot be edited"
+  a privilege of the database, exercised here with an actual `UPDATE`
+  rather than only read from `information_schema` as the table-grant test
+  above already does.
+  """
+  await _assert_refused_with_42501(
+    db_connection,
+    "UPDATE activities SET summary = 'tampered' WHERE id = '00000000-0000-4000-8000-000000000000'",
+  )
+
+
+async def test_sql019_no_delete_on_activities(db_connection: Any) -> None:
+  """The runtime role holds no `DELETE` on `activities` — a live negative probe.
+
+  The append-only history is enforced by the grant set, never by a missing
+  route: `42501` fires even though the target row does not exist, because
+  the engine refuses the privilege before it ever looks for the row.
+  """
+  await _assert_refused_with_42501(
+    db_connection, "DELETE FROM activities WHERE id = '00000000-0000-4000-8000-000000000000'"
+  )
