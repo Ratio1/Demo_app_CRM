@@ -161,16 +161,20 @@ def test_arc008_routes_never_import_repositories() -> None:
 
 _SAFE_METHODS = {"get", "head"}
 
-#: ``ACCESS_MATRIX.md`` §7 ``ARC-003``: *"The mutating names are exactly
-#: `create_contact`, `update_contact`, `archive_contact`, `restore_contact`,
-#: `reassign_contact` — the gate can read that list."* The gate's scope
-#: **is** the assertion (§7's own wording, echoing the P1 final fix round):
+#: ``contracts/slice-b.md`` line 1447's ``ARC-003`` row: *"The mutating names
+#: are exactly `create_contact`, `update_contact`, `archive_contact`,
+#: `restore_contact`, `reassign_contact` — the gate can read that list."*
+#: ``contracts/slice-c.md`` §2(h)'s own ``ARC-003`` row extends it: *"The
+#: mutating service names are exactly `create_for_contact`, `update_deal`,
+#: `change_stage`."* The gate's scope **is** the assertion
+#: (``ACCESS_MATRIX.md`` §7 ``ARC-003``, echoing the P1 final fix round):
 #: a GET/HEAD handler calling a **read** service function — `list_contacts`,
-#: `get_for_detail`, `build_contact_query`, all of `app/services/contacts.py`
-#: — is the ordinary, contracted shape of Slice B's own list/detail/edit-form
-#: routes, not a violation. Extend this set, never widen it back to "every
-#: name imported from `app.services`", as later slices add their own
-#: mutations (`deal_*`, `activity_create`).
+#: `get_for_detail`, `build_contact_query`, `list_deals`, `pipeline`,
+#: `parent_for_form`, `blocked_parent`, all of `app/services/contacts.py`/
+#: `deals.py`'s read side — is the ordinary, contracted shape of the
+#: list/detail/edit-form routes, not a violation. Extend this set, never
+#: widen it back to "every name imported from `app.services`", as later
+#: slices add their own mutations (`activity_create`).
 _SERVICE_MUTATION_NAMES: Final[frozenset[str]] = frozenset(
   {
     "create_contact",
@@ -178,6 +182,9 @@ _SERVICE_MUTATION_NAMES: Final[frozenset[str]] = frozenset(
     "archive_contact",
     "restore_contact",
     "reassign_contact",
+    "create_for_contact",
+    "update_deal",
+    "change_stage",
   }
 )
 
