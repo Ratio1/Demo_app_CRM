@@ -63,10 +63,10 @@ async def _live_table_grants(db_connection: Any) -> dict[str, frozenset[str]]:
   return {table: frozenset(privileges) for table, privileges in grants.items()}
 
 
-async def test_live_grant_set_for_crm_test_app_equals_the_data_contract(
+async def test_live_grant_set_for_crm_test_app_equals_the_expected_grants(
   db_connection: Any,
 ) -> None:
-  """The runtime role's live table-level grants equal the data contract, table by table.
+  """The runtime role's live table-level grants equal the expected grant set, table by table.
 
   Both directions: every expected privilege is present, and no unexpected
   one is — an over-grant (e.g. a stray `DELETE` on `contacts`) fails this
