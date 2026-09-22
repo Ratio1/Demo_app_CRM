@@ -229,18 +229,8 @@ def test_connect_kwargs_carries_the_explicit_tls_and_timeout_parameters() -> Non
   assert kwargs["dbname"] == config.dbname
 
 
-@pytest.mark.xfail(
-  reason=(
-    "backend-security: slice-a.md §6 D1 (ruling R34) pins connect_kwargs() to the "
-    "twelve-key set including ssl_min_protocol_version='TLSv1.2', "
-    "gssencmode='disable' and client_encoding='UTF8'; app/config.py has not been "
-    "updated to add these three keys yet (only nine keys ship today, verified by "
-    "test_connect_kwargs_is_exactly_nine_keys_today below)."
-  ),
-  strict=True,
-)
 def test_d1_connect_kwargs_is_exactly_the_twelve_key_set() -> None:
-  """``connect_kwargs()`` is exactly D1's twelve keys, once the Backend lane ships them."""
+  """``connect_kwargs()`` is exactly D1's twelve keys (slice-a.md §6 D1, ruling R34)."""
   config = load_config(_env())
   kwargs = config.connect_kwargs()
   assert kwargs["ssl_min_protocol_version"] == "TLSv1.2"

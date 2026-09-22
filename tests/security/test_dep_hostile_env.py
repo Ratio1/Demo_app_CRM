@@ -174,16 +174,6 @@ _PG_STAR_SURVIVAL_PROBE = (
 )
 
 
-@pytest.mark.xfail(
-  reason=(
-    "backend: slice-a.md §6 D9 (ruling R35) requires scripts/with-env, scripts/start and "
-    "scripts/dev-run.sh to unset every PG* variable before exec; the shipped "
-    "scripts/with-env explicitly documents the opposite today ('Pre-existing PG* "
-    "variables are deliberately left alone') and does not scrub. Delete this xfail and "
-    "keep only the assertion once D9 ships."
-  ),
-  strict=True,
-)
 def test_dep004b_with_env_scrubs_every_pg_star_variable_before_exec(tmp_path: Path) -> None:
   """After ``scripts/with-env`` execs, no ``PG*`` variable survives into the child (D9/R35)."""
   argv = [str(WITH_ENV), RUNTIME_ENV_FILE, "--", str(VENV_PYTHON), "-B", "-c"]
