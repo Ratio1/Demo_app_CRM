@@ -200,7 +200,8 @@ button {
 }
 @media (forced-colors: active) {
   :focus-visible { outline-color: Highlight; box-shadow: none; }
-  .badge, .chip, .stat-tile, .card, .alert, .state-panel, .region-error { border: 1px solid; }
+  .badge, .chip, .stat-tile, .card, .alert, .state-panel, .region-error,
+  .pipeline-card, .deal-card { border: 1px solid; }
 }
 
 /* ==========================================================================
@@ -1045,7 +1046,172 @@ table.responsive-table tbody tr:nth-child(even) { background: var(--color-bg-sur
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 /* ==========================================================================
-   22. forced-colors / reduced-motion (last, per UI_SPEC §7)
+   22. Deal pipeline (UI_SPEC §4.18, deals/pipeline.html + partials/
+   pipeline.html) — five columns >=1024px, five always-visible stacked
+   sections <1024px. No collapse: the € total is a required honesty value
+   (ACC-302) and must never hide behind an unstated default state.
+   ========================================================================== */
+
+.pipeline {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-5);
+  margin-top: var(--space-5);
+}
+@media (min-width: 1024px) {
+  .pipeline { grid-template-columns: repeat(5, 1fr); align-items: start; }
+}
+.pipeline-filter-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+.pipeline-filter-form .field { margin-top: 0; min-width: 10rem; }
+.pipeline-column {
+  padding: var(--space-4);
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+.pipeline-column-heading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+}
+.pipeline-column-meta {
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-regular);
+  font-variant-numeric: tabular-nums;
+}
+.pipeline-cards { margin-top: var(--space-3); display: flex; flex-direction: column; gap: var(--space-3); }
+.pipeline-card {
+  padding: var(--space-3);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface-alt);
+}
+.pipeline-card p { margin-top: var(--space-1); }
+.pipeline-card p:first-child { margin-top: 0; }
+.pipeline-card-amount { font-variant-numeric: tabular-nums; font-weight: var(--weight-medium); }
+.pipeline-card-contact { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); }
+.pipeline-empty { margin-top: var(--space-3); color: var(--color-text-secondary); }
+
+/* UI_SPEC §1.4: the desktop pipeline is the one place a horizontally
+   scrollable container is kept, for a very narrow desktop viewport; the
+   6px inner padding gives a focus ring room inside the clip box. Applies
+   only alongside the 5-column layout (>=1024px). */
+@media (min-width: 1024px) {
+  .pipeline { overflow-x: auto; padding-bottom: 6px; }
+}
+
+/* ==========================================================================
+   23. Deal list (deals/list.html, partials/deal_results.html) — amount
+   right-aligned, tabular figures (UX_FLOWS §4.7 S7). Below 640px, Title
+   and Amount share the card's first row via named grid areas rather than
+   each cell taking its own row (no content duplication).
+   ========================================================================== */
+
+.amount-col { font-variant-numeric: tabular-nums; }
+@media (min-width: 640px) {
+  .amount-col { text-align: right; }
+}
+@media (max-width: 639px) {
+  table.deals-table tr {
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "title   amount"
+      "contact contact"
+      "stage   stage"
+      "close   close"
+      "owner   owner";
+  }
+  table.deals-table .cell-title   { grid-area: title; }
+  table.deals-table .cell-amount  { grid-area: amount; text-align: right; }
+  table.deals-table .cell-contact { grid-area: contact; }
+  table.deals-table .cell-stage   { grid-area: stage; }
+  table.deals-table .cell-close   { grid-area: close; }
+  table.deals-table .cell-owner   { grid-area: owner; }
+}
+
+/* ==========================================================================
+   24. Stage-change control (UI_SPEC §4.18, R22, partials/stage_control.
+   html) — the lateral <select> + Move form, and the terminal "closed"
+   note. The Won/Lost confirmations reuse .confirm (§16) unchanged through
+   partials/confirm.html.
+   ========================================================================== */
+
+.stage-move {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+.stage-move .field { margin-top: 0; }
+.stage-move label { font-size: var(--text-sm); }
+.stage-move select {
+  min-height: 2.25rem;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  font: inherit;
+}
+.stage-control-panel, .deal-card .stage-move, .deal-card .confirm { margin-top: var(--space-3); }
+.deal-terminal-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  color: var(--color-text-secondary);
+}
+
+/* ==========================================================================
+   25. Deal detail (deals/detail.html, UX_FLOWS §4.7 S10) — single column
+   at both widths; breadcrumb collapses to a back link below 1024px, same
+   two-renderings-one-list pattern partials/nav.html uses for itself.
+   ========================================================================== */
+
+.deal-amount-lede {
+  margin-top: var(--space-2);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+.breadcrumb-full { display: none; }
+.breadcrumb-collapsed { display: inline-block; margin-bottom: var(--space-3); }
+@media (min-width: 1024px) {
+  .breadcrumb-full { display: block; margin-bottom: var(--space-3); }
+  .breadcrumb-collapsed { display: none; }
+}
+.breadcrumb ol { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: 0; }
+.breadcrumb li { display: inline-flex; }
+.breadcrumb li[aria-current="page"] { color: var(--color-text-secondary); }
+.breadcrumb-sep { color: var(--color-text-secondary); }
+.detail-list-meta { margin-top: var(--space-5); max-width: 24rem; }
+
+/* ==========================================================================
+   26. Contact workspace deal cards (UI_SPEC §4.15 "Deals region") — the
+   :target rule highlights the deal a 303 redirect pointed at
+   (#deal-{id}), same mechanism the workspace already documents.
+   ========================================================================== */
+
+.deal-card-title { font-weight: var(--weight-medium); }
+.deal-card-amount { font-variant-numeric: tabular-nums; }
+.deal-card:target {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+/* ==========================================================================
+   27. forced-colors / reduced-motion (last, per UI_SPEC §7)
    ========================================================================== */
 
 @media (prefers-reduced-motion: reduce) {
