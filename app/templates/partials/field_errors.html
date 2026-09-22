@@ -1,0 +1,18 @@
+{#-  partials/field_errors.html — CONTRACTS.md §8.3: `field`, `errors`
+  (macro). One `<p class="field-error">` per message for one field, in the
+  exact per-field markup UI_SPEC.md §4.5 shows: "Error:" prefix (the one
+  retained non-colour text prefix, R2-08), `id="err-{field}"` so the input
+  can point `aria-describedby` at it. `field` here is the HTML id fragment
+  (e.g. "email", not the POST name — contacts/form.html's POST field is
+  `email` too, but contacts/detail.html's reassign panel uses HTML id
+  `owner_id`, matching the POST field there).
+
+  Caller contract: only invoked when the field actually has errors (the
+  `{% if %}` lives in the CALLING template beside the input, so the input's
+  own `aria-invalid`/`aria-describedby` and this macro's `id="err-…"` stay
+  in the same conditional branch, per contacts/form.html and
+  contacts/detail.html's reassign panel).
+-#}
+{% macro field_errors(field, errors) -%}
+<p id="err-{{ field }}" class="field-error">Error: {{ errors[0] }}</p>
+{%- endmacro %}
