@@ -5,24 +5,17 @@
  * (`style-src 'self'`, no `unsafe-inline`): every visual state is a class or
  * an attribute selector, never an inline `style=`.
  *
- * Source: _agents/projects/CRM/design/UI_SPEC.md §1 (tokens), §2 (measured
- * contrast pairs — only pairs recorded there are used), §4 (components),
- * §6 (breakpoints), §7 (this file's own architecture note).
+ * File organization: design tokens -> resets/base -> layout primitives ->
+ * components -> state/utility classes -> forced-colors and reduced-motion
+ * media blocks last.
  *
- * File organization (UI_SPEC §7): tokens -> resets/base -> layout
- * primitives -> components -> state/utility classes -> forced-colors and
- * reduced-motion media blocks last.
- *
- * Slice A ships the full token set (forward-compatible with later slices)
- * plus the components Slice A actually renders: shell (nav/topbar/menu),
- * forms, buttons, alerts, error summary, state panels, focus rings, reduced
- * motion, the class-based htmx-request indicator and the `.cell-label`
- * pattern (no table yet renders it; the rule is included so the later
- * list/table slices need no CSS addition for the pattern itself).
+ * Only the classes the templates currently render are styled here; new
+ * sections are appended as new screens ship, so later additions need no
+ * restructuring of what already exists.
  */
 
 /* ==========================================================================
-   1. Design tokens (UI_SPEC §1)
+   1. Design tokens
    ========================================================================== */
 
 :root {
@@ -181,7 +174,7 @@ button {
 }
 
 /* ==========================================================================
-   3. Focus ring mechanics (UI_SPEC §1.4)
+   3. Focus ring mechanics
    ========================================================================== */
 
 :focus-visible {
@@ -205,7 +198,7 @@ button {
 }
 
 /* ==========================================================================
-   4. Skip link (UI_SPEC §4.25)
+   4. Skip link
    ========================================================================== */
 
 .skip-link {
@@ -224,7 +217,7 @@ button {
 }
 
 /* ==========================================================================
-   5. Layout primitives — shell (UI_SPEC §4.1)
+   5. Layout primitives — shell
    ========================================================================== */
 
 .public-brand {
@@ -426,7 +419,7 @@ button {
 }
 
 /* ==========================================================================
-   6. Page skeleton / header (UI_SPEC §4.2)
+   6. Page skeleton / header
    ========================================================================== */
 
 main#main {
@@ -458,7 +451,7 @@ main#main {
 }
 
 /* ==========================================================================
-   7. Buttons (UI_SPEC §4.3)
+   7. Buttons
    ========================================================================== */
 
 .btn {
@@ -510,7 +503,7 @@ main#main {
 .btn-danger-outline:hover { background: var(--color-danger-bg); }
 
 /* ==========================================================================
-   8. Forms (UI_SPEC §4.5 - §4.7)
+   8. Forms
    ========================================================================== */
 
 .field { margin-top: var(--space-4); }
@@ -589,7 +582,7 @@ main#main {
 .radio-option input[type="radio"] { accent-color: var(--color-accent); }
 
 /* ==========================================================================
-   9. Alerts / notice / error summary / region-error (UI_SPEC §4.5, §4.21)
+   9. Alerts / notice / error summary / region-error
    ========================================================================== */
 
 .alert {
@@ -606,8 +599,8 @@ main#main {
 
 .alert-success { background: var(--color-success-bg); color: var(--color-success-text); }
 .alert-warn    { background: var(--color-warn-bg);    color: var(--color-warn-text); }
-/* `notice.kind` (base context, R20) is the contract-fixed string "warning",
-   not "warn" — partials/notice.html builds its class from that value
+/* `notice.kind` is always the string "warning", not "warn" —
+   partials/notice.html builds its class from that value
    directly, so this alias exists rather than reshaping the template's
    output; `.alert-warn` above stays for classes other templates set by
    hand (e.g. the forced-reset banner, region_error.html). */
@@ -638,7 +631,7 @@ main#main {
 }
 
 /* ==========================================================================
-   10. State panels — error pages (UI_SPEC §4.22 / §4.9 layout)
+   10. State panels — error pages
    ========================================================================== */
 
 .state-panel {
@@ -668,7 +661,7 @@ main#main {
 }
 
 /* ==========================================================================
-   11. Sign-in card (UI_SPEC §4.2 composition table)
+   11. Sign-in card
    ========================================================================== */
 
 .auth-shell {
@@ -710,13 +703,13 @@ main#main {
   font-size: var(--text-sm);
 }
 
-/* Change-password screen (UI_SPEC §4.2 composition table: single column, max 560px) */
+/* Change-password screen: single column, max 560px */
 .account-shell {
   max-width: 35rem;
 }
 
 /* ==========================================================================
-   12. Loading indicator — class-based, no spinner replaces a label (R29)
+   12. Loading indicator — class-based; no spinner ever replaces a status label
    ========================================================================== */
 
 .htmx-indicator { opacity: 0; }
@@ -726,10 +719,9 @@ main#main {
 }
 
 /* ==========================================================================
-   13. Pagination / table->card pattern (UI_SPEC §4.8-4.10, R23/R24).
-   Wired by contacts/list.html + partials/contact_results.html this slice;
-   partials/pagination.html and partials/timeline.html (a later slice)
-   share this one implementation.
+   13. Pagination / table->card pattern. Used by contacts/list.html and
+   partials/contact_results.html; partials/pagination.html and
+   partials/timeline.html share this one implementation.
    ========================================================================== */
 
 .pagination {
@@ -750,9 +742,9 @@ main#main {
   padding: var(--space-1) var(--space-2);
 }
 @media (min-width: 640px) {
-  /* UI_SPEC §6 touch-target table: "Pagination/timeline links >=44px
-     mobile, >=36px desktop" — the available <a> and the inert <span>
-     share one box at both sizes, so the control never shifts (R24). */
+  /* Pagination/timeline links are >=44px on mobile, >=36px on desktop —
+     the available <a> and the inert <span> share one box at both sizes,
+     so the control never shifts size. */
   .pagination a, .pagination .is-disabled { min-height: 2.25rem; }
 }
 .pagination-current { color: var(--color-text-secondary); }
@@ -790,9 +782,8 @@ table.responsive-table tbody tr:nth-child(even) { background: var(--color-bg-sur
 }
 
 /* ==========================================================================
-   14. Badges / chips (UI_SPEC §4.12, §4.13) — Slice B: kind (lead/
-   customer), archived. Stage badges wired by a later slice, tokens
-   already exist (§1).
+   14. Badges / chips — contact kind (lead/customer), archived, and deal
+   stage. All the colour tokens live in the tokens section above.
    ========================================================================== */
 
 .badge {
@@ -825,16 +816,15 @@ table.responsive-table tbody tr:nth-child(even) { background: var(--color-bg-sur
   font-weight: var(--weight-medium);
   white-space: nowrap;
 }
-/* Owner chip (UI_SPEC §4.13/§2 "Owner chip: text/fill, 9.45:1"): no hex
-   pair is given to reproduce that exact figure, so this reuses the
-   already-measured "Secondary text / table stripe" pair (§2, 6.92:1)
-   rather than introducing an unverified new one. */
+/* Owner chip: reuses the already-measured "Secondary text / table
+   stripe" colour pair (6.92:1 contrast) rather than introducing an
+   unverified new one. */
 .chip-owner { background: var(--color-bg-surface-alt); color: var(--color-text-secondary); }
 
 .owner-line { margin-top: var(--space-2); color: var(--color-text-secondary); }
 
 /* ==========================================================================
-   15. Filter disclosure (UI_SPEC §4.11, R23's <1024px boundary)
+   15. Filter disclosure — collapses below 1024px
    ========================================================================== */
 
 .filter-disclosure { margin-top: var(--space-4); }
@@ -858,9 +848,9 @@ table.responsive-table tbody tr:nth-child(even) { background: var(--color-bg-sur
 .filter-disclosure .field { margin-top: 0; }
 .region-status { color: var(--color-text-secondary); font-size: var(--text-sm); }
 
-/* UI_SPEC §4.9: shown only below 640px, independent of the 1024px
-   disclosure boundary — the 640-1023px band keeps the real <th> sort
-   links (full table) and hides these. */
+/* Shown only below 640px, independent of the 1024px disclosure
+   boundary — the 640-1023px band keeps the real <th> sort links (full
+   table) and hides these. */
 @media (min-width: 640px) {
   .sort-mobile-only { display: none; }
 }
@@ -874,17 +864,14 @@ table.responsive-table tbody tr:nth-child(even) { background: var(--color-bg-sur
     gap: var(--space-3);
   }
   .filter-disclosure .field { flex: 1 1 160px; }
-  /* UI_SPEC §4.11's own provisional technique for unwrapping a CLOSED
-     <details> at this breakpoint (marked NOT VERIFIED there, across
-     every engine, for exactly this reason): a closed <details>'s
-     non-summary content is hidden through an internal
-     `::details-content` pseudo-element (`content-visibility: hidden`
-     in the UA stylesheet), which the host element's own `display`
-     value does not reach — only `content-visibility`, targeted
-     directly, overrides it. If a P4 pass finds this unreliable in a
-     real engine, UI_SPEC §4.11's own documented fallback (two full
-     render blocks, viewport-suffixed field ids) ships instead and
-     REVIEW.md records it — not silently swapped here. */
+  /* Technique for unwrapping a CLOSED <details> at this breakpoint: a
+     closed <details>'s non-summary content is hidden through an
+     internal `::details-content` pseudo-element (`content-visibility:
+     hidden` in the UA stylesheet), which the host element's own
+     `display` value does not reach — only `content-visibility`,
+     targeted directly, overrides it. If this proves unreliable in a
+     given rendering engine, the fallback is two full render blocks
+     with viewport-suffixed field ids instead of this rule. */
   .filter-disclosure::details-content {
     content-visibility: visible;
     display: block;
@@ -892,8 +879,8 @@ table.responsive-table tbody tr:nth-child(even) { background: var(--color-bg-sur
 }
 
 /* ==========================================================================
-   16. Confirmation disclosure (UI_SPEC §4.20 — archive; §4.18's terminal
-   stage confirmations reuse this unchanged in a later slice)
+   16. Confirmation disclosure — used for archive and for the terminal
+   Won/Lost stage confirmations
    ========================================================================== */
 
 .confirm { margin-top: var(--space-4); }
@@ -912,7 +899,7 @@ table.responsive-table tbody tr:nth-child(even) { background: var(--color-bg-sur
 .confirm-body form { margin-top: var(--space-3); }
 
 /* ==========================================================================
-   17. Contact editor (UI_SPEC §4.5-§4.7 composition: single column, 640px)
+   17. Contact editor — single column, max 640px
    ========================================================================== */
 
 .form-shell { max-width: 40rem; }
@@ -928,7 +915,7 @@ table.responsive-table tbody tr:nth-child(even) { background: var(--color-bg-sur
 .primary-action-form { display: inline-block; margin: 0; }
 
 /* ==========================================================================
-   18. Contact workspace layout (UI_SPEC §4.15, R30)
+   18. Contact workspace layout
    ========================================================================== */
 
 .workspace {
@@ -947,9 +934,8 @@ table.responsive-table tbody tr:nth-child(even) { background: var(--color-bg-sur
 .workspace h2 { font-size: var(--text-lg); font-weight: var(--weight-semibold); }
 @media (min-width: 1024px) {
   /* DOM order is Details -> Activity -> Deals -> Record -> Owner at
-     every width (R30); `order` is what places Deals visually above
-     Activity here without changing that DOM/keyboard order (§8 Q13,
-     closed by R40: default stands, consequence disclosed not fixed). */
+     every width; `order` is what places Deals visually above Activity
+     here without changing that DOM/keyboard order. */
   .workspace { grid-template-columns: 2fr 1fr; align-items: start; }
   .workspace-details  { grid-column: 1; order: 1; }
   .workspace-deals    { grid-column: 1; order: 2; }
@@ -975,9 +961,8 @@ table.responsive-table tbody tr:nth-child(even) { background: var(--color-bg-sur
 
 .empty-inline { margin-top: var(--space-2); color: var(--color-text-secondary); }
 
-/* Timeline / deal card — Slice B renders both only in their empty state
-   (slice-b.md §2(i)); styled now so a later slice's real items need no
-   CSS addition, per this file's own §13 precedent. */
+/* Timeline / deal card — styled to cover both the empty state and real
+   items, following the same approach as the pagination section above. */
 .timeline-list { margin-top: var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
 .timeline-item { display: flex; gap: var(--space-3); }
 .timeline-icon { flex-shrink: 0; color: var(--color-text-secondary); margin-top: 0.2em; }
@@ -995,8 +980,8 @@ table.responsive-table tbody tr:nth-child(even) { background: var(--color-bg-sur
 
 /* ==========================================================================
    19. State panel used INLINE inside a region (contacts empty/no-results,
-   timeline empty) — UI_SPEC §4.22's `.state-panel` styles only `h1`; this
-   adds the `h2`/`h3` a region's own heading level needs. Both classes are
+   timeline empty) — the base `.state-panel` rules above style only `h1`;
+   this adds the `h2`/`h3` a region's own heading level needs. Both classes are
    applied together (`class="state-panel state-panel-region"`) so padding,
    the illustration and the action link stay the one shared implementation.
    ========================================================================== */
@@ -1008,7 +993,7 @@ table.responsive-table tbody tr:nth-child(even) { background: var(--color-bg-sur
 }
 
 /* ==========================================================================
-   20. 409 stale-edit recovery panel (UI_SPEC §4.23)
+   20. Stale-edit recovery panel (409 conflict)
    ========================================================================== */
 
 .state-panel-409 { max-width: 48rem; }
@@ -1028,28 +1013,28 @@ table.responsive-table tbody tr:nth-child(even) { background: var(--color-bg-sur
 .diff-row:last-child { border-bottom: 0; }
 .diff-row dt { font-weight: var(--weight-medium); }
 .diff-row dd { margin: var(--space-1) 0 0; }
-/* Reuses the alert warn pair (§2, "warn row reused for the stale-edit
-   diff marker") — never colour alone: the glyph + the word "changed"
-   in `.diff-marker` are the non-colour cues (R2-08 family). */
+/* Reuses the alert warn colour pair for the stale-edit diff marker —
+   never colour alone: the glyph plus the word "changed" in
+   `.diff-marker` are the non-colour cues. */
 .diff-changed { background: var(--color-warn-bg); }
 .diff-marker { color: var(--color-warn-text); font-weight: var(--weight-medium); }
 .state-panel-409 form { margin-top: var(--space-5); }
 
 /* ==========================================================================
-   21. sr-only alias — partials/announce.html's OOB element (slice-b.md
-   §2(e) prints `class="visually-hidden"` verbatim; only its innerHTML
-   ever reaches the shell's real `#announce` node, per the htmx OOB
-   swap mechanics documented there, but the class is aliased so it is
-   never an undefined one either way).
+   21. sr-only alias — partials/announce.html's out-of-band element
+   prints `class="visually-hidden"` verbatim; only its innerHTML ever
+   reaches the shell's real `#announce` node, per htmx's out-of-band
+   swap mechanics. The class is aliased here so it is never left
+   undefined.
    ========================================================================== */
 
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 /* ==========================================================================
-   22. Deal pipeline (UI_SPEC §4.18, deals/pipeline.html + partials/
-   pipeline.html) — five columns >=1024px, five always-visible stacked
-   sections <1024px. No collapse: the € total is a required honesty value
-   (ACC-302) and must never hide behind an unstated default state.
+   22. Deal pipeline (deals/pipeline.html + partials/pipeline.html) —
+   five columns >=1024px, five always-visible stacked sections <1024px.
+   No collapse: the € total for each stage is always shown, never
+   hidden behind a default filter.
    ========================================================================== */
 
 .pipeline {
@@ -1102,7 +1087,7 @@ table.responsive-table tbody tr:nth-child(even) { background: var(--color-bg-sur
 .pipeline-card-contact { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); }
 .pipeline-empty { margin-top: var(--space-3); color: var(--color-text-secondary); }
 
-/* UI_SPEC §1.4: the desktop pipeline is the one place a horizontally
+/* The desktop pipeline is the one place a horizontally
    scrollable container is kept, for a very narrow desktop viewport; the
    6px inner padding gives a focus ring room inside the clip box. Applies
    only alongside the 5-column layout (>=1024px). */
@@ -1112,7 +1097,7 @@ table.responsive-table tbody tr:nth-child(even) { background: var(--color-bg-sur
 
 /* ==========================================================================
    23. Deal list (deals/list.html, partials/deal_results.html) — amount
-   right-aligned, tabular figures (UX_FLOWS §4.7 S7). Below 640px, Title
+   right-aligned, tabular figures. Below 640px, Title
    and Amount share the card's first row via named grid areas rather than
    each cell taking its own row (no content duplication).
    ========================================================================== */
@@ -1140,10 +1125,10 @@ table.responsive-table tbody tr:nth-child(even) { background: var(--color-bg-sur
 }
 
 /* ==========================================================================
-   24. Stage-change control (UI_SPEC §4.18, R22, partials/stage_control.
-   html) — the lateral <select> + Move form, and the terminal "closed"
-   note. The Won/Lost confirmations reuse .confirm (§16) unchanged through
-   partials/confirm.html.
+   24. Stage-change control (partials/stage_control.html) — the
+   lateral <select> + Move form, and the terminal "closed" note. The
+   Won/Lost confirmations reuse the confirmation-disclosure component
+   above, unchanged, through partials/confirm.html.
    ========================================================================== */
 
 .stage-move {
@@ -1174,8 +1159,8 @@ table.responsive-table tbody tr:nth-child(even) { background: var(--color-bg-sur
 }
 
 /* ==========================================================================
-   25. Deal detail (deals/detail.html, UX_FLOWS §4.7 S10) — single column
-   at both widths; breadcrumb collapses to a back link below 1024px, same
+   25. Deal detail (deals/detail.html) — single column at both widths;
+   breadcrumb collapses to a back link below 1024px, the same
    two-renderings-one-list pattern partials/nav.html uses for itself.
    ========================================================================== */
 
@@ -1198,9 +1183,8 @@ table.responsive-table tbody tr:nth-child(even) { background: var(--color-bg-sur
 .detail-list-meta { margin-top: var(--space-5); max-width: 24rem; }
 
 /* ==========================================================================
-   26. Contact workspace deal cards (UI_SPEC §4.15 "Deals region") — the
-   :target rule highlights the deal a 303 redirect pointed at
-   (#deal-{id}), same mechanism the workspace already documents.
+   26. Contact workspace deal cards — the :target rule highlights the
+   deal a redirect pointed at (#deal-{id}).
    ========================================================================== */
 
 .deal-card-title { font-weight: var(--weight-medium); }
@@ -1212,11 +1196,10 @@ table.responsive-table tbody tr:nth-child(even) { background: var(--color-bg-sur
 
 /* ==========================================================================
    26b. Dashboard (dashboard.html) — three stat tiles and the recent list.
-   Tokens only, no new colour, no chart: `.stat-tile` was already named in
-   §3's forced-colors block, so this section gives it the base rule that
-   block always assumed. The tiles are a plain <ul> that becomes a
-   three-column grid at >=640px and stacks below it, like every other
-   region in this file.
+   Tokens only, no new colour, no chart. `.stat-tile` is referenced by
+   the forced-colors block above; this section gives it its base rule.
+   The tiles are a plain <ul> that becomes a three-column grid at
+   >=640px and stacks below it, like every other region in this file.
    ========================================================================== */
 
 .stat-tiles {
@@ -1263,7 +1246,7 @@ table.responsive-table tbody tr:nth-child(even) { background: var(--color-bg-sur
 .dashboard-recent h2 { font-size: var(--text-xl); font-weight: var(--weight-semibold); }
 
 /* ==========================================================================
-   27. forced-colors / reduced-motion (last, per UI_SPEC §7)
+   27. forced-colors / reduced-motion (kept last)
    ========================================================================== */
 
 @media (prefers-reduced-motion: reduce) {
