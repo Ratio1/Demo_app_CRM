@@ -1,5 +1,4 @@
-<!--
-  auth/login.html — CONTRACTS.md §8.2 context (beyond base): `form {email}`,
+{#-  auth/login.html — CONTRACTS.md §8.2 context (beyond base): `form {email}`,
   `errors {field: [str]}`, `next | None`, `signed_out: bool`,
   `session_ended: bool`, `retry_after_seconds | None`.
 
@@ -18,7 +17,7 @@
   actual failed attempt (`errors` or `retry_after_seconds` set) — not
   withheld for the informational `session_ended`/`signed_out` notices,
   which are not "failures" in R28's sense.
--->
+-#}
 {% extends "base.html" %}
 {# The wordmark lives inside the centred card (UX_FLOWS.md §4.1's region
    order: wordmark -> h1 -> alert -> form), not as a page-top banner like

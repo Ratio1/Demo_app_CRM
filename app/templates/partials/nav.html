@@ -1,5 +1,4 @@
-<!--
-  partials/nav.html — CONTRACTS.md §8.3 "base only": the text wordmark,
+{#-  partials/nav.html — CONTRACTS.md §8.3 "base only": the text wordmark,
   the three destinations and the account block, rendered TWICE (>=1024px
   sidebar, <1024px top bar + native <details> menu) from one link list;
   CSS `display: none` hides whichever does not apply so exactly one
@@ -12,7 +11,7 @@
   shell: the menu holds the account block only, no destination links" — the
   account block (identity, Change password, Sign out) always renders.
   No image, no inline SVG, no `mark.svg` reference anywhere (R17).
--->
+-#}
 {% set _forced = principal.must_change_password %}
 {% set _role_label = "Administrator" if principal.is_admin else "Agent" %}
 

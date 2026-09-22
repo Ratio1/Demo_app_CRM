@@ -1,5 +1,4 @@
-<!--
-  errors/403.html — CONTRACTS.md §8.4: `reason: "session" | "role" |
+{#-  errors/403.html — CONTRACTS.md §8.4: `reason: "session" | "role" |
   "forced_reset"`, `correlation_id`.
 
   Shell (UX_FLOWS.md §3 shell rule / UI_SPEC.md §3): `reason="session"` is
@@ -12,7 +11,7 @@
   `reason="session"` is also the byte-identical step-0 403 for CSRF/Origin/
   Host failures (UX_FLOWS.md §3.4/§3.5) — CP-81/CP-08, the same body for
   every step-0 cause once the correlation id is normalized (R27).
--->
+-#}
 {% extends "base.html" %}
 {% block main %}
 <div class="state-panel">

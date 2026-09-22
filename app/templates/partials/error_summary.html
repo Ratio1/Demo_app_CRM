@@ -1,5 +1,4 @@
-<!--
-  partials/error_summary.html — CONTRACTS.md §8.3: `errors`, `field_labels`
+{#-  partials/error_summary.html — CONTRACTS.md §8.3: `errors`, `field_labels`
   (macro). The `role="alert" tabindex="-1"` page-level summary, `<main>`'s
   first child, rendered only after a failed POST (R28: no `autofocus`
   anywhere on this component).
@@ -16,7 +15,7 @@
   Link text is the field's own error message verbatim (UX_FLOWS.md §1.4:
   "heading, then one link per message" — no invented "{Field}: {message}"
   prefix).
--->
+-#}
 {% if errors %}
 {% set _labels = field_labels if field_labels is defined else {} %}
 {% set _n = errors|length %}

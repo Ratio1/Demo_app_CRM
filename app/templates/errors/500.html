@@ -1,5 +1,4 @@
-<!--
-  errors/500.html — CONTRACTS.md §8.4: `correlation_id`. Public shell
+{#-  errors/500.html — CONTRACTS.md §8.4: `correlation_id`. Public shell
   ALWAYS (R32) — the backend passes `principal=None` unconditionally for
   this handler, so base.html's ordinary shell selection is enough; no
   extra template-side logic needed to enforce the rule.
@@ -10,7 +9,7 @@
   separate small-print "Reference: ..." line — that would duplicate it.
   May carry `state-error.svg` (R18) — "the one system failure, not a
   denial".
--->
+-#}
 {% extends "base.html" %}
 {% block main %}
 <div class="state-panel">

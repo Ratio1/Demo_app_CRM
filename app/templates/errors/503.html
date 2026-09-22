@@ -1,5 +1,4 @@
-<!--
-  errors/503.html — CONTRACTS.md §8.4: `context: "unavailable" |
+{#-  errors/503.html — CONTRACTS.md §8.4: `context: "unavailable" |
   "ambiguous_commit"` (R19/R37 — the token is `ambiguous_commit`, the
   pre-R19 "unconfirmed" spelling is retired), `correlation_id`,
   `record_url | None`. Public shell ALWAYS (R32) — the backend passes
@@ -9,7 +8,7 @@
   no action link. `ambiguous_commit`: CP-93/CP-19 — explicitly forbids
   resubmission and sends the user to the record when `record_url` is
   known. Both may carry `state-unavailable.svg` (R18).
--->
+-#}
 {% extends "base.html" %}
 {% block main %}
 <div class="state-panel">

@@ -1,12 +1,11 @@
-<!--
-  errors/400.html — CONTRACTS.md §8.4: `correlation_id`, `back_url` (a
+{#-  errors/400.html — CONTRACTS.md §8.4: `correlation_id`, `back_url` (a
   constant safe path, never derived from the request). Shell follows the
   session (base.html decides from `principal`). Generic, crafted-request
   case only (§3.13): unknown/non-writable field, disallowed sort/filter
   value — never a template-level validation failure, which re-renders the
   originating form instead. CP-80/CP-15. Action label "Dashboard"
   (UI_SPEC.md §4.22 row: "link to Dashboard").
--->
+-#}
 {% extends "base.html" %}
 {% block main %}
 <div class="state-panel">
