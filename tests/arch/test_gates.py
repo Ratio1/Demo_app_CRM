@@ -18,7 +18,14 @@ functions that write ``role`` or ``is_active`` — ``insert_user`` and
 ``set_active`` — are referenced only from ``app/services/accounts.py``.
 
 ``ARC-001``/``SQL-032`` and ``SQL-031`` (Slice B, ruling R66) are added at
-the very bottom.
+the very bottom, extended for Slice C's ``deals.py``/``migrations/0004_deals``
+(both already covered generically by the existing walks over
+``app/db/**``/``migrations/**``, except the two tests that named
+``contacts`` explicitly). ``ARC-021`` (Slice C, **proposed** — not yet in
+``ACCESS_MATRIX.md`` §7, `contracts/slice-c.md` §2(h)) is added after it:
+money is ``decimal.Decimal`` end to end, both halves — no ``float(``/
+``round(`` over a float on a money path (static), and the runtime guards
+``format_eur``/``DealFields``/``DealRow`` actually enforce (behavioural).
 """
 
 from __future__ import annotations
@@ -28,6 +35,8 @@ import hashlib
 import re
 from pathlib import Path
 from typing import Final
+
+import pytest
 
 APP_ROOT = Path(__file__).resolve().parent.parent.parent
 APP_DIR = APP_ROOT / "app"
@@ -475,33 +484,43 @@ def _public_top_level_functions(
   ]
 
 
-def test_arc001_sql032_business_repositories_are_exactly_contacts() -> None:
-  """The ARC-001 allowlist is exactly the identity/infrastructure modules; `contacts` is not on it.
+#: Slice C, `contracts/slice-c.md` §1(b): "`deals.py` is a business
+#: repository with no identity-keyed exception" — joins `contacts` on the
+#: ARC-001 allowlist's business side. Updated here rather than left to trip
+#: (`slice-b.md` §1(b) B2's own instruction, extended by the same logic).
+_BUSINESS_REPOSITORY_MODULES: Final[frozenset[str]] = frozenset({"contacts", "deals"})
+
+
+def test_arc001_sql032_business_repositories_are_exactly_contacts_and_deals() -> None:
+  """The ARC-001 allowlist is exactly the identity/infrastructure modules — not `contacts`/`deals`.
 
   Written as a frozenset in this test (not inferred from the allowlist a
   gate happens to check), per `contracts/slice-b.md` §1(b) B2's own
   instruction: "this must be stated in ARC-001/SQL-032's allowlist or the
-  ast gate trips on both".
+  ast gate trips on both" — extended here for Slice C's `deals.py`.
   """
   assert _REPOSITORIES_DIR.is_dir(), f"{_REPOSITORIES_DIR} does not exist yet"
   modules = {path.stem for path in _REPOSITORIES_DIR.glob("*.py") if path.stem != "__init__"}
   assert modules, f"no repository modules found under {_REPOSITORIES_DIR}"
   business_modules = modules - _SCOPE_EXEMPT_REPOSITORY_MODULES
-  assert business_modules == {"contacts"}, (
-    f"expected exactly one business repository module outside the ARC-001 allowlist "
-    f"({sorted(_SCOPE_EXEMPT_REPOSITORY_MODULES)}): 'contacts'. Got {sorted(business_modules)}"
+  assert business_modules == _BUSINESS_REPOSITORY_MODULES, (
+    f"expected exactly the business repository modules outside the ARC-001 allowlist "
+    f"({sorted(_SCOPE_EXEMPT_REPOSITORY_MODULES)}): {sorted(_BUSINESS_REPOSITORY_MODULES)}. "
+    f"Got {sorted(business_modules)}"
   )
 
 
-def test_arc001_sql032_contacts_repository_functions_take_scope_second() -> None:
-  """Every public function of `app/db/repositories/contacts.py` takes `scope` as its 2nd arg.
+@pytest.mark.parametrize("module_name", sorted(_BUSINESS_REPOSITORY_MODULES))
+def test_arc001_sql032_business_repository_functions_take_scope_second(module_name: str) -> None:
+  """Every public function of a business repository takes `scope` as its 2nd positional arg.
 
   `contracts/slice-b.md` §1(b) B1: "`scope` is the second positional
   argument, not the first" — `conn` stays first (the shipped Slice A
   convention), `scope` is the first *business* argument, so the gate can
-  see it by position.
+  see it by position. `contracts/slice-c.md` §1(b) reconciles the same
+  convention for `deals.py`, unchanged.
   """
-  path = _REPOSITORIES_DIR / "contacts.py"
+  path = _REPOSITORIES_DIR / f"{module_name}.py"
   assert path.is_file(), f"{path} does not exist yet"
   tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
   functions = _public_top_level_functions(tree)
@@ -511,9 +530,7 @@ def test_arc001_sql032_contacts_repository_functions_take_scope_second() -> None
     args = function.args.args
     if len(args) < 2 or args[1].arg != "scope":
       offenders.append(f"{function.name} at line {function.lineno}")
-  assert offenders == [], (
-    f"public app/db/repositories/contacts.py function(s) missing `scope` as arg 2: {offenders}"
-  )
+  assert offenders == [], f"public {path.name} function(s) missing `scope` as arg 2: {offenders}"
 
 
 def test_arc001_sql032_identity_infrastructure_modules_take_no_scope() -> None:
@@ -547,8 +564,9 @@ def test_arc001_sql032_identity_infrastructure_modules_take_no_scope() -> None:
   )
 
 
-def test_sql032_contacts_repository_has_no_python_side_ownership_filter() -> None:
-  """`app/db/repositories/contacts.py` filters ownership in SQL only, never by post-filtering rows.
+@pytest.mark.parametrize("module_name", sorted(_BUSINESS_REPOSITORY_MODULES))
+def test_sql032_business_repository_has_no_python_side_ownership_filter(module_name: str) -> None:
+  """A business repository filters ownership in SQL only, never by post-filtering rows.
 
   A cheap structural guard, not a proof (documented as such, like
   `ARC-003` above): walks every `ast.Compare` node for an `==`/`!=`
@@ -557,8 +575,12 @@ def test_sql032_contacts_repository_has_no_python_side_ownership_filter() -> Non
   scope.actor_id``) would take. The real predicate lives in `sql.SQL`
   string literals (`_visible_where`/`_read_scope`/`_write_scope`), which
   this walk never flags because a string literal is not an `ast.Compare`.
+  `deals.py` carries no `owner_id` column at all (**PIN C8**) — its
+  ownership predicate is entirely the join to `contacts`, so this gate is
+  vacuously satisfied there and still worth running: a future edit adding
+  a `deals.owner_id` shortcut would trip it immediately.
   """
-  path = _REPOSITORIES_DIR / "contacts.py"
+  path = _REPOSITORIES_DIR / f"{module_name}.py"
   assert path.is_file(), f"{path} does not exist yet"
   tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
   offenders: list[str] = []
@@ -634,6 +656,37 @@ def _docstring_node_ids(tree: ast.Module) -> set[int]:
   return ids
 
 
+def _docstring_line_ranges(path: Path) -> list[tuple[int, int]]:
+  """Return ``(start_line, end_line)`` for every module/class/function docstring in ``path``.
+
+  Used to exclude *prose describing a banned pattern* (this codebase's
+  docstrings routinely name the very construct they forbid, e.g. "no
+  ``%f``") from a raw-text regex scan, the same false-positive
+  ``_docstring_node_ids`` already guards the SQL-031 gate against — but
+  expressed as line spans rather than node ids, since a plain regex over
+  source text has no node identity to compare against.
+  """
+  tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+  ranges: list[tuple[int, int]] = []
+
+  def _mark(body: list[ast.stmt]) -> None:
+    if (
+      body
+      and isinstance(body[0], ast.Expr)
+      and isinstance(body[0].value, ast.Constant)
+      and isinstance(body[0].value.value, str)
+    ):
+      node = body[0].value
+      end = node.end_lineno if node.end_lineno is not None else node.lineno
+      ranges.append((node.lineno, end))
+
+  _mark(tree.body)
+  for node in ast.walk(tree):
+    if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+      _mark(node.body)
+  return ranges
+
+
 def _non_docstring_string_constants(path: Path) -> list[tuple[int, str]]:
   """Return ``(lineno, value)`` for every non-docstring string literal in a ``.py`` file.
 
@@ -695,3 +748,157 @@ def test_sql031_no_server_clock_function_outside_journals_documented_exemption()
     f"(the two documented, named statements); found {journal_hits} — the exemption's own "
     "scope may have drifted"
   )
+
+
+# ---------------------------------------------------------------------------
+# ARC-021 (Slice C, **proposed** — `contracts/slice-c.md` §2(h), not yet
+# allocated in `ACCESS_MATRIX.md` §7; **PIN C1**: "money is `decimal.Decimal`
+# end to end"). Static half only, over the four paths the pin names:
+# `app/services/money.py`, `app/services/deals.py`,
+# `app/db/repositories/deals.py`, `app/templates/**`. The runtime half —
+# `format_eur` raising `TypeError` on a non-`Decimal` — is
+# `tests/unit/test_money.py::test_format_eur_rejects_a_float_with_typeerror`;
+# not duplicated here, per this file's own "each gate lives in exactly one
+# place" character (a purely static file otherwise).
+# ---------------------------------------------------------------------------
+
+_MONEY_PATH_MODULES: Final[tuple[Path, ...]] = (
+  APP_DIR / "services" / "money.py",
+  APP_DIR / "services" / "deals.py",
+  _REPOSITORIES_DIR / "deals.py",
+)
+
+#: `float(`, `round(` (over anything — the pin bans it outright on a money
+#: path, not only over a known-float argument, since the ast gate cannot
+#: prove an argument's type without a type checker), `Decimal(` called with
+#: something that is not a string/int/tuple literal (a float literal would
+#: read `Decimal(1.5)` — a `Constant` node whose value is a `float`), and
+#: the two C-style money format specifiers.
+_FLOAT_CALL_NAMES: Final[frozenset[str]] = frozenset({"float", "round"})
+_PERCENT_F_PATTERN: Final = re.compile(r"%\s*\.?\d*f\b")
+#: `{value:,.2f}`-shaped: an optional thousands-separator `,`, an optional
+#: `.` + precision digits, then the `f` conversion, inside `{ }`.
+_FORMAT_F_PATTERN: Final = re.compile(r":\s*,?\.?\d*f\}")
+
+
+def test_arc021_no_float_or_round_call_on_a_money_path() -> None:
+  """`float(`/`round(` never appear, as a call, in any of the four money-path modules."""
+  offenders: list[str] = []
+  for path in _MONEY_PATH_MODULES:
+    assert path.is_file(), f"{path} does not exist yet"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in ast.walk(tree):
+      if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in _FLOAT_CALL_NAMES
+      ):
+        offenders.append(f"{path.relative_to(APP_ROOT)}:{node.lineno}: {node.func.id}(...)")
+  assert offenders == [], "\n".join(offenders)
+
+
+def test_arc021_no_decimal_built_from_a_float_literal_on_a_money_path() -> None:
+  """`Decimal(1.5)`-shaped construction (a float literal argument) never appears."""
+  offenders: list[str] = []
+  for path in _MONEY_PATH_MODULES:
+    assert path.is_file(), f"{path} does not exist yet"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in ast.walk(tree):
+      if not (
+        isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "Decimal"
+      ):
+        continue
+      for argument in node.args:
+        if isinstance(argument, ast.Constant) and isinstance(argument.value, float):
+          offenders.append(f"{path.relative_to(APP_ROOT)}:{node.lineno}: Decimal({argument.value})")
+  assert offenders == [], "\n".join(offenders)
+
+
+def _matches_outside_docstrings(
+  pattern: re.Pattern[str], text: str, ranges: list[tuple[int, int]]
+) -> list[re.Match[str]]:
+  """Return every ``pattern`` match in ``text`` whose line falls outside ``ranges``."""
+  hits: list[re.Match[str]] = []
+  for match in pattern.finditer(text):
+    line_number = text.count("\n", 0, match.start()) + 1
+    if not any(start <= line_number <= end for start, end in ranges):
+      hits.append(match)
+  return hits
+
+
+def test_arc021_no_percent_f_or_format_f_specifier_on_a_money_path() -> None:
+  """No `%f`-style or `:.2f`-style format specifier appears in the four money-path modules.
+
+  `format_eur`'s own `f"€ {value:,.2f}"` is exempt by construction: at
+  that point `value` has already passed the `isinstance(value, Decimal)`
+  guard, and `Decimal.__format__` implements the same `,.2f` mini-language
+  exactly, without ever going through `float.__format__`. The gate is
+  therefore over the *source text* pattern only as a tripwire for a
+  **second**, unguarded formatting site appearing anywhere on a money
+  path — not a claim that this one exact line is itself suspect.
+  """
+  offenders: list[str] = []
+  money_module = APP_DIR / "services" / "money.py"
+  for path in _MONEY_PATH_MODULES:
+    assert path.is_file(), f"{path} does not exist yet"
+    text = path.read_text(encoding="utf-8")
+    docstring_ranges = _docstring_line_ranges(path)
+    percent_hits = _matches_outside_docstrings(_PERCENT_F_PATTERN, text, docstring_ranges)
+    format_hits = _matches_outside_docstrings(_FORMAT_F_PATTERN, text, docstring_ranges)
+    if path == money_module:
+      # Exactly format_eur's own one exempted `{value:,.2f}` site.
+      assert len(format_hits) == 1, (
+        f"expected exactly one `:,.2f`-shaped specifier in {path} (format_eur's own); "
+        f"found {len(format_hits)}"
+      )
+      assert percent_hits == [], f"unexpected %f-style specifier in {path}"
+      continue
+    for match in percent_hits + format_hits:
+      line_number = text.count("\n", 0, match.start()) + 1
+      offenders.append(f"{path.relative_to(APP_ROOT)}:{line_number}: {match.group(0)!r}")
+  assert offenders == [], "\n".join(offenders)
+
+
+def test_arc021_templates_carry_no_float_round_or_raw_percent_f_format() -> None:
+  """No `.html` template calls `float(`/`round(` or spells a raw `%f` (Jinja has neither builtin).
+
+  Templates cannot call `Decimal(` with a float literal (Jinja has no
+  float literal syntax reaching that constructor at all — this is a
+  Python-only failure mode), so only the call/format-specifier halves
+  apply here.
+  """
+  offenders: list[str] = []
+  templates = sorted(TEMPLATES_DIR.rglob("*.html")) if TEMPLATES_DIR.is_dir() else []
+  assert templates, f"no templates found under {TEMPLATES_DIR} yet"
+  call_pattern = re.compile(r"\b(?:float|round)\s*\(")
+  for template in templates:
+    text = template.read_text(encoding="utf-8")
+    for match in list(call_pattern.finditer(text)) + list(_PERCENT_F_PATTERN.finditer(text)):
+      line_number = text.count("\n", 0, match.start()) + 1
+      offenders.append(f"{template.relative_to(APP_ROOT)}:{line_number}: {match.group(0)!r}")
+  assert offenders == [], "\n".join(offenders)
+
+
+def test_arc021_no_numpy_or_fractions_import_on_the_deal_money_path() -> None:
+  """No alternate numeric-module import (`numpy`, `fractions`) shadows `Decimal` on a money path.
+
+  `contracts/slice-c.md` §2(h) also says "`import decimal` is the only
+  numeric import on the path", read here as *money-relevant* numerics —
+  `app/services/deals.py` legitimately imports `math` for
+  `math.ceil(total / per_page)` (`DealListView.pages`, an integer page
+  count, never an amount), so a blanket "no other numeric import at all"
+  reading would fail on that unrelated, harmless call. `numpy` and
+  `fractions` have no such innocent use on this path and would be a
+  concrete signal of an alternate numeric type quietly displacing
+  `Decimal` for arithmetic.
+  """
+  banned_numeric_modules = {"numpy", "fractions"}
+  offenders: list[str] = []
+  for path in _MONEY_PATH_MODULES:
+    assert path.is_file(), f"{path} does not exist yet"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for module_name in _module_imports(tree):
+      top_level = module_name.split(".", 1)[0]
+      if top_level in banned_numeric_modules:
+        offenders.append(f"{path.relative_to(APP_ROOT)} imports {module_name!r}")
+  assert offenders == [], "\n".join(offenders)
