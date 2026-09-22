@@ -176,6 +176,22 @@ _CP_43_EMPTY: Final = (
 #: active user, which a 409-stale reassign panel can legitimately hold.
 _CP_38_UNKNOWN_USER: Final = "removed user"
 
+#: **R63** — the body of a 409-stale panel that has **no fields to
+#: compare**. ``UX_FLOWS.md`` §3.9's own orientation sentence promises two
+#: panels ("Your version is on the left, the saved version on the right"),
+#: which an archive or a restore cannot fill: their form carries a version
+#: and nothing else (``ACCESS_MATRIX.md`` §5.1, §1(b) note 5 — *"no
+#: fields; version only"*). That screen keeps the ``CP-85`` heading — the
+#: heading of the screen ``CP-12`` sits on, which is how R63's *"CP-12's
+#: heading"* reads, ``CP-12`` itself being 409-stale **secondary** copy
+#: rather than a heading — and carries this sentence as its body instead.
+#: The ruling supplies the text verbatim and records the **CP id as owed**
+#: to the copy authority; this constant is its only spelling in the code,
+#: so the id lands in one place when it is issued.
+_CP_OWED_ZERO_FIELD_STALE: Final = (
+  "This record changed since you opened it. Review it and try again."
+)
+
 #: **R64** (**R31**, ``UX_FLOWS.md`` §4.5 *"Type (radio pair, ``lead``
 #: default)"*, §2(f)). The create form renders this value pre-selected, so
 #: the pair a user never touches still submits one — which is what makes
@@ -839,7 +855,14 @@ async def _stale_response(
   ``keep_form.values`` carries the **raw** submitted values — the owner
   *id* for a reassign, not the display name — because "Keep my changes"
   re-posts them verbatim. Only the comparison panel renders names.
+
+  ``body`` is **R63**'s zero-field copy, and is always present so the
+  template can read it under ``StrictUndefined``: ``None`` on a panel that
+  has fields to compare (the screen keeps ``UX_FLOWS.md`` §3.9's own
+  orientation sentence), and :data:`_CP_OWED_ZERO_FIELD_STALE` on one that
+  has none.
   """
+  fields = _stale_fields(result, owner_names)
   return await conflict(
     request,
     context="stale",
@@ -847,7 +870,8 @@ async def _stale_response(
       "stale": {
         "object_label": result.current.full_name,
         "updated_at": result.current.updated_at,
-        "fields": _stale_fields(result, owner_names),
+        "fields": fields,
+        "body": None if fields else _CP_OWED_ZERO_FIELD_STALE,
         "keep_form": View(
           action_url=action_url,
           values=dict(result.submitted),
@@ -1141,12 +1165,30 @@ async def contact_detail(request: Request, contact_id: str) -> Response:
 
 @router.get("/contacts/{contact_id}/edit", name="contact_edit")
 async def contact_edit(request: Request, contact_id: str) -> Response:
-  """Render the edit form for one contact."""
+  """Render the edit form for one contact — ``303`` when it is archived (**R63**).
+
+  Notes
+  -----
+  An archived contact has no editable state to render: its detail page
+  offers **restore only** (``ACC-006``), and the matching ``POST`` stays
+  409 ``archived_parent`` (``ACC-018``). Sending the form anyway would
+  invite a submission whose only possible answer is that 409, so the
+  ``GET`` answers ``303`` to the detail instead — the screen that carries
+  the one action left.
+
+  The redirect sits **after** :func:`get_for_detail`, so the scope
+  predicate still decides first: a foreign archived contact is the
+  ordinary ``404`` and this ``303`` can never become an existence oracle
+  (``ACC-020``). It carries no ``?notice=`` — nothing happened, and a code
+  outside the allowlist would be copy invented here (**R20**).
+  """
   principal = await _start_read(request)
   identifier = _contact_id(contact_id)
   context = context_of(request)
   view = await get_for_detail(context.pool, scope_of(principal), contact_id=identifier)
   detail_url = _detail_url(request, identifier)
+  if view.is_archived:
+    return redirect(detail_url, request)
   return render(
     request,
     "contacts/form.html",
