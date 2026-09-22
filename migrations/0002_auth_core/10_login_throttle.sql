@@ -1,8 +1,8 @@
--- DATA_CONTRACT.md §3.4. Five failures per account per fifteen minutes, with
--- backoff (S6); the constants live in code, never here.
+-- Five failures per account per fifteen minutes, with
+-- backoff; the constants live in code, never here.
 --
 -- `account_key` is sha256(submitted.strip().lower()) — the identifier HASH,
--- never the address (ruling R13). `ck_login_throttle_key` is an exact length,
+-- never the address. `ck_login_throttle_key` is an exact length,
 -- not a range: a code path that accidentally wrote a raw address would fail
 -- loudly at the database instead of silently storing it.
 --

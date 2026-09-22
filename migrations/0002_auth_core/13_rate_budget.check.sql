@@ -1,5 +1,5 @@
 -- Postcondition for 13_rate_budget: five columns, all NOT NULL, and a
--- three-column composite primary key (DATA_CONTRACT.md §7.3).
+-- three-column composite primary key.
 --
 -- `key_column_usage` is the standard view that says how many columns a named
 -- constraint covers; counting its rows is how "composite PK" is asserted

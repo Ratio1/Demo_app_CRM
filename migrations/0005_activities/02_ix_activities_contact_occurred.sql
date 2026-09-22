@@ -1,4 +1,4 @@
--- Indexes the parent FK (§2.3 rule 5) and serves the one ordering the timeline
+-- Indexes the parent FK and serves the one ordering the timeline
 -- ever asks for: newest first within one contact, `occurred_on DESC` with
 -- `created_at DESC` as the tiebreaker, so two activities logged for the same
 -- day keep the order they were written in.

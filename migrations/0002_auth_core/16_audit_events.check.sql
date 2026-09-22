@@ -1,7 +1,6 @@
 -- Postcondition for 16_audit_events: eight columns; `actor_user_id` and
 -- `object_id` the only nullable ones; ZERO foreign key constraints on the
--- table; and the three CHECKs this slice's behaviour rests on present by name
--- (DATA_CONTRACT.md §7.3).
+-- table; and the three CHECKs the audit trail rests on present by name.
 --
 -- The 31 actions and 7 object types are NOT counted here. There is no
 -- portable way to enumerate an IN-list from the catalog, and parsing
@@ -9,7 +8,7 @@
 -- constraint. The vocabulary is carried by the step file's SHA-256 in
 -- `schema_migrations`, which is compared on every readiness probe, and it is
 -- enforced at runtime by the CHECK itself: an INSERT naming a value outside
--- the list is rejected 23514 (verified, DATA_CONTRACT.md §1.2 probe 9).
+-- the list is rejected with SQLSTATE 23514.
 SELECT (
       (SELECT count(*) FROM information_schema.columns
         WHERE table_schema = 'public' AND table_name = 'audit_events'

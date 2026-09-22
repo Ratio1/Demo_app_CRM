@@ -1,6 +1,6 @@
--- DATA_CONTRACT.md §3.3. Pre-auth and full sessions in one table, hashes
+-- Pre-auth and full sessions in one table, hashes
 -- only: the cookie carries a 256-bit CSPRNG token and only its SHA-256 is
--- stored (S2), and the CSRF token is stored the same way (S3).
+-- stored, and the CSRF token is stored the same way.
 --
 -- `ck_sessions_kind_user` is what makes a pre-auth row structurally unable to
 -- carry an identity — a ten-minute row that exists to hold the login form's

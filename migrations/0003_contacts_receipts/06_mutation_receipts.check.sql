@@ -1,4 +1,4 @@
--- Postcondition for 06_mutation_receipts (§7.4): nine columns, every one of
+-- Postcondition for 06_mutation_receipts: nine columns, every one of
 -- them NOT NULL, and the foreign key to `users` present.
 --
 -- As in 05_sessions, the column list is asserted twice: the named nine are

@@ -2,7 +2,7 @@
 -- `users` is EXACTLY SELECT and UPDATE, and nothing else.
 --
 -- The two-conjunct shape is what catches an OVER-grant, which a `>= n` check
--- would not (DATA_CONTRACT.md §7.2). The runner composes {grant_to_name} as a
+-- would not. The runner composes {grant_to_name} as a
 -- psycopg.sql.Literal; running this file by hand, substitute 'crm_app' (or
 -- 'crm_test_app' on the scratch database).
 SELECT (

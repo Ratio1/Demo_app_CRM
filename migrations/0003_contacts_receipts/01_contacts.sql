@@ -1,24 +1,23 @@
--- DATA_CONTRACT.md §3.9. One row per contact. `owner_id` is the ONLY ownership
+-- One row per contact. `owner_id` is the ONLY ownership
 -- column in the business schema: deals and activities reach their owner by the
 -- join to this table, which is what makes owner injection on a child
--- structurally impossible rather than merely allowlisted (ACCESS_MATRIX.md
--- §1.4).
+-- structurally impossible rather than merely allowlisted.
 --
--- `email` carries NO unique constraint of any kind (T-36, SQL-022): a global
+-- `email` carries NO unique constraint of any kind: a global
 -- unique email would turn a create-contact 409 into an oracle for a foreign
--- contact's address. Spec §5's "normalized unique account emails" governs
--- `users` only.
+-- contact's address. Normalized unique email addresses are a rule for sign-in
+-- accounts, and they are enforced on `users` only.
 --
 -- The lead/customer column is `kind`, not `status`: the request token `status`
--- is the archive filter and reaches `archived_at` (§3.9's token map). There is
+-- is the archive filter and reaches `archived_at`. There is
 -- no column named `status` on this table and this step's postcondition asserts
 -- it.
 --
 -- `archived_at` is the only nullable column and the only archive flag in the
--- schema (§4.2). Archive is not erasure (S7): nothing is deleted, which is why
+-- schema. Archive is not erasure: nothing is deleted, which is why
 -- the runtime role never receives DELETE here (step 05).
 --
--- No DEFAULT clause and no server clock (§2.3 rules 1 and 2): the application
+-- No DEFAULT clause and no server clock: the application
 -- supplies every value on every INSERT, including `version = 1` and both
 -- instants, which come from the injected clock.
 CREATE TABLE public.contacts (

@@ -1,9 +1,11 @@
 -- The runtime role reads accounts at login and writes password_hash,
 -- password_changed_at, must_change_password, version and updated_at at a
--- password change (§5.2).
+-- password change.
 --
 -- No INSERT: there is no public signup and account creation is CLI-only. No
 -- DELETE: accounts are disabled, never removed. The residual — table-level
--- UPDATE also reaches `role` and `is_active` — is accepted in §5.4 because a
--- column-level grant is not portable, and it is fenced by ARC-018 instead.
+-- UPDATE also reaches `role` and `is_active` — is accepted because a
+-- column-level grant is not portable. It is fenced in code instead: only
+-- app/db/repositories/users.py may UPDATE this table, `role` appears in no
+-- SET list anywhere, and the test suite asserts both.
 GRANT SELECT, UPDATE ON TABLE public.users TO {grant_to}

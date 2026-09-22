@@ -1,5 +1,5 @@
 -- Postcondition for 21_app_settings: four columns, `updated_by_user_id` the
--- only nullable one (DATA_CONTRACT.md §7.3).
+-- only nullable one.
 SELECT (
       (SELECT count(*) FROM information_schema.columns
         WHERE table_schema = 'public' AND table_name = 'app_settings'

@@ -1,4 +1,4 @@
--- DATA_CONTRACT.md §3.6. Append-only, identifiers only: no payload, no record
+-- Append-only, identifiers only: no payload, no record
 -- bodies, no free text. A failed login against a non-existent account records
 -- actor_user_id NULL / object_type 'user' / object_id NULL — the attempted
 -- identifier reaches only login_throttle, and there only as a hash.
@@ -6,20 +6,21 @@
 -- NO foreign keys, by design and on two grounds: a referential action would
 -- execute with the constraint's own authority and let a maintenance
 -- DELETE FROM users rewrite or remove audit rows, which is precisely the write
--- the runtime role is denied; and D-H requires audit rows to OUTLIVE their
--- subject as identifier-only records, so a dangling actor_user_id after
--- erasure is the intended end state.
+-- the runtime role is denied; and an audit row must OUTLIVE its subject as an
+-- identifier-only record, so a dangling actor_user_id after an erasure is the
+-- intended end state.
 --
--- The action allowlist holds 31 values and object_type holds 7 after H-06's
--- removals (ratified by R37): 'session_revoked' and 'user_role_changed' are
--- gone because no code path writes them, and object_type 'dashboard' and
--- 'subject' are gone for the same reason. A value a security-relevant
+-- The action allowlist holds 31 values and object_type holds 7. Both lists
+-- were trimmed to what the code actually writes: 'session_revoked' and
+-- 'user_role_changed' are absent because no code path writes them, and
+-- object_type 'dashboard' and 'subject' are absent for the same reason. A
+-- value a security-relevant
 -- allowlist admits but nothing writes reads as evidence that the application
 -- records something it does not.
 --
 -- `ck_audit_events_denied` is an IFF, and it is what keeps the deny-audit
--- widening from weakening S7: a denial action can never claim 'success' or
--- 'failure', and 'denied' can never attach to a business verb.
+-- rows honest: a denial action can never claim 'success' or 'failure', and
+-- 'denied' can never attach to a business verb.
 CREATE TABLE public.audit_events (
   id             TEXT NOT NULL,
   at             TIMESTAMP WITH TIME ZONE NOT NULL,

@@ -1,11 +1,11 @@
--- DATA_CONTRACT.md §3.2. The account table: one row per person who can sign
--- in, and the only place `role` is ever written (H-07, ARC-018(a) — no UPDATE
--- names it).
+-- The account table: one row per person who can sign in. `role` is written
+-- once, by the INSERT that creates the account, and no UPDATE anywhere in the
+-- application names it.
 --
--- Every column is NOT NULL (§2.3 rule 3) and no column carries a DEFAULT
--- (rule 1): the application supplies every value on every INSERT, including
+-- Every column is NOT NULL and no column carries a DEFAULT: the application
+-- supplies every value on every INSERT, including
 -- `version = 1` and the three instants, which come from the injected clock and
--- never from the server (rule 2).
+-- never from the database server.
 --
 -- Schema-qualified as `public.users`, the shipped form of 0001_journal, so the
 -- table cannot land in a role-named schema if a search_path ever differs; the

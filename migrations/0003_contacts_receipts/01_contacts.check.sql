@@ -1,13 +1,13 @@
--- Postcondition for 01_contacts (DATA_CONTRACT.md §7.4, contracts/slice-b.md
--- §1(a)). Seven conjuncts, because §7.4 asks this step to assert five separate
--- things and two of them are *absences*, which only an exact count can catch.
+-- Postcondition for 01_contacts. Seven conjuncts for five separate claims,
+-- because two of the claims are *absences*, which only an exact count can
+-- catch.
 --
 -- Conjuncts 4 and 5 together are "archived_at is the only nullable column":
 -- the first says it IS nullable, the second that NOTHING else is. Either alone
 -- is satisfiable by a wrong schema.
 --
--- Conjunct 7 is SQL-022's structural half, asserted at migration time rather
--- than only in the test suite: zero UNIQUE constraints on `contacts`, so no
+-- Conjunct 7 asserts at migration time, rather than only in the test suite,
+-- that there are zero UNIQUE constraints on `contacts`, so no
 -- future step can add one without this check failing. "No column named
 -- `status`" is carried by conjunct 3 — a `status` column would make the total
 -- 15 while the IN-list count stayed 14.

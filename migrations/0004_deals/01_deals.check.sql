@@ -1,21 +1,21 @@
--- Postcondition for 01_deals (DATA_CONTRACT.md §7.5, PIN C1). Twelve conjuncts.
+-- Postcondition for 01_deals. Twelve conjuncts.
 --
 -- Conjuncts 2 and 3 are the pair: the named eleven are present AND the table has
 -- exactly eleven, so an extra column fails. Conjunct 4 names the two absences
--- §7.5 asks for explicitly — `owner_id` and `archived_at` — although 2+3 already
--- imply them: a reviewer should be able to read the absence, not derive it.
+-- explicitly — `owner_id` and `archived_at` — although 2+3 already imply them:
+-- a reviewer should be able to read the absence, not derive it.
 --
 -- Conjuncts 5 and 6 are "close_date is the only nullable column"; either alone is
 -- satisfiable by a wrong schema.
 --
--- Conjuncts 7 and 8 are PIN C1's whole money contract at the schema level:
+-- Conjuncts 7 and 8 are the whole money rule at the schema level:
 -- numeric(12,2), not numeric, not float, not VARCHAR; and DATE, not a timestamp.
 -- Without conjunct 7 the migration would happily journal a table whose amounts
 -- are `double precision` and every €-rendering downstream would be wrong.
 --
 -- Conjunct 12 records that `deals` carries NO UNIQUE constraint besides its PK,
--- so a 23505 inside a Slice C business transaction still means the RECEIPT key
--- and needs no constraint-name inspection (contracts/slice-b.md §1(d)).
+-- so a 23505 inside a deal transaction still means the idempotency receipt key
+-- and needs no constraint-name inspection.
 SELECT (
       (SELECT count(*) FROM information_schema.tables
         WHERE table_schema = 'public' AND table_name = 'deals') = 1

@@ -1,32 +1,32 @@
--- DATA_CONTRACT.md §3.10. One row per deal.
+-- One row per deal.
 --
--- NO `owner_id` and NO `archived_at` (PIN C8). A deal is authorized by the join
+-- NO `owner_id` and NO `archived_at`. A deal is authorized by the join
 -- to its contact and inherits its parent's archived state, which is what makes
 -- owner injection on a child structurally impossible rather than allowlisted
--- (ACCESS_MATRIX.md §1.4, ACC-212) and what keeps admin reassignment one UPDATE
--- of one row (SQL-023).
+-- and what keeps admin reassignment one UPDATE
+-- of one row.
 --
--- `contact_id` is IMMUTABLE after creation (ACC-217, ACCESS_MATRIX.md §5.3,
--- THREAT_MODEL.md §10 item 5): re-parenting is an ownership move by another
--- name. It appears in no UPDATE ... SET list in this chain, and `DealFields`
+-- `contact_id` is IMMUTABLE after creation: re-parenting a deal would move it
+-- to another owner without any reassignment check. It appears in no
+-- UPDATE ... SET list in this chain, and `DealFields`
 -- (app/db/repositories/deals.py) does not carry it — the dataclass IS the
 -- allowlist.
 --
--- `amount` is DECIMAL(12,2) with a non-negative CHECK (PIN C1). The CHECK is the
--- SECOND line for the sign; server-side parsing is the first (ACC-210). For the
+-- `amount` is DECIMAL(12,2) with a non-negative CHECK. The CHECK is the
+-- SECOND line for the sign; server-side parsing is the first. For the
 -- SCALE there is no second line at all: numeric(12,2) ROUNDS a third decimal
--- rather than refusing it (contracts/slice-c.md §1(g) probe 6), so the strict
+-- rather than refusing it, so the strict
 -- pattern is the only control. Currency is not a column: the demo is
--- single-currency EUR, fixed in code and in rendering (§3.10).
+-- single-currency EUR, fixed in code and in rendering.
 --
--- `stage` is TEXT + CHECK, never CREATE TYPE ... AS ENUM (§9.1). The CHECK
+-- `stage` is TEXT + CHECK, never CREATE TYPE ... AS ENUM. The CHECK
 -- guarantees a legal VALUE and nothing more: the transition GRAPH is not in the
--- schema, because encoding it would need a trigger, which is banned. The service
--- enforces ACCESS_MATRIX.md §5.4 (PIN C2), and `stage_changed_at` is rewritten on
--- every accepted change.
+-- schema, because encoding it would need a trigger, and this schema has none.
+-- The service enforces which stage may follow which, and `stage_changed_at`
+-- is rewritten on every accepted change.
 --
--- `close_date` is the only nullable column (§3.12). No DEFAULT clause and no
--- server clock (§2.3 rules 1 and 2): the application supplies every value on
+-- `close_date` is the only nullable column. No DEFAULT clause and no
+-- server clock: the application supplies every value on
 -- every INSERT, including `version = 1`, the literal stage 'new' and all three
 -- instants, which come from the injected clock.
 CREATE TABLE public.deals (

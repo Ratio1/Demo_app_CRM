@@ -1,5 +1,5 @@
 -- Postcondition for 01_users: the table exists with exactly its twelve
--- columns, and every one of them is NOT NULL (DATA_CONTRACT.md §7.2/§7.3).
+-- columns, and every one of them is NOT NULL.
 --
 -- The third conjunct is what makes "twelve columns" exact rather than "at
 -- least these twelve": a column added outside this contract would leave the

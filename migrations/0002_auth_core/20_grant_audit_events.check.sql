@@ -1,6 +1,7 @@
 -- Postcondition for 20_grant_audit_events: the privilege set is EXACTLY
--- INSERT and SELECT, and nothing else — this is the file DATA_CONTRACT.md §7.2 prints, and the
--- exact-set shape is what makes S7 checkable rather than asserted.
+-- INSERT and SELECT, and nothing else. The exact-set shape is what makes
+-- "the runtime cannot edit or delete an audit row" checkable rather than
+-- merely asserted: a later over-grant fails this step.
 SELECT (
       (SELECT count(*) FROM information_schema.table_privileges
         WHERE table_schema = 'public' AND table_name = 'audit_events'

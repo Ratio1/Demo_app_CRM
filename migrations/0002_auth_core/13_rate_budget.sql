@@ -1,4 +1,4 @@
--- DATA_CONTRACT.md §3.5. The four bounded windows: the global login and
+-- The four bounded windows: the global login and
 -- pre-auth budgets and the two per-account budgets, sharing one table because
 -- they share one access pattern.
 --
@@ -8,8 +8,8 @@
 -- depend on the engine's date functions.
 --
 -- The composite primary key is the whole identity of a counter: a new window
--- is a new row, which is what makes the §6.5 idiom's INSERT the natural path
--- at the top of each minute.
+-- is a new row, which is what makes the counter idiom's INSERT the natural
+-- path at the top of each minute — the UPDATE misses, the INSERT lands.
 CREATE TABLE public.rate_budget (
   bucket       TEXT    NOT NULL,
   subject_key  TEXT    NOT NULL,

@@ -1,18 +1,18 @@
--- DATA_CONTRACT.md §3.8. User- and operation-scoped idempotency.
+-- User- and operation-scoped idempotency.
 --
 -- A surrogate `id` PK plus a unique business key (step 07), rather than a
 -- composite PK, so the 24-hour cleanup can batch by a single column
--- (WHERE id IN (SELECT id … LIMIT 1000), §8.1) without a row-constructor IN,
--- which §9.1 bans.
+-- (WHERE id IN (SELECT id … LIMIT 1000)) without a row-constructor IN, which
+-- is outside the portable SQL subset this schema keeps to.
 --
 -- WRITE-ONCE: the runtime role gets SELECT and INSERT and never UPDATE
 -- (step 09). `uq_mutation_receipts_key` is the constraint whose 23505 means
--- *duplicate submission* (§6.4) — and, because it is the only non-PK UNIQUE
--- reachable from a Slice B business transaction, a 23505 there needs no
--- constraint-name inspection to classify.
+-- *duplicate submission* — and, because it is the only non-PK UNIQUE any
+-- business transaction can reach, a 23505 there needs no constraint-name
+-- inspection to classify.
 --
 -- `user_id` cascades: receipts are 24-hour operational state, not audit. It is
--- the leading column of step 07's unique key, which satisfies §2.3 rule 5.
+-- the leading column of step 07's unique key, so the foreign key is indexed.
 CREATE TABLE public.mutation_receipts (
   id                 TEXT NOT NULL,
   user_id            TEXT NOT NULL,

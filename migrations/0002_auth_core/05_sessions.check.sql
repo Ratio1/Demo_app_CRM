@@ -1,5 +1,5 @@
 -- Postcondition for 05_sessions: nine columns, `user_id` the only nullable
--- one, and the foreign key to `users` present (DATA_CONTRACT.md §7.3).
+-- one, and the foreign key to `users` present.
 --
 -- The nullability pair is stated twice on purpose: "exactly one nullable
 -- column" and "that column is user_id". Either alone would pass a schema

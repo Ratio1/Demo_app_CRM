@@ -1,5 +1,5 @@
--- Postcondition for 01_activities (DATA_CONTRACT.md §7.5, the shape
--- 0004_deals/01 established). Eleven conjuncts.
+-- Postcondition for 01_activities, in the shape 0004_deals/01 established.
+-- Eleven conjuncts.
 --
 -- Conjuncts 2 and 3 are the pair: the named seven are present AND the table
 -- has exactly seven, so an extra column fails. Conjunct 4 names the four
@@ -16,12 +16,13 @@
 --
 -- Conjuncts 8-10 are the two foreign keys and their referential actions read
 -- from `information_schema.referential_constraints`: RESTRICT on the parent
--- and SET NULL on the author are the whole of D-H at the schema level, and a
--- CASCADE substituted for either would pass a "has a foreign key" check.
+-- and SET NULL on the author are what make an activity outlive both the
+-- account that logged it and any attempt to delete its contact, and a CASCADE
+-- substituted for either would pass a "has a foreign key" check.
 --
 -- Conjunct 11 records that `activities` carries NO UNIQUE constraint besides
--- its PK, so a 23505 inside a Slice D business transaction still means the
--- RECEIPT key and needs no constraint-name inspection.
+-- its PK, so a 23505 inside an activity transaction still means the
+-- idempotency receipt key and needs no constraint-name inspection.
 SELECT (
       (SELECT count(*) FROM information_schema.tables
         WHERE table_schema = 'public' AND table_name = 'activities') = 1

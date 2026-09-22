@@ -1,4 +1,4 @@
--- DATA_CONTRACT.md §5.2. The runtime role reads activities and appends to
+-- The runtime role reads activities and appends to
 -- them. NOTHING ELSE.
 --
 -- No UPDATE and no DELETE, and that absence is the control: "once logged, an
@@ -7,6 +7,6 @@
 -- compromised session, a crafted request and a bug in this application alike
 -- meet a 42501 from the engine rather than a missing handler.
 --
--- Deletion exists only under the MAINTENANCE role, in `reset-demo` (§5.3) and
+-- Deletion exists only under the MAINTENANCE role, in `reset-demo` and
 -- in the deferred `erase-subject`.
 GRANT SELECT, INSERT ON TABLE public.activities TO {grant_to}
