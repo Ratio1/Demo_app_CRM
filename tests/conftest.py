@@ -1,42 +1,34 @@
-"""Shared fixtures for the Demo_App_CRM Slice A test suite.
-
-Authority: ``_agents/projects/CRM/contracts/slice-a.md`` §7 (test hooks) and
-§7.5 / ruling R41 (the ephemeral TLS server's certificate/port shape,
-amended by **R46(b)**/**R57** to one server per *session* rather than per
-test), §7.1 (CLI provisioning), §7.2 / §10(e) (resetting ``crm_test``,
-amended by **R57** to a session-scoped **autouse** fixture), §7.3 (the
-injectable clock), §7.4 (the fast Argon2 test profile), **R54** (the
-``create_app`` injection seam ``tests/inprocess`` drives).
+"""Shared fixtures for the Demo_App_CRM test suite.
 
 Credential discipline
 ----------------------
 No fixture here ever reads, prints or logs a database credential. The only
-sanctioned path to one is ``scripts/with-env <env-file> -- <command>``
-(``AGENTS.md``, ``PLAN.md`` §7); this module shells out to that script and
-never opens an env file itself. Subprocess stdout/stderr is always redirected
-to a per-test log **file**, never captured into a string that a failed
-``assert`` could echo into the pytest report.
+sanctioned path to one is ``scripts/with-env <env-file> -- <command>``;
+this module shells out to that script and never opens an env file itself.
+Subprocess stdout/stderr is always redirected to a per-test log **file**,
+never captured into a string that a failed ``assert`` could echo into the
+pytest report.
 
 Database roles
 ---------------
 ``.env.test.owner.local`` — ``crm_test_owner`` — schema reset, migrations,
 and every ``scripts/manage`` maintenance command (bootstrap, create-user,
 disable-user, set-origin): all of those need privileges the runtime role
-does not have (ACC-605, ACC-609).
+does not have.
 ``.env.test.local`` — ``crm_test_app`` — the only role the served
 application itself runs as.
 
-Server isolation (R41, amended by R46(b)/R57)
-------------------------------------------------
+Server isolation
+------------------
 One test **session** that needs a live HTTP(S) endpoint gets **one**
 uvicorn subprocess (``live_server``, session-scoped), bound to an
 OS-assigned ``127.0.0.1:0`` port with **no** probe-then-bind race: this
 module binds and listens on the port itself and hands the
 already-listening socket's file descriptor to the uvicorn subprocess
 (``--fd``), so there is never a second bind. Port ``3002`` is the human
-dev-run assignment (``BRIEF.md``) and never appears here. Every test that
-uses it shares that one process and its one certificate; isolation between
-tests is by data (dedicated ``example.test`` identities from
+dev-run assignment and never appears here. Every test that uses it shares
+that one process and its one certificate; isolation between tests is by
+data (dedicated ``example.test`` identities from
 ``provision_agent``/``unique_email``, never the shared ``bootstrap_admin``,
 for anything that mutates account-scoped or global counters) and by
 targeted owner-role cleanup (``test_throttle_and_budget.py``'s autouse
@@ -44,15 +36,13 @@ clear of ``login_throttle``/``rate_budget``), not by a fresh process.
 
 Why so much of this is lazy-imported
 --------------------------------------
-Slice A is written against the contract while the Backend, Data and Frontend
-lanes are still building it. Most of ``app.main``, ``app.security.*``,
-``app.services.*``, ``app.routes.*`` and ``app.db.repositories.*`` do not
-exist on disk yet. Importing any of them at *module* level here would make
-every single test in the whole session fail to collect, hiding the tests
-that *can* run today (``app.config`` and the migration journal already
-ship). Every such import is therefore deferred into the fixture or test body
-that actually needs it, so a missing module surfaces as one failing test,
-not a blank test session.
+Most of ``app.main``, ``app.security.*``, ``app.services.*``,
+``app.routes.*`` and ``app.db.repositories.*`` did not exist on disk when
+this suite was first written. Importing any of them at *module* level here
+would make every single test in the whole session fail to collect, hiding
+the tests that *can* run today. Every such import is therefore deferred
+into the fixture or test body that actually needs it, so a missing module
+surfaces as one failing test, not a blank test session.
 
 Three ways a test reaches the database
 --------------------------------------
@@ -60,44 +50,44 @@ Three ways a test reaches the database
    ``live_server``/``admin_client``/``agent_client`` — for anything
    genuinely observable only at the wire (cookie attributes, TLS itself,
    status codes, response headers). ``live_server`` builds its app with the
-   production ``SystemClock`` (**R46(b)**: one such server per *session*,
-   not per test — see the fixture's own docstring), so nothing reached
-   through it can be driven by ``ManualClock``; a clock-dependent
-   assertion belongs on transport 3 instead.
+   production ``SystemClock`` (one such server per *session*, not per
+   test — see the fixture's own docstring), so nothing reached through it
+   can be driven by ``ManualClock``; a clock-dependent assertion belongs
+   on transport 3 instead.
 2. **In process, at the repository layer**, via ``db_connection`` — for
-   behaviour the contract drives by an explicit ``now`` parameter without
-   needing a request at all (expiry, revocation: §7.3 "every expiry
-   test... advances the clock rather than sleeping").
+   behaviour driven by an explicit ``now`` parameter without needing a
+   request at all (expiry, revocation: every expiry test advances the
+   clock rather than sleeping).
 3. **In process, through the whole ASGI app**, via ``tests/inprocess``'s
-   own fixtures (``in_process_app``/``in_process_client``): **R54** gives
-   ``create_app`` a ``clock``/``password_hasher`` injection seam, so a test
-   can drive the real route table — middleware, CSRF, throttle, sessions,
-   the lot — through ``httpx.ASGITransport`` with a :class:`ManualClock`
-   it advances by hand, entering the lifespan with ``async with
-   app.router.lifespan_context(app):`` (no new dependency — **R42** still
-   holds). This is the strongest of the three: it is the only one that
-   proves an expiry or a window boundary the way the *served* application
-   would actually enforce it, not just the repository function underneath.
-   See ``tests/inprocess/conftest.py`` for the fixtures and why its origin
-   is ``https://crm.test`` rather than an ephemeral port.
+   own fixtures (``in_process_app``/``in_process_client``): ``create_app``
+   takes a ``clock``/``password_hasher`` injection seam, so a test can
+   drive the real route table — middleware, CSRF, throttle, sessions, the
+   lot — through ``httpx.ASGITransport`` with a :class:`ManualClock` it
+   advances by hand, entering the lifespan with ``async with
+   app.router.lifespan_context(app):``. This is the strongest of the
+   three: it is the only one that proves an expiry or a window boundary
+   the way the *served* application would actually enforce it, not just
+   the repository function underneath. See ``tests/inprocess/conftest.py``
+   for the fixtures and why its origin is ``https://crm.test`` rather than
+   an ephemeral port.
 
 Transport 2's fixture (``db_connection``) calls ``app.config.load_config()`` with no
    explicit mapping, so **it**, in turn, reads ``os.environ`` — but this
    module's own fixtures never read ``os.environ`` directly to build a
    database credential; they always go through ``load_config()``, which
    means **the test process itself** needs the runtime credentials already
-   in its environment. Per slice-a.md §7.2 ("The suite itself runs under
-   ``.env.test.local`` as ``crm_test_app``") and ruling **R52**, the
-   canonical, and only supported, way to run this suite is::
+   in its environment. The suite itself runs under ``.env.test.local`` as
+   ``crm_test_app``, so the canonical, and only supported, way to run this
+   suite is::
 
      scripts/with-env .env.test.local -- .venv/bin/python -B -m pytest tests -p no:cacheprovider -q
 
    (from ``Demo_app_CRM``; also recorded in ``tests/README.md`` and
    ``ACCEPTANCE.md``). **A bare ``pytest`` invocation is not a supported
-   invocation (R52)** — it still collects and runs every test that does
-   not request ``db_connection`` (all of ``tests/unit``, ``tests/arch``,
-   and the subprocess-driven ``tests/security/test_dep_hostile_env.py``,
-   each of which reaches the database only through its own ``with-env``
+   invocation** — it still collects and runs every test that does not
+   request ``db_connection`` (all of ``tests/unit``, ``tests/arch``, and
+   the subprocess-driven ``tests/security/test_dep_hostile_env.py``, each
+   of which reaches the database only through its own ``with-env``
    subprocess) as a convenience for iterating on one file, and a test that
    does request ``db_connection`` fails with a plain, value-free
    ``ConfigError`` under it — an honest signal, not a leak — but it is not
@@ -111,41 +101,36 @@ Transport 2's fixture (``db_connection``) calls ``app.config.load_config()`` wit
 
 ``tests/e2e`` and the pytest-asyncio / pytest-playwright interaction
 -----------------------------------------------------------------------
-Earlier revisions of this docstring claimed the corruption below reproduced
-from **collection** alone, in either order. Isolating it further (this
-revision) shows that claim was wrong: the trigger is *fixture setup*, not
-collection, and order matters. When at least one ``tests/e2e`` item's
-fixture chain (pytest-playwright's session-scoped ``playwright``/``browser``
-fixtures, reached even by a test that then errors on something else, such
-as a missing ``scripts/manage``) is set up **before** a
-``pytest.mark.asyncio`` test runs in the same session, every later
-``pytest-asyncio`` strict-mode ``asyncio.Runner.run()`` call can fail with
-``RuntimeError: Runner.run() cannot be called from a running event loop``,
-or silently leave a coroutine that pytest reports on without it ever having
-run (``RuntimeWarning: coroutine '...' was never awaited``) — corrupting
-the result of tests that have nothing to do with ``tests/e2e`` and never
+When at least one ``tests/e2e`` item's fixture chain (pytest-playwright's
+session-scoped ``playwright``/``browser`` fixtures, reached even by a test
+that then errors on something else, such as a missing
+``scripts/manage``) is set up **before** a ``pytest.mark.asyncio`` test
+runs in the same session, every later ``pytest-asyncio`` strict-mode
+``asyncio.Runner.run()`` call can fail with ``RuntimeError: Runner.run()
+cannot be called from a running event loop``, or silently leave a
+coroutine that pytest reports on without it ever having run
+(``RuntimeWarning: coroutine '...' was never awaited``) — corrupting the
+result of tests that have nothing to do with ``tests/e2e`` and never
 request a browser. It is a known category of interaction between the two
 plugins' event-loop management, not a bug in any test here.
 
 This module's ``pytest_collection_modifyitems`` hook (bottom of this file)
-now reorders every ``tests/e2e`` item to run **after** everything else in
-the same session, which removes the corruption for a single, literal
+reorders every ``tests/e2e`` item to run **after** everything else in the
+same session, which removes the corruption for a single, literal
 ``pytest tests`` invocation (verified: zero ``Runner.run()`` errors and
 zero "never awaited" warnings across the whole suite with the hook in
-place, where the same run showed both before it existed). **R52 pins the
-single, literal invocation as canonical** (see above); the two-invocation
-split below is kept only as a fallback for isolating a browser-less run by
-hand, is not itself the R52 invocation, and is never what a gate or
-``ACCEPTANCE.md`` run cites::
+place). This single, literal invocation is the canonical one; the
+two-invocation split below is kept only as a fallback for isolating a
+browser-less run by hand and is never what a gate or ``ACCEPTANCE.md`` run
+cites::
 
   scripts/with-env .env.test.local -- .venv/bin/python -B -m pytest tests/ --ignore=tests/e2e
   .venv/bin/python -B -m pytest tests/e2e   # separate invocation; no with-env needed today
 
-Every count this suite's commit messages report from before this revision
-was measured with that split; counts reported afterwards use either form
-interchangeably, since both are now corruption-free — but only the R52
-single invocation is the one this suite's own reports (``README.md``,
-``ACCEPTANCE.md``, ``tests/README.md``) may cite as *the* run.
+Counts reported from either invocation form are corruption-free, but only
+the single-invocation run is the one this suite's own reports
+(``README.md``, ``ACCEPTANCE.md``, ``tests/README.md``) may cite as *the*
+run.
 """
 
 from __future__ import annotations
@@ -167,7 +152,7 @@ import pytest
 import pytest_asyncio
 
 # ---------------------------------------------------------------------------
-# Paths and roles, all relative to the submodule root (never the meta-repo).
+# Paths and roles, all relative to the submodule root.
 # ---------------------------------------------------------------------------
 
 SUBMODULE_ROOT: Final[Path] = Path(__file__).resolve().parent.parent
@@ -188,10 +173,10 @@ BOOTSTRAP_ADMIN_PASSWORD: Final[str] = "correct horse battery staple 15"
 
 #: Placeholder origin ``bootstrap`` is given before any server has bound a
 #: port; every test's own ``live_server`` fixture re-points it with
-#: ``manage set-origin`` before making a request (slice-a.md §7.1).
+#: ``manage set-origin`` before making a request.
 _PLACEHOLDER_ORIGIN: Final[str] = "https://127.0.0.1:65535"
 
-#: Mirrors ``app.main._SAFE_METHODS`` (slice-a.md §2.1 step 0a): a request
+#: Mirrors ``app.main._SAFE_METHODS``: a request
 #: with none of these methods must carry a matching ``Origin`` header or the
 #: middleware refuses it before routing. httpx, unlike a browser, never adds
 #: this header on its own — see ``_default_origin_on_unsafe_methods`` below.
@@ -260,8 +245,8 @@ def _run_logged(
   argv : list[str]
     The command and its arguments.
   cwd : Path
-    Working directory. ``CA_BUNDLE_PATH`` is cwd-relative until D2 lands, so
-    every database-touching subprocess runs with ``SUBMODULE_ROOT`` as cwd.
+    Working directory. Every database-touching subprocess runs with
+    ``SUBMODULE_ROOT`` as cwd.
   log_path : Path
     Destination file for the combined output stream. Overwritten.
   extra_env : Mapping[str, str] | None
@@ -303,8 +288,8 @@ def run_with_env(
 ) -> int:
   """Run ``command`` under ``scripts/with-env <env_file> -- <command>``.
 
-  This is the only sanctioned path to a database credential
-  (``AGENTS.md``); no fixture in this module ever opens an env file itself.
+  This is the only sanctioned path to a database credential; no fixture in
+  this module ever opens an env file itself.
 
   Parameters
   ----------
@@ -341,7 +326,7 @@ def unique_email(prefix: str) -> str:
   Returns
   -------
   str
-    ``f"{prefix}+{token}@example.test"``, fictional per ``AGENTS.md``.
+    ``f"{prefix}+{token}@example.test"``, fictional data only.
   """
   return f"{prefix}+{uuid.uuid4().hex[:12]}@example.test"
 
@@ -362,8 +347,8 @@ def write_password_fixture(tmp_path: Path, password: str, *, name: str = "passwo
   -------
   Path
     The file's path. ``scripts/manage --password-stdin`` reads exactly one
-    line and strips exactly one trailing ``\\n`` (slice-a.md §1.2), so the
-    file carries the password followed by a single newline and nothing else.
+    line and strips exactly one trailing ``\\n``, so the file carries the
+    password followed by a single newline and nothing else.
   """
   path = tmp_path / name
   path.write_text(password + "\n", encoding="utf-8")
@@ -372,7 +357,7 @@ def write_password_fixture(tmp_path: Path, password: str, *, name: str = "passwo
 
 
 # ---------------------------------------------------------------------------
-# The clock (slice-a.md §7.3)
+# The clock
 # ---------------------------------------------------------------------------
 
 
@@ -386,14 +371,14 @@ def clock() -> object:
     Untyped as ``object`` at the signature level because
     ``app.security.clock`` does not exist yet in this tree; every caller
     imports the concrete type itself for static checking once it ships.
-    Constructed, never environment-selected, exactly as §7.3 requires.
+    Constructed, never environment-selected.
 
   Raises
   ------
   ModuleNotFoundError
-    Until the Backend lane ships ``app/security/clock.py``. That failure is
-    the honest, expected state of every test that requests this fixture
-    before then — it is not hidden.
+    Until ``app/security/clock.py`` ships. That failure is the honest,
+    expected state of every test that requests this fixture before then —
+    it is not hidden.
   """
   # Deferred import (module docstring): keeps a missing module a single
   # failing test rather than a blank collection. Shipped now, so no
@@ -404,7 +389,7 @@ def clock() -> object:
 
 
 # ---------------------------------------------------------------------------
-# Argon2 test profile (slice-a.md §7.4) — real argon2-cffi, no app import.
+# Argon2 test profile — real argon2-cffi, no app import.
 # ---------------------------------------------------------------------------
 
 
@@ -417,8 +402,8 @@ def fast_password_hasher() -> object:
   argon2.PasswordHasher
     ``time_cost=1, memory_cost=8, parallelism=1`` — constructed explicitly
     here, never selected through an environment variable or a branch in
-    ``app/security/passwords.py`` (``ARC-020``). ``SEC-017`` and ``SEC-033``
-    must run against the real, pinned parameters, never this profile.
+    ``app/security/passwords.py``. The Argon2 parameter and timing-parity
+    tests must run against the real, pinned parameters, never this profile.
   """
   from argon2 import PasswordHasher, Type
 
@@ -428,7 +413,7 @@ def fast_password_hasher() -> object:
 
 
 # ---------------------------------------------------------------------------
-# Resetting crm_test (slice-a.md §7.2 / §10(e)) — session-scoped.
+# Resetting crm_test — session-scoped.
 # ---------------------------------------------------------------------------
 
 
@@ -436,13 +421,13 @@ def fast_password_hasher() -> object:
 def crm_test_schema(tmp_path_factory: pytest.TempPathFactory) -> None:
   """Reset ``crm_test`` to an empty, freshly migrated schema, once per session.
 
-  Two owner-role subprocesses, exactly as slice-a.md §10(e) pins: (1) drop
-  and recreate ``public`` on an autocommit connection; (2) re-apply the
-  migration chain, granting the runtime role. ``crm`` is never touched
-  (``D-I``) — only ``.env.test.owner.local`` is used, and its allowed keys
-  are the five database names, none of which name the production database.
+  Two owner-role subprocesses: (1) drop and recreate ``public`` on an
+  autocommit connection; (2) re-apply the migration chain, granting the
+  runtime role. ``crm`` is never touched — only ``.env.test.owner.local``
+  is used, and its allowed keys are the five database names, none of
+  which name the production database.
 
-  **Session-scoped and autouse (ruling R57).** Every test in the session
+  **Session-scoped and autouse.** Every test in the session
   depends on this, whether or not it names it, so it always runs **first**
   — before the first test's body, regardless of collection order or of
   which module happens to be collected first. That is what makes the
@@ -484,7 +469,8 @@ def crm_test_schema(tmp_path_factory: pytest.TempPathFactory) -> None:
   # `-c`, not a script path: a script *path* puts the script's own directory
   # on sys.path[0] instead of the cwd, so `from app.config import
   # load_config` would fail regardless of `cwd=SUBMODULE_ROOT` — the same
-  # reason slice-a.md §10(e) itself uses `-c` rather than a temp file.
+  # reason every owner-role snippet in this module uses `-c` rather than a
+  # temp file.
   run_with_env(
     OWNER_ENV_FILE,
     str(VENV_PYTHON),
@@ -592,17 +578,16 @@ def insert_test_user_row(
   """Seed one ``users`` row directly, as the owner role, in its own subprocess.
 
   For repository-level session/throttle tests that need a real user to join
-  against but must not depend on ``scripts/manage create-user`` (Backend
-  lane, not shipped) or on any repository's own ``insert_user`` (also not
-  shipped, and maintenance-only regardless of shipping state).
+  against but must not depend on ``scripts/manage create-user`` or on any
+  repository's own ``insert_user`` (maintenance-only regardless).
 
   Parameters
   ----------
   user_id : str
     A ``str(uuid.uuid4())`` — bound as text, per the repository boundary
-    rule that ids cross as ``str``, never ``uuid.UUID`` (slice-a.md §10(b)).
+    rule that ids cross as ``str``, never ``uuid.UUID``.
   email, display_name, role : str
-    Fictional values only (``AGENTS.md``).
+    Fictional values only.
   password_hash : str
     A pre-encoded Argon2 hash string; never a plaintext password.
   must_change_password : bool
@@ -641,7 +626,7 @@ def insert_test_user_row(
 
 
 # ---------------------------------------------------------------------------
-# CLI provisioning (slice-a.md §7.1) — needs scripts/manage (Backend lane).
+# CLI provisioning — needs scripts/manage.
 # ---------------------------------------------------------------------------
 
 
@@ -675,9 +660,9 @@ def bootstrap_admin(
   """Provision the one first admin ``scripts/manage bootstrap`` ever allows.
 
   ``bootstrap`` is a one-shot domain operation (exit code 3, "already
-  provisioned", on a second call — slice-a.md §1.2), so this runs at most
-  once per test session, against the placeholder origin every ``live_server``
-  instance re-points with ``manage set-origin`` before it is relied on.
+  provisioned", on a second call), so this runs at most once per test
+  session, against the placeholder origin every ``live_server`` instance
+  re-points with ``manage set-origin`` before it is relied on.
 
   Returns
   -------
@@ -687,8 +672,7 @@ def bootstrap_admin(
   Raises
   ------
   SubprocessFailed
-    Expected until the Backend lane ships ``scripts/manage`` — reported, not
-    hidden.
+    Expected until ``scripts/manage`` ships — reported, not hidden.
   """
   log_dir = tmp_path_factory.mktemp("bootstrap_admin")
   password_file = write_password_fixture(log_dir, BOOTSTRAP_ADMIN_PASSWORD)
@@ -796,7 +780,7 @@ def provision_agent(
 
 
 # ---------------------------------------------------------------------------
-# The ephemeral TLS server (slice-a.md §7.5 / ruling R41).
+# The ephemeral TLS server.
 # ---------------------------------------------------------------------------
 
 
@@ -813,7 +797,7 @@ def generate_test_certificate(tmp_path: Path) -> TestCertificate:
 
   Mirrors ``scripts/dev-run.sh``'s ``openssl`` invocation, but always
   regenerates into ``tmp_path`` (never ``app/certs/dev-server.*``, which is
-  the human dev-run's pair and is never touched by a test — R41 point 1).
+  the human dev-run's pair and is never touched by a test).
 
   Parameters
   ----------
@@ -863,7 +847,7 @@ def bind_ephemeral_listening_socket() -> socket.socket:
     A bound, listening TCP socket whose OS-assigned port is read back with
     ``getsockname()``. Handed to the uvicorn subprocess by file descriptor
     (``--fd``) so there is no second bind and therefore no
-    probe-then-bind race (slice-a.md §7.5 point 2, explicit on this).
+    probe-then-bind race.
   """
   sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
   sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -880,12 +864,12 @@ class LiveServer:
   Attributes
   ----------
   base_url : str
-    ``https://127.0.0.1:<port>`` — never ``3002`` (R41 point 5).
+    ``https://127.0.0.1:<port>`` — never ``3002``.
   port : int
     The OS-assigned port.
   log_path : Path
     Combined stdout/stderr of the uvicorn subprocess. Read deliberately by
-    ``SEC-061`` only; never printed by this module.
+    the log-redaction tests only; never printed by this module.
   process : subprocess.Popen[bytes]
     The running subprocess, for tests that need to signal or inspect it.
   """
@@ -940,7 +924,7 @@ def live_server(
   there is no reason to add async-fixture/event-loop-scope friction under
   ``asyncio_mode = strict`` for a fixture that does no I/O through asyncio.
 
-  Order, per slice-a.md §7.5: generate a throwaway certificate into a
+  Order: generate a throwaway certificate into a
   dedicated ``tmp_path_factory`` directory (session-scoped — **not**
   ``tmp_path``, which is function-scoped and would be a pytest
   ``ScopeMismatch`` error here); bind and listen on ``127.0.0.1:0``
@@ -949,9 +933,9 @@ def live_server(
   port with ``manage set-origin`` under the owner env file, its own
   subprocess.
 
-  **Session-scoped (ruling R46(b)/R57):** one TLS uvicorn subprocess serves
+  **Session-scoped:** one TLS uvicorn subprocess serves
   every test in the session that needs one, rather than a fresh subprocess
-  per test (the original R41 shape). It starts once, the first time any
+  per test. It starts once, the first time any
   test requests it (directly or through ``http_client_factory``), and is
   torn down at session end. Isolation between the tests that share it is
   by data — a dedicated, uniquely-generated ``example.test`` identity per
@@ -978,7 +962,7 @@ def live_server(
   -----
   Depends on ``bootstrap_admin`` (and transitively ``crm_test_schema``) so
   that an origin row and an active admin exist before any request is made —
-  both are provisioning preconditions of ``/health/ready`` (ACC-902/903).
+  both are provisioning preconditions of ``/health/ready``.
   """
   tmp_path = tmp_path_factory.mktemp("live_server")
   certificate = generate_test_certificate(tmp_path)
@@ -1042,7 +1026,7 @@ def live_server(
 
 
 # ---------------------------------------------------------------------------
-# httpx client fixtures — cookie jars (slice-a.md §7.5 point 4).
+# httpx client fixtures — cookie jars.
 # ---------------------------------------------------------------------------
 
 
@@ -1051,7 +1035,7 @@ def _default_origin_on_unsafe_methods(
 ) -> Callable[[httpx.Request], Coroutine[None, None, None]]:
   """Build an httpx ``request`` event hook that stamps a same-origin ``Origin``.
 
-  ``app.main.OriginHostMiddleware`` (slice-a.md §2.1 step 0a) requires an
+  The origin/host middleware requires an
   ``Origin`` header on every unsafe-method request and refuses ``403`` when
   it is absent — matching a real browser, which always sends one on a
   same-origin ``POST`` navigation (verified live: a plain Chromium form
@@ -1065,27 +1049,26 @@ def _default_origin_on_unsafe_methods(
   setup`` failures this hook fixes.
 
   A test that deliberately exercises a missing or foreign ``Origin``
-  (``SEC-040a`` et al.) already passes its own ``headers={"Origin": ...}``
+  already passes its own ``headers={"Origin": ...}``
   per call, which httpx merges over the client's defaults *before* this
   hook runs — so the hook only fills a header that is not already present
   and never overrides an explicit test choice, including the intentionally
   empty ``headers={}`` a safe-method test passes to assert on the no-Origin
   case (a safe method is untouched here regardless).
 
-  Historical note, resolved by ruling **R50** — kept because it explains
-  why this hook exists rather than the app simply always sending
-  ``Origin``: a **real** browser does not always send the page's origin on
-  an unsafe navigation — when the referring page carries
-  ``Referrer-Policy: no-referrer``, the Fetch standard's "append a request
-  `Origin` header" algorithm serializes it as the literal string
-  ``"null"`` instead, which fails an exact-``Origin`` equality check.
-  Reproduced live in Slice A gate round 1 (headless Chromium, real form
-  ``POST``) and on a plain, unrelated ``http.server`` (no TLS, no app
-  code): a ``GET`` response carrying only ``Referrer-Policy: no-referrer``
-  made a same-origin form ``POST`` arrive with ``Origin: null``. **R50**
-  fixed this at the source — ``app/security/headers.py`` now sends
-  ``Referrer-Policy: same-origin`` (``SEC-027``), under which a real
-  browser keeps sending the true ``Origin`` on a same-origin ``POST`` — so
+  Historical note, kept because it explains why this hook exists rather
+  than the app simply always sending ``Origin``: a **real** browser does
+  not always send the page's origin on an unsafe navigation — when the
+  referring page carries ``Referrer-Policy: no-referrer``, the Fetch
+  standard's "append a request `Origin` header" algorithm serializes it as
+  the literal string ``"null"`` instead, which fails an exact-``Origin``
+  equality check. Reproduced live (headless Chromium, real form ``POST``)
+  and on a plain, unrelated ``http.server`` (no TLS, no app code): a
+  ``GET`` response carrying only ``Referrer-Policy: no-referrer`` made a
+  same-origin form ``POST`` arrive with ``Origin: null``. This was fixed
+  at the source — ``app/security/headers.py`` sends ``Referrer-Policy:
+  same-origin``, under which a real browser keeps sending the true
+  ``Origin`` on a same-origin ``POST`` — so
   this is no longer an open backend gap; the header value below is
   verified against the response in ``tests/security/test_headers.py``.
   This hook still exists because httpx, unlike a browser, never adds
@@ -1121,8 +1104,8 @@ async def http_client_factory(
 ) -> AsyncIterator[Callable[[], httpx.AsyncClient]]:
   """Return a factory for fresh, independent httpx clients against ``live_server``.
 
-  Each call returns a client with its **own** cookie jar (``ACC-0xx``/S1-S2
-  need genuinely separate sessions, not one jar reused) and
+  Each call returns a client with its **own** cookie jar (tests that
+  compare two sessions need genuinely separate sessions, not one jar reused) and
   ``follow_redirects=False`` so a test can inspect a ``303``'s ``Location``
   header itself rather than the redirect target's body. Every such client
   also carries the ``Origin``-stamping request hook (see
@@ -1139,7 +1122,7 @@ async def http_client_factory(
   def _factory() -> httpx.AsyncClient:
     client = httpx.AsyncClient(
       base_url=live_server.base_url,
-      verify=False,  # noqa: S501 — R41 point 4: the test cert is not a trust decision
+      verify=False,  # noqa: S501 — the test cert is not a trust decision
       follow_redirects=False,
       timeout=10.0,
       event_hooks={"request": [_default_origin_on_unsafe_methods(live_server.base_url)]},
@@ -1228,8 +1211,8 @@ async def login_via_http(client: httpx.AsyncClient, *, email: str, password: str
   -------
   httpx.Response
     The ``POST /login`` response, **not followed** (``follow_redirects`` is
-    always ``False`` on these clients — slice-a.md §4 pins a ``303`` on
-    success; the caller asserts on it directly rather than on whatever the
+    always ``False`` on these clients — a successful login is a ``303``;
+    the caller asserts on it directly rather than on whatever the
     destination page happens to render).
   """
   get_response = await client.get("/login")
@@ -1261,8 +1244,7 @@ async def admin_session(
 
 
 # ---------------------------------------------------------------------------
-# Clearing the two global throttle/budget counters (ruling R52, extended by
-# R57 to the in-process transport too) — shared by
+# Clearing the two global throttle/budget counters — shared by
 # ``tests/security/test_throttle_and_budget.py`` (``live_server``) and
 # ``tests/inprocess`` (``in_process_client``): both drive the same
 # DB-shared, global ``login_throttle``/``rate_budget`` rows, so one clearing
@@ -1291,8 +1273,8 @@ asyncio.run(main())
 def clear_throttle_and_budget_state(*, log_path: Path) -> None:
   """Delete every row from ``login_throttle`` and ``rate_budget`` (owner role).
 
-  A blunt test-isolation wipe of exactly the two counter tables ruling
-  **R52** names, nothing else (``crm`` is never touched; this only ever
+  A blunt test-isolation wipe of exactly these two counter tables,
+  nothing else (``crm`` is never touched; this only ever
   runs against ``crm_test``, via ``OWNER_ENV_FILE``).
 
   Parameters
@@ -1312,16 +1294,16 @@ def clear_throttle_and_budget_state(*, log_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# R68 (Slice B close-out, 2026-09-22): clear the two DB-SHARED GLOBAL rate
-# buckets once per test *module*, so a long, single ``pytest tests``
-# invocation never trips the 120/minute ``login_global``/``preauth_global``
-# budget (SEC-031) mid-suite purely from the accumulated logins every other
-# module's fixtures perform. This is additive to, and narrower than, the
-# per-test wipe above: it touches neither ``login_throttle`` nor the two
-# per-account ``rate_budget`` buckets, and it never runs for
+# Clear the two DB-SHARED GLOBAL rate buckets once per test *module*, so a
+# long, single ``pytest tests`` invocation never trips the 120/minute
+# ``login_global``/``preauth_global`` budget mid-suite purely from the
+# accumulated logins every other module's fixtures perform. This is
+# additive to, and narrower than, the per-test wipe above: it touches
+# neither ``login_throttle`` nor the two per-account ``rate_budget``
+# buckets, and it never runs for
 # ``tests/security/test_throttle_and_budget.py``, which owns the budget
-# tables for the one module whose whole point is to trip and observe them
-# (R68: "Not a weakening of the control").
+# tables for the one module whose whole point is to trip and observe
+# them — not a weakening of the control.
 # ---------------------------------------------------------------------------
 
 _CLEAR_GLOBAL_RATE_BUCKETS_SNIPPET: Final[str] = """
@@ -1348,7 +1330,7 @@ asyncio.run(main())
 def _clear_global_rate_buckets_before_each_module(
   crm_test_schema: None, tmp_path_factory: pytest.TempPathFactory, request: pytest.FixtureRequest
 ) -> None:
-  """R68: wipe ``login_global``/``preauth_global`` once before each test module.
+  """Wipe ``login_global``/``preauth_global`` once before each test module.
 
   Module-scoped and ``autouse`` so every module gets a clean pair of global
   counters without asking, the same shape as ``tests/inprocess``'s own
@@ -1365,13 +1347,13 @@ def _clear_global_rate_buckets_before_each_module(
   ----------
   crm_test_schema : None
     Documents the real dependency (``rate_budget`` must exist); already
-    satisfied regardless, since it is session-scoped autouse (R57).
+    satisfied regardless, since it is session-scoped autouse.
   tmp_path_factory : pytest.TempPathFactory
     For the owner-role subprocess's log file.
   request : pytest.FixtureRequest
     Used only to read the requesting module's file stem, so this fixture
     can skip the one module that owns the budget tables for its own
-    trip-and-recover assertions (R68).
+    trip-and-recover assertions.
   """
   del crm_test_schema
   module_file = getattr(request.module, "__file__", None)
@@ -1394,10 +1376,9 @@ def _clear_global_rate_buckets_before_each_module(
 # Five concerns, addressed in one hook because they interact (see each
 # bucket's rationale below): the pytest-asyncio / pytest-playwright event
 # loop corruption (module docstring, "tests/e2e runs as its own separate
-# invocation"), the new in-process/ASGI transport's origin (Hazard, ruling
-# R54), ``test_last_admin_race.py``'s independent schema reset (ruling
-# R57, this module's ``crm_test_schema`` docstring), and
-# ``test_migration_journal.py``'s own full schema wipe (ruling R66, SQL-026).
+# invocation"), the in-process/ASGI transport's origin, ``test_last_admin_race.py``'s
+# independent schema reset (this module's ``crm_test_schema`` docstring),
+# and ``test_migration_journal.py``'s own full schema wipe.
 # ---------------------------------------------------------------------------
 
 
@@ -1413,8 +1394,8 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
   future addition cannot become ambiguous by accident.
 
   1. ``tests/inprocess`` **first.** Its own module-scoped fixture points
-     ``crm_test``'s stored ``public_origin`` at ``https://crm.test``
-     (ruling **R54**). ``live_server`` (bucket 2/3) points the same row at
+     ``crm_test``'s stored ``public_origin`` at ``https://crm.test``.
+     ``live_server`` (bucket 2/3) points the same row at
      its own ``https://127.0.0.1:<port>`` the moment it is first
      constructed and never repoints it again for the rest of the session —
      so if any ``live_server``-backed test ran *before* ``tests/inprocess``,
@@ -1435,7 +1416,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
      Ordering ``tests/e2e`` last among the async-test buckets removes the
      corruption for the single, literal ``pytest tests`` invocation.
   4. ``tests/concurrency/test_demo_seed_and_reset.py`` **after ``tests/e2e``,
-     before ``test_last_admin_race.py`` (plan §4 task 6).** Its
+     before ``test_last_admin_race.py``.** Its
      ``reset-demo --yes`` deletes every row of ``activities``, ``deals``,
      ``contacts``, ``mutation_receipts``, ``sessions``, ``login_throttle``
      and ``rate_budget`` in the shared ``crm_test`` — every other test
@@ -1458,15 +1439,15 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
      it. Placing it after every other test in the session, including
      ``tests/e2e``, means nothing that runs afterward in *this* session
      needs that state any more; the *next* session's ``crm_test_schema``
-     (autouse, ruling R57) absorbs whatever this module leaves behind,
+     (autouse) absorbs whatever this module leaves behind,
      which is the "runnable from a dirty ``crm_test``" property that
      fixture's own docstring names. It is also, incidentally, a plain
      sync test module with no Playwright fixtures of its own, so its
      position relative to bucket 3's event-loop concern is moot either
      way — it is placed last for the schema reason, not that one.
   6. ``tests/concurrency/test_migration_journal.py`` **absolute last, after
-     even ``test_last_admin_race.py`` (ruling R66, SQL-026).** Its own
-     ``SQL-026`` test drops and recreates the whole ``public`` schema
+     even ``test_last_admin_race.py``.** Its own
+     from-empty-migrate test drops and recreates the whole ``public`` schema
      directly (owner role) to prove a from-empty `migrate` — the same
      class of wipe ``test_last_admin_race.py`` already earns bucket 5's
      placement for, one step further out: nothing in this session runs
@@ -1524,7 +1505,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Slice B — contacts: three-principal fixtures and HTTP helpers, shared by
+# Contacts: three-principal fixtures and HTTP helpers, shared by
 # every contact-surface module under tests/access, tests/security and
 # tests/concurrency. Defined here, at the root, rather than in a
 # sub-package conftest: every consuming module then gets `admin`/`agent_a`/
@@ -1535,11 +1516,9 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 # fixtures don't have that problem, the same way `admin_session`/
 # `agent_client` above never did).
 #
-# Authority: `contracts/slice-b.md` §2(g) hook 1 ("Three principals":
-# bootstrap admin plus two `create-user` agents, each barred from every
-# contact route by the forced-reset gate until its own
-# `POST /account/password` completes); `ACCESS_MATRIX.md` §1.5 (actors
-# `ADM`, `AG-O`, `AG-X`).
+# Three principals: bootstrap admin plus two `create-user` agents, each
+# barred from every contact route by the forced-reset gate until its own
+# `POST /account/password` completes.
 #
 # Why login is driven fresh per principal here rather than reusing
 # `admin_session`/`agent_client` directly: `create-user` sets
@@ -1559,8 +1538,8 @@ def extract_hidden_field(html: str, name: str) -> str:
   """Pull one hidden-field ``value`` out of a rendered form page, by ``name``.
 
   Generalizes :func:`extract_csrf_token` to any of the other
-  server-generated hidden fields Slice B's mutation forms carry
-  (``idempotency_key`` — PIN 1; ``version`` — PIN 3, the concurrency token).
+  server-generated hidden fields a mutation form carries
+  (``idempotency_key``; ``version``, the concurrency token).
 
   Parameters
   ----------
@@ -1606,12 +1585,12 @@ async def complete_forced_reset(
 ) -> ProvisionedUser:
   """Drive ``GET`` -> ``POST /account/password`` so a ``create-user`` agent can reach contacts.
 
-  Every agent Slice B's tests provision is forced to change its password on
+  Every agent these tests provision is forced to change its password on
   first login (``must_change_password = TRUE``, set by ``create-user``); the
-  order step 2 forced-reset gate (``ACCESS_MATRIX.md`` §1.1) would otherwise
+  forced-reset gate would otherwise
   answer every contact route with a ``403`` regardless of ownership, making
-  every ``ACC-0xx``/``ACC-1xx`` cell untestable for an agent. Not an
-  afterthought — slice-b.md §2(g) hook 1 names this step explicitly.
+  every access-control cell untestable for an agent. This step is a
+  deliberate part of the fixture, not an afterthought.
 
   Parameters
   ----------
@@ -1632,7 +1611,7 @@ async def complete_forced_reset(
   ------
   AssertionError
     If either leg fails — an honest signal that the forced-reset path
-    itself (Slice A, already shipped) regressed, not a Slice B finding.
+    itself regressed.
   """
   get_response = await client.get("/account/password")
   assert get_response.status_code == 200, (
@@ -1681,7 +1660,7 @@ async def admin(
 ) -> LoggedInPrincipal:
   """``ADM`` — the shared bootstrap admin, already logged in.
 
-  ``bootstrap`` keeps ``must_change_password = FALSE`` by design (R58), so
+  ``bootstrap`` keeps ``must_change_password = FALSE`` by design, so
   no forced-reset step applies here — unlike ``agent_a``/``agent_b`` below.
   """
   return LoggedInPrincipal(user=bootstrap_admin, client=admin_session)
@@ -1708,9 +1687,9 @@ async def agent_b(
 def normalize_body(body: str) -> str:
   """Replace a canonical-UUID-shaped correlation id with a fixed placeholder.
 
-  Slice B test hook 4 (slice-b.md §2(g)): the byte-identical-404 assertion
+  The byte-identical-404 assertion
   compares two responses for the *same* principal "modulo correlation id" —
-  every error page embeds one (``CONTRACTS.md`` §8.4/``SEC-062``), and it is
+  every error page embeds one, and it is
   freshly generated per request, so a raw ``==`` on two error bodies would
   always fail even when the page is otherwise identical.
 
@@ -1734,7 +1713,7 @@ def normalize_body(body: str) -> str:
 def normalized_headers(response: httpx.Response) -> dict[str, str]:
   """Return ``response.headers`` as a plain dict, minus ``Date`` and ``Content-Length``.
 
-  Slice B test hook 4: the identical-404 comparison is also made over
+  The identical-404 comparison is also made over
   "response headers minus ``Date`` and ``Content-Length``" — ``Date``
   changes with wall-clock time and ``Content-Length`` tracks the
   correlation id's own text length once it is embedded in the body, so
@@ -1810,15 +1789,15 @@ async def create_contact(
   Parameters
   ----------
   principal : LoggedInPrincipal
-    Creates the contact as themselves (``owner_id := scope.actor_id``,
-    ``ACC-007`` — never supplied by the caller).
+    Creates the contact as themselves (``owner_id := scope.actor_id`` —
+    never supplied by the caller).
   name, company, phone, kind : str
-    Fictional field values (``AGENTS.md``: fictional data only).
+    Fictional field values only.
   email : str | None
     Defaults to a fresh, unique ``example.test`` address per call so
     repeated calls in one test never collide on anything an accidental
     future unique constraint might add (``contacts.email`` itself carries
-    none — ``SQL-022`` — but the fixture stays collision-free regardless).
+    none, but the fixture stays collision-free regardless).
 
   Returns
   -------
@@ -1828,7 +1807,7 @@ async def create_contact(
   ------
   AssertionError
     If either leg does not behave as the contract requires — reported
-    honestly, never hidden, until ``app/routes/contacts.py`` ships.
+    honestly, never hidden.
   """
   if email is None:
     email = f"contact+{uuid.uuid4().hex[:12]}@example.test"
@@ -1859,20 +1838,15 @@ async def create_contact(
 
 
 def fresh_idempotency_key() -> str:
-  """Return a fresh ``uuid.uuid4()`` string, for a test that needs to mint its own (PIN 1)."""
+  """Return a fresh ``uuid.uuid4()`` string, for a test that needs to mint its own."""
   return str(uuid.uuid4())
 
 
 # ---------------------------------------------------------------------------
-# Slice C — deals: HTTP helpers shared by every deal-surface module under
+# Deals: HTTP helpers shared by every deal-surface module under
 # tests/access, tests/security, tests/concurrency and tests/e2e. Mirrors the
-# contact helpers above; none of this can succeed before
-# ``app/routes/deals.py`` ships (``contracts/slice-c.md`` §2(c) route table,
-# §2(j): "no route exists, no template renders, no form has been posted").
-#
-# Authority: ``contracts/slice-c.md`` §2(c) (route table, notice codes),
-# §2(d) (the stage control's exact fields, R22), §1(b) note 2 (``contact_id``
-# is immutable after create — absent from the edit form entirely).
+# contact helpers above. ``contact_id``
+# is immutable after create — absent from the edit form entirely.
 # ---------------------------------------------------------------------------
 
 #: `POST /contacts/{id}/deals` on success: `303 /contacts/{id}?notice=deal_created#deal-{id}`.
@@ -1896,7 +1870,7 @@ class SeededDeal:
   ----------
   id : str
     Parsed from the create response's ``Location`` fragment (``#deal-{id}``
-    — the deal id is never a path segment on the create route, R22/§2(c)).
+    — the deal id is never a path segment on the create route).
   contact_id : str
     The parent contact's id, echoed by the same ``Location`` header.
   owner : LoggedInPrincipal
@@ -1952,10 +1926,10 @@ def extract_scoped_hidden_field(html: str, *, form_action: str, name: str) -> st
   ``extract_hidden_field`` returns the *first* match anywhere in the
   document, which is exactly right while a page carries one mutation form
   (``contacts/form.html``, ``deals/form.html``) but ambiguous once it
-  carries several sharing field names — Slice C's stage control renders
+  carries several sharing field names — the deal stage control renders
   **three** ``<form>`` elements on one page (lateral move, Won, Lost),
   each with its own ``idempotency_key``/``version`` hidden fields that
-  happen to share the *same value* (one ``stage_form`` render, R22/§2(d))
+  happen to share the *same value* (one ``stage_form`` render)
   but live in different forms, and the contact detail page adds one
   archive/restore form alongside a stage control per deal card. This
   narrows the search to one ``<form ... action="...">...</form>`` block
@@ -2007,11 +1981,11 @@ async def create_deal(
     Creates the deal as themselves, under ``contact_id``.
   contact_id : str
     The parent contact's id — the only ownership input, re-resolved under
-    the scope predicate by the service (``ACC-205``..``ACC-208``).
+    the scope predicate by the service.
   title, amount, close_date : str
     Fictional field values. ``amount`` is the raw submitted string
-    (PIN C1's pattern, ``^\\d{1,10}(\\.\\d{1,2})?$``); ``close_date`` empty
-    means ``NULL`` (§2(d)).
+    (the accepted pattern is ``^\\d{1,10}(\\.\\d{1,2})?$``); ``close_date``
+    empty means ``NULL``.
 
   Returns
   -------
@@ -2021,7 +1995,7 @@ async def create_deal(
   ------
   AssertionError
     If either leg does not behave as the contract requires — reported
-    honestly, never hidden, until ``app/routes/deals.py`` ships.
+    honestly, never hidden.
   """
   new_form = await principal.client.get(f"/contacts/{contact_id}/deals/new")
   assert new_form.status_code == 200, (
@@ -2057,8 +2031,8 @@ async def archive_contact(principal: LoggedInPrincipal, *, contact_id: str) -> h
   """Archive ``contact_id`` as ``principal``, returning the raw mutation response.
 
   Factors out the sequence ``tests/access/test_contacts.py``'s
-  ``test_acc006`` inlines, for Slice C tests that need an archived parent
-  (``ACC-208``, ``ACC-216``, ``ACC-222``, ``ACC-229``) without duplicating
+  ``test_owner_can_read_own_archived_contact`` inlines, for deal tests
+  that need an archived parent without duplicating
   it. Uses ``extract_hidden_field`` (first match), which is exactly right
   today because the contact detail page carries one archive/restore form;
   a test relying on this against a contact that already owns a deal card
@@ -2092,11 +2066,10 @@ async def archive_contact(principal: LoggedInPrincipal, *, contact_id: str) -> h
 
 
 # ---------------------------------------------------------------------------
-# Slice D — activities: the one HTTP helper shared by tests/access and
+# Activities: the one HTTP helper shared by tests/access and
 # tests/concurrency (tests/e2e drives the same form through Playwright
 # locators instead, per that directory's own convention). Mirrors the deal
-# helpers above; nothing here can succeed before ``app/routes/activities.py``
-# ships.
+# helpers above.
 #
 # ``create_activity`` deliberately does NOT use ``extract_hidden_field`` (the
 # first-match helper) on the contact workspace: that page can carry several
@@ -2134,8 +2107,8 @@ def parse_activity_create_location(location: str) -> str:
   AssertionError
     If the header does not match the contracted shape (the create redirect
     carries no activity id of its own — the destination is the contact's
-    timeline, never a page of the activity itself, ``ACCESS_MATRIX.md``
-    §1.6's "an activity has no ``GET`` route of its own").
+    timeline, never a page of the activity itself: an activity has no
+    ``GET`` route of its own).
   """
   match = _ACTIVITY_CREATE_LOCATION_PATTERN.match(location)
   assert match is not None, f"unexpected activity-create Location header shape: {location!r}"
@@ -2163,7 +2136,7 @@ async def create_activity(
     helper asserts on will not happen (use a raw ``client.post`` instead
     for a foreign/missing/archived-parent case).
   kind, occurred_on, summary : str
-    Fictional field values (``AGENTS.md``).
+    Fictional field values only.
 
   Returns
   -------
