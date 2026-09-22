@@ -34,9 +34,12 @@ if TYPE_CHECKING:
 
 __all__ = [
   "UserAuthRow",
+  "UserOptionRow",
   "count_active_admins",
   "find_user_for_auth",
   "insert_user",
+  "is_active_user",
+  "list_active_users",
   "read_user",
   "set_active",
   "set_password",
@@ -103,6 +106,23 @@ _COUNT_ACTIVE_ADMINS_SQL: Final[LiteralString] = """
 SELECT count(*) FROM public.users WHERE role = 'admin' AND is_active = true
 """
 
+#: Slice B, ``PIN 9``. Deliberately not :func:`read_user`, which would answer
+#: the same question while pulling ``password_hash`` into memory to decide a
+#: reassignment — a widening for no gain.
+_IS_ACTIVE_USER_SQL: Final[LiteralString] = """
+SELECT count(*) FROM public.users WHERE id = %(id)s AND is_active = true
+"""
+
+#: Slice B, amendment **A-10**. The source of ``contacts/detail.html``'s frozen
+#: ``reassign.assignable_users``. Ordered by the displayed column with an ``id``
+#: tiebreaker, so two people sharing a display name still order deterministically.
+_LIST_ACTIVE_USERS_SQL: Final[LiteralString] = """
+SELECT id, display_name
+  FROM public.users
+ WHERE is_active = true
+ ORDER BY display_name, id
+"""
+
 
 @dataclass(frozen=True, slots=True)
 class UserAuthRow:
@@ -140,6 +160,24 @@ class UserAuthRow:
   must_change_password: bool
   password_hash: str
   version: int
+
+
+@dataclass(frozen=True, slots=True)
+class UserOptionRow:
+  """One selectable account, for the admin reassignment control.
+
+  Attributes
+  ----------
+  id : UUID
+    ``users.id``, the value the ``owner_id`` field posts back.
+  display_name : str
+    What the option reads. ``CONTRACTS.md`` §8 rule 4 pins person names to
+    ``users.display_name``; no address is exposed by this read, because an
+    admin choosing an owner never needs one.
+  """
+
+  id: UUID
+  display_name: str
 
 
 def _row_to_user(row: tuple[object, ...]) -> UserAuthRow:
@@ -477,3 +515,76 @@ async def count_active_admins(conn: PoolConnection) -> int:
   cursor = await conn.execute(_COUNT_ACTIVE_ADMINS_SQL)
   row = await cursor.fetchone()
   return 0 if row is None else int(str(row[0]))
+
+
+async def is_active_user(conn: PoolConnection, *, user_id: UUID) -> bool:
+  """Answer whether one account exists and is enabled — ``PIN 9``'s target check.
+
+  Parameters
+  ----------
+  conn : PoolConnection
+    A connection inside the caller's ``SERIALIZABLE`` transaction — the same
+    one that performs the reassignment.
+  user_id : UUID
+    The candidate owner submitted by an administrator.
+
+  Returns
+  -------
+  bool
+    ``True`` only for an existing, active account. **Missing** and
+    **disabled** both answer ``False``, which is what ``ACC-032`` wants: one
+    400 for "not a valid target", with no branch that would tell an admin
+    which of the two it was.
+
+  Notes
+  -----
+  Additive, and a **read**: no existing function changes and ``ARC-018`` is
+  untouched. It takes no ``Scope`` — ``users`` is an identity repository, and
+  a scope would add a second, redundant authorization input to a lookup that
+  is already id-keyed (``ARC-001``'s identity/infrastructure side).
+
+  Composing it **inside** the reassign transaction is the load-bearing part: a
+  concurrent ``disable-user`` updates the row this transaction read,
+  PostgreSQL's SSI sees the read-write conflict and aborts one side with
+  ``40001``, and the retry re-reads and refuses. The same check in an earlier
+  transaction would be a TOCTOU window instead.
+
+  ``count(*) = 1`` rather than ``EXISTS``, to keep the module's
+  one-shape-per-read convention and because the caller wants a boolean, not a
+  row.
+  """
+  cursor = await conn.execute(_IS_ACTIVE_USER_SQL, {"id": str(user_id)})
+  row = await cursor.fetchone()
+  return bool(row is not None and int(str(row[0])) == 1)
+
+
+async def list_active_users(conn: PoolConnection) -> tuple[UserOptionRow, ...]:
+  """List every enabled account as an id and a display name.
+
+  Parameters
+  ----------
+  conn : PoolConnection
+    A connection inside the caller's short ``READ COMMITTED`` transaction.
+    The read is on the detail page's path, not inside a mutation.
+
+  Returns
+  -------
+  tuple[UserOptionRow, ...]
+    Ordered by ``display_name`` then ``id``. Empty is possible in principle
+    and renders an empty control; it cannot happen in practice, because the
+    administrator making the request is themselves an active account.
+
+  Notes
+  -----
+  Amendment **A-10**: ``contacts/detail.html``'s frozen
+  ``reassign.assignable_users`` has no other source, and the template is
+  rendered under ``StrictUndefined``. Two columns and no more — an account's
+  address, role and flags are not needed to pick an owner, and a read that
+  returned them would widen what a reassignment control discloses.
+
+  No ``Scope``, for the same reason as :func:`is_active_user`; the **route**
+  is admin-only, and that decision is taken before this is ever reached.
+  """
+  cursor = await conn.execute(_LIST_ACTIVE_USERS_SQL)
+  rows = await cursor.fetchall()
+  return tuple(UserOptionRow(id=UUID(str(row[0])), display_name=str(row[1])) for row in rows)
