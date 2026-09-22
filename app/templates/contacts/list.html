@@ -1,0 +1,89 @@
+{#-  contacts/list.html — CONTRACTS.md §8.2: `query {q, kind, status, sort,
+  dir, page}`, `results` (§8.3), `can_create: bool`.
+
+  Contract addition (documented, not invented — see partials/
+  contact_results.html's own header comment): this page also supplies
+  `focus_region` (slice-b.md §2(e)/R40) on every render, always `false`
+  here — the fragment-only focus-move rule never applies to a full page
+  load. Flagged for a CONTRACTS.md §8.2/§8.3 follow-up amendment.
+
+  UX_FLOWS.md §4.4 regions: error-summary slot (none on this screen — no
+  form posts here) · <h1>Contacts</h1> + scope · notice · actions row ·
+  filter bar (#contact-filters, OUTSIDE the swap target) · results region
+  (#contact-results, rendered by partials/contact_results.html, which this
+  page includes so the fragment GET and the full page render byte-identical
+  markup for that region — CONTRACTS.md §8's rule 3).
+-#}
+{% extends "base.html" %}
+{% block main %}
+<header class="page-header">
+  <h1>Contacts</h1>
+  <p class="scope-label">{{ scope_label }}</p>
+</header>
+{% include "partials/notice.html" %}
+<div class="page-actions">
+  {% if can_create %}<a href="/contacts/new" class="btn btn-primary">Add contact</a>{% endif %}
+</div>
+
+{% set _applied = (1 if query.q else 0) + (1 if query.kind else 0) + (1 if query.status != "active" else 0) %}
+<section aria-labelledby="contacts-filter-h">
+  <h2 id="contacts-filter-h" class="sr-only">Filter contacts</h2>
+  <span class="region-status htmx-indicator" aria-hidden="true">Loading…</span>
+  <details class="filter-disclosure">
+    <summary>
+      <svg class="icon" aria-hidden="true"><use href="/static/img/icons.svg#icon-filter"></use></svg>
+      {% if _applied %}Search and filters — {{ _applied }} applied{% else %}Search and filters{% endif %}
+    </summary>
+    <form id="contact-filters" method="get" action="/contacts"
+          hx-get="/contacts" hx-target="#contact-results" hx-swap="outerHTML"
+          hx-push-url="true"
+          hx-trigger="submit, change from:#filter-kind, change from:#filter-status">
+      <div class="field">
+        <label for="filter-q">Search</label>
+        <input id="filter-q" type="search" name="q" maxlength="254" value="{{ query.q or '' }}">
+      </div>
+      <div class="field">
+        <label for="filter-kind">Type</label>
+        <select id="filter-kind" name="kind">
+          <option value=""{% if not query.kind %} selected{% endif %}>Any</option>
+          <option value="lead"{% if query.kind == "lead" %} selected{% endif %}>Lead</option>
+          <option value="customer"{% if query.kind == "customer" %} selected{% endif %}>Customer</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="filter-status">Show</label>
+        <select id="filter-status" name="status">
+          <option value="active"{% if query.status == "active" %} selected{% endif %}>Active</option>
+          <option value="archived"{% if query.status == "archived" %} selected{% endif %}>Archived</option>
+          <option value="all"{% if query.status == "all" %} selected{% endif %}>All</option>
+        </select>
+      </div>
+      {#- UI_SPEC.md §4.9: the mobile sort affordance, shown only below
+         640px (`.sort-mobile-only`), independent of this <1024px
+         disclosure boundary — the 640-1023px band shows the real <th>
+         sort links (full table) plus this collapsed disclosure, per D14. #}
+      <div class="field sort-mobile-only">
+        <label for="sort-key">Sort by</label>
+        <select id="sort-key" name="sort">
+          <option value="name"{% if query.sort == "name" %} selected{% endif %}>Name</option>
+          <option value="company"{% if query.sort == "company" %} selected{% endif %}>Company</option>
+          <option value="email"{% if query.sort == "email" %} selected{% endif %}>Work email</option>
+          <option value="created_at"{% if query.sort == "created_at" %} selected{% endif %}>Created</option>
+          <option value="updated_at"{% if query.sort == "updated_at" %} selected{% endif %}>Updated</option>
+        </select>
+      </div>
+      <div class="field sort-mobile-only">
+        <label for="sort-dir">Direction</label>
+        <select id="sort-dir" name="dir">
+          <option value="asc"{% if query.dir == "asc" %} selected{% endif %}>Ascending</option>
+          <option value="desc"{% if query.dir == "desc" %} selected{% endif %}>Descending</option>
+        </select>
+      </div>
+      <button type="submit" id="filter-apply" class="btn btn-primary">Apply</button>
+      <a href="{{ results.clear_url }}" class="btn btn-secondary">Clear filters</a>
+    </form>
+  </details>
+</section>
+
+{% include "partials/contact_results.html" %}
+{% endblock %}

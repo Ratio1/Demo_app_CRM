@@ -1,0 +1,104 @@
+{#-  partials/contact_results.html — the `#contact-results` swap target.
+  CONTRACTS.md §8.3 lists this partial's context as "`results` + base",
+  which reads as abbreviated: a sort-header link needs the active filters
+  to survive a re-sort, and the empty-state CTA needs `can_create`,
+  neither reachable from `results` alone. Confirmed, not just inferred —
+  `app/routes/contacts.py`'s `list_contacts` route (`page.update(query=...,
+  results=..., can_create=True, focus_region=focus_region)`) builds ONE
+  context dict and renders it through either this partial or
+  `contacts/list.html` depending on `HX-Request`, so every key here is
+  what that route actually passes both times. Still an owed CONTRACTS.md
+  §8.3 documentation amendment (three keys: `query`, `can_create`,
+  `focus_region`), just no longer an open question for this lane.
+
+  `results.items` (and `stale.keep_form.values` in errors/409.html) is
+  exactly the dict-vs-attribute collision `app/routes/rendering.py`'s own
+  `View` class docstring names by id — this template's attribute access
+  (`results.items`, never `results['items']`) is what that class is built
+  to serve.
+
+  R40 / slice-b.md §2(e): the partial renders its OWN container
+  (`hx-swap="outerHTML"` on the caller's side, §2(e)), `tabindex="-1"` +
+  conditional `autofocus` here is the entire focus-move mechanism, no
+  script. `partials/announce.html` is included as a TOP-LEVEL sibling of
+  this `<section>`, never nested inside it (OOB swap target is the shell's
+  own `#announce`, not this container).
+
+  Table→card: UI_SPEC.md §4.8/§4.9/R23 — one <table role="table"> with
+  explicit ARIA roles, `.cell-label` spans (real text, `display:none`
+  >=640px), CSS grid rows <640px. Sort headers: UX_FLOWS.md §4.4's
+  allowlist (`name, company, email, created_at, updated_at`); `Type` and
+  `Owner` are not sortable.
+-#}
+{%- macro _sort_href(key) -%}
+{%- set _dir = "desc" if (query.sort == key and query.dir == "asc") else "asc" -%}
+{%- set _pairs = [] -%}
+{%- if query.q %}{% set _x = _pairs.append("q=" ~ query.q|urlencode) %}{% endif -%}
+{%- if query.kind %}{% set _x = _pairs.append("kind=" ~ query.kind) %}{% endif -%}
+{%- if query.status and query.status != "active" %}{% set _x = _pairs.append("status=" ~ query.status) %}{% endif -%}
+{%- set _x = _pairs.append("sort=" ~ key) -%}
+{%- set _x = _pairs.append("dir=" ~ _dir) -%}
+/contacts?{{ _pairs|join("&") }}
+{%- endmacro -%}
+{%- macro _sort_th(key, label) -%}
+{%- set _active = (query.sort == key) -%}
+<th role="columnheader" scope="col"{% if _active %} aria-sort="{{ 'ascending' if query.dir == 'asc' else 'descending' }}"{% endif %}>
+  <a href="{{ _sort_href(key) }}">{{ label }}{% if _active %} <span aria-hidden="true">{{ "▲" if query.dir == "asc" else "▼" }}</span>{% endif %}</a>
+</th>
+{%- endmacro -%}
+{% from "partials/badges.html" import kind_badge, archived_badge %}
+{% from "partials/pagination.html" import pagination %}
+<section id="contact-results" tabindex="-1"{% if focus_region %} autofocus{% endif %}>
+  {% if results.result_state == "empty" %}
+  <div class="state-panel state-panel-region">
+    <img src="/static/img/empty-contacts.svg" alt="" width="200" height="160">
+    <h2 tabindex="-1">No contacts yet</h2>
+    <p>No contacts yet. Add your first contact to start tracking deals and activity.</p>
+    {% if can_create %}<p class="state-panel-action"><a href="/contacts/new" class="btn btn-primary">Add contact</a></p>{% endif %}
+  </div>
+  {% else %}
+    {% if results.result_state == "no_results" %}
+    {#- UX_FLOWS.md §3.22: "A page beyond the result set renders no_results
+       with the pagination showing the real scoped range (ACC-112) … both
+       paging directions then render as Pin U-2's inert <span>" — unlike
+       `empty` (zero rows in scope at all), `no_results` still needs the
+       pagination control below (outside this `<div>`), or a request that
+       paged past the end has no way back to a valid page. #}
+    <div class="state-panel state-panel-region">
+      <img src="/static/img/no-results.svg" alt="" width="200" height="160">
+      <h2 tabindex="-1">No contacts match this search</h2>
+      <p>No contacts match this search.</p>
+      <p class="state-panel-action"><a href="{{ results.clear_url }}" class="btn btn-secondary">Clear filters</a></p>
+    </div>
+    {% else %}
+    <table class="responsive-table" role="table" aria-label="Contacts">
+      <thead role="rowgroup">
+        <tr role="row">
+          {{ _sort_th("name", "Name") }}
+          {{ _sort_th("company", "Company") }}
+          {{ _sort_th("email", "Work email") }}
+          <th role="columnheader" scope="col">Type</th>
+          {% if principal.is_admin %}<th role="columnheader" scope="col">Owner</th>{% endif %}
+          {{ _sort_th("updated_at", "Updated") }}
+        </tr>
+      </thead>
+      <tbody role="rowgroup">
+        {% for row in results.items %}
+        <tr role="row">
+          <td role="cell"><span class="cell-label">Name</span><a href="{{ row.url }}">{{ row.full_name }}</a></td>
+          <td role="cell"><span class="cell-label">Company</span>{{ row.company }}</td>
+          <td role="cell"><span class="cell-label">Work email</span>{{ row.email }}</td>
+          <td role="cell"><span class="cell-label">Type</span>{{ kind_badge(row.kind) }}{% if row.is_archived %} {{ archived_badge() }}{% endif %}</td>
+          {% if principal.is_admin %}
+          <td role="cell"><span class="cell-label">Owner</span><span class="chip chip-owner">{{ row.owner_name }}</span></td>
+          {% endif %}
+          <td role="cell"><span class="cell-label">Updated</span><time datetime="{{ row.updated_at.date().isoformat() }}">{{ row.updated_at.strftime("%-d %b %Y") }}</time></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    {{ pagination(results, "#contact-results", "page", "Pagination", "Previous", "Next") }}
+  {% endif %}
+</section>
+{% include "partials/announce.html" %}
