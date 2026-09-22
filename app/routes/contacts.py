@@ -53,7 +53,7 @@ from starlette.responses import Response
 
 from app.logging import current_correlation_id
 from app.routes.errors import CONTACTS_URL, bad_request, conflict, redirect
-from app.routes.rendering import base_context, csrf_token_for_request, notice_for, render
+from app.routes.rendering import View, base_context, csrf_token_for_request, notice_for, render
 from app.security.audit import (
   ACTION_INPUT_REJECTED,
   ACTION_ROLE_DENIED,
@@ -506,7 +506,7 @@ def _announce(view: ContactListView) -> str:
   return _CP_43_EMPTY
 
 
-def _results(request: Request, view: ContactListView, query: _ListQuery) -> dict[str, Any]:
+def _results(request: Request, view: ContactListView, query: _ListQuery) -> View:
   """Build ``CONTRACTS.md`` §8.3's ``results`` from the service's view model.
 
   Notes
@@ -517,8 +517,8 @@ def _results(request: Request, view: ContactListView, query: _ListQuery) -> dict
   label — not to omit the control, which would shift the layout at the
   first and last page.
   """
-  return {
-    "items": [
+  return View(
+    items=[
       {
         "id": str(row.id),
         "url": _detail_url(request, row.id),
@@ -535,21 +535,21 @@ def _results(request: Request, view: ContactListView, query: _ListQuery) -> dict
       }
       for row in view.items
     ],
-    "total": view.total,
-    "page": view.page,
-    "pages": view.pages,
-    "per_page": view.per_page,
-    "range_start": view.range_start,
-    "range_end": view.range_end,
-    "has_prev": view.has_prev,
-    "has_next": view.has_next,
-    "prev_url": _list_url(query, page=view.page - 1) if view.has_prev else None,
-    "next_url": _list_url(query, page=view.page + 1) if view.has_next else None,
-    "result_state": view.result_state,
-    "sort": query.sort,
-    "dir": query.direction,
-    "clear_url": CONTACTS_URL,
-  }
+    total=view.total,
+    page=view.page,
+    pages=view.pages,
+    per_page=view.per_page,
+    range_start=view.range_start,
+    range_end=view.range_end,
+    has_prev=view.has_prev,
+    has_next=view.has_next,
+    prev_url=_list_url(query, page=view.page - 1) if view.has_prev else None,
+    next_url=_list_url(query, page=view.page + 1) if view.has_next else None,
+    result_state=view.result_state,
+    sort=query.sort,
+    dir=query.direction,
+    clear_url=CONTACTS_URL,
+  )
 
 
 def _scope_label(principal: Principal) -> str:
@@ -584,7 +584,7 @@ def _contact_context(view: ContactView) -> dict[str, Any]:
   }
 
 
-def _empty_timeline() -> dict[str, Any]:
+def _empty_timeline() -> View:
   """Return the placeholder ``timeline`` Slice C fills in.
 
   Notes
@@ -595,18 +595,18 @@ def _empty_timeline() -> dict[str, Any]:
   one that is absent, so ``can.add_deal``/``can.add_activity`` are
   ``False`` and these structures are empty (§2(i)).
   """
-  return {
-    "items": [],
-    "total": 0,
-    "page": 1,
-    "pages": 1,
-    "has_prev": False,
-    "has_next": False,
-    "prev_url": None,
-    "next_url": None,
-    "range_start": 0,
-    "range_end": 0,
-  }
+  return View(
+    items=[],
+    total=0,
+    page=1,
+    pages=1,
+    has_prev=False,
+    has_next=False,
+    prev_url=None,
+    next_url=None,
+    range_start=0,
+    range_end=0,
+  )
 
 
 async def _detail_context(
@@ -670,16 +670,16 @@ async def _detail_context(
     deals=[],
     deal_forms={},
     timeline=_empty_timeline(),
-    activity_form={
-      "values": {
+    activity_form=View(
+      values={
         "kind": "note",
         "occurred_on": context.clock.now().date().isoformat(),
         "summary": "",
       },
-      "errors": {},
-      "idempotency_key": str(mint_key()),
-      "limit": 1000,
-    },
+      errors={},
+      idempotency_key=str(mint_key()),
+      limit=1000,
+    ),
     archive_form={"idempotency_key": str(mint_key()), "version": view.version},
     restore_form={"idempotency_key": str(mint_key()), "version": view.version},
     reassign=reassign,
@@ -827,12 +827,12 @@ async def _stale_response(
         "object_label": result.current.full_name,
         "updated_at": result.current.updated_at,
         "fields": _stale_fields(result, owner_names),
-        "keep_form": {
-          "action_url": action_url,
-          "values": dict(result.submitted),
-          "version": result.version,
-          "idempotency_key": str(result.idempotency_key),
-        },
+        "keep_form": View(
+          action_url=action_url,
+          values=dict(result.submitted),
+          version=result.version,
+          idempotency_key=str(result.idempotency_key),
+        ),
         "reload_url": _edit_url(request, result.contact_id),
       }
     },
@@ -954,31 +954,23 @@ async def contacts_page(request: Request) -> Response:
   )
   results = _results(request, view, parsed)
   fragment = _is_fragment(request)
-  if fragment:
-    trigger = request.headers.get("hx-trigger", "")
-    focus_region = (trigger == _PAGER_PREV and not view.has_prev) or (
-      trigger == _PAGER_NEXT and not view.has_next
-    )
-    page = base_context(
-      page_title="Contacts",
-      principal=principal,
-      csrf_token=csrf_token_for_request(request),
-      private=True,
-      nav_active="contacts",
-      announce=_announce(view),
-      scope_label=_scope_label(principal),
-    )
-    page.update(results=results, focus_region=focus_region)
-    return render(request, "partials/contact_results.html", page)
-
+  # R24's focus rule: the container takes focus only when the control that
+  # triggered the request has disappeared. `HX-Trigger` is client-supplied,
+  # so it is matched against exactly the two pager ids, never echoed, and
+  # decides focus only. A full page load is not a swap, so it is never set.
+  trigger = request.headers.get("hx-trigger", "")
+  focus_region = fragment and (
+    (trigger == _PAGER_PREV and not view.has_prev) or (trigger == _PAGER_NEXT and not view.has_next)
+  )
   page = base_context(
     page_title="Contacts",
     principal=principal,
     csrf_token=csrf_token_for_request(request),
     private=True,
     nav_active="contacts",
+    announce=_announce(view) if fragment else None,
     scope_label=_scope_label(principal),
-    notice=notice_for(request),
+    notice=None if fragment else notice_for(request),
   )
   page.update(
     query={
@@ -991,8 +983,13 @@ async def contacts_page(request: Request) -> Response:
     },
     results=results,
     can_create=True,
+    focus_region=focus_region,
   )
-  return render(request, "contacts/list.html", page)
+  # One route, two renderings, from the same query handling and the same
+  # context: `contacts/list.html` includes the partial, so every key the
+  # partial reads must be present on the full page too.
+  template = "partials/contact_results.html" if fragment else "contacts/list.html"
+  return render(request, template, page)
 
 
 @router.get("/contacts/new", name="contact_new")

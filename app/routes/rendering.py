@@ -50,6 +50,7 @@ __all__ = [
   "NOTICE_CODES",
   "TEMPLATES",
   "TEMPLATES_DIR",
+  "View",
   "base_context",
   "csrf_token_for_request",
   "notice_for",
@@ -108,6 +109,57 @@ NOTICE_CODES: Final[dict[str, dict[str, str]]] = {
 #: supplied by the **destination handler** from a re-read row, never from
 #: the query string: no free text travels in a URL (**R20**).
 _NOTICE_PLACEHOLDER: Final = re.compile(r"\{([a-z_]+)\}")
+
+
+class View:
+  """A context sub-object whose keys are read as attributes, not as items.
+
+  Jinja resolves ``a.b`` by trying :func:`getattr` **first** and only then
+  ``a["b"]``, so a plain :class:`dict` hands a template its own method for
+  any key that shares a name with one: ``results.items``,
+  ``timeline.items``, ``activity_form.values`` and
+  ``stale.keep_form.values`` are all frozen context keys
+  (``CONTRACTS.md`` §8.3/§8.2/§8.4) that collide exactly that way. Wrapping
+  those four in this class is what makes them resolve to their values — and
+  it is also what §8's rule 1 asks for, *"every context value is a view
+  model or a primitive"*.
+
+  ``__slots__`` carries the data under one private name, so **every** other
+  attribute falls through to :meth:`__getattr__` and no key can ever be
+  shadowed by something inherited from :class:`object`. Item access is kept
+  as well, so a template may spell either.
+
+  A sub-context a template calls a real mapping method on — ``errors``,
+  which every form reads with ``.get(...)`` and the error summary iterates
+  with ``.items()`` — stays a plain :class:`dict` and must not be wrapped.
+  """
+
+  __slots__ = ("_data",)
+
+  def __init__(self, **data: Any) -> None:
+    """Store this view's keys.
+
+    Parameters
+    ----------
+    **data : Any
+      The context keys, exactly as the frozen inventory names them.
+    """
+    object.__setattr__(self, "_data", data)
+
+  def __getattr__(self, name: str) -> Any:
+    """Return one key as an attribute, or raise :class:`AttributeError`."""
+    try:
+      return self._data[name]
+    except KeyError:
+      raise AttributeError(name) from None
+
+  def __getitem__(self, key: str) -> Any:
+    """Return one key as an item, for a template that spells it that way."""
+    return self._data[key]
+
+  def __repr__(self) -> str:
+    """Return a debug representation naming the keys but not the values."""
+    return f"View({', '.join(sorted(self._data))})"
 
 
 def notice_for(
