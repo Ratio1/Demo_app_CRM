@@ -83,6 +83,7 @@ from app.services.contacts import (
   ContactView,
   Duplicate,
   Invalid,
+  RestoreForm,
   Stale,
   archive_contact,
   build_contact_query,
@@ -873,6 +874,26 @@ async def _blocked_response(request: Request, result: Blocked) -> Response:
   )
 
 
+def _archived_block(view: ContactView) -> Blocked:
+  """Build the 409 ``archived_parent`` payload for a write the route refuses.
+
+  Notes
+  -----
+  The route refuses a reassign against an archived contact itself, before
+  the service is reached, on the one path that cannot get there: a
+  non-canonical ``owner_id``, which is a ``CP-25`` 400 on an **active**
+  contact (§2(f)) but must still be **R25**'s 409 on an archived one —
+  restore first, then reassign.
+  """
+  return Blocked(
+    contact_id=view.id,
+    contact_name=view.full_name,
+    body="cp_13",
+    state="archived",
+    restore_form=RestoreForm(idempotency_key=mint_key(), version=view.version),
+  )
+
+
 async def _duplicate_response(request: Request, result: Duplicate) -> Response:
   """Render ``errors/409.html`` ``context="duplicate"`` (``SQL-028``, ``ACC-226``)."""
   return await conflict(
@@ -1147,6 +1168,12 @@ async def contact_update(request: Request, contact_id: str) -> Response:
   )
   detail_url = _detail_url(request, identifier)
   if isinstance(result, Invalid):
+    # The owner line on the re-rendered form is the contact's owner, not
+    # the editor's: an admin editing an agent's contact must not read as
+    # its owner. Re-reading here also puts the scope predicate in front of
+    # the field errors, so a foreign contact with a bad body is the same
+    # 404 as a foreign contact with a good one (§1.1, ACC-015).
+    view = await get_for_detail(context.pool, scope_of(principal), contact_id=identifier)
     return render(
       request,
       "contacts/form.html",
@@ -1157,7 +1184,7 @@ async def contact_update(request: Request, contact_id: str) -> Response:
         action_url=detail_url,
         cancel_url=detail_url,
         contact=_submitted_contact(body, contact_id=str(identifier), version=version),
-        owner_label=principal.display_name,
+        owner_label=view.owner_name,
         errors=result.errors,
         idempotency_key=mint_key(),
       ),
@@ -1245,6 +1272,8 @@ async def contact_reassign(request: Request, contact_id: str) -> Response:
     # the scope predicate first, so a foreign one answers 404 and never
     # this 400 — the 409/400 ordering rule applied to a bad owner id.
     view = await get_for_detail(context.pool, scope, contact_id=identifier)
+    if view.is_archived:
+      return await _blocked_response(request, _archived_block(view))
     page = await _detail_context(
       request, principal, view, reassign_errors={"owner_id": [CP_25_BAD_TARGET]}
     )
