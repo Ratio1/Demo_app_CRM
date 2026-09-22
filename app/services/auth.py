@@ -26,15 +26,16 @@ record of what it rejected (``SQL-027``).
 describes* — the same connection, inside the same ``run_serializable``
 block (``S7``, ``SQL-016``).
 
-``ARC-018``(b) note. This module imports ``app.db.repositories.users`` for
-the four functions authentication cannot be written without:
-``find_user_for_auth``, ``read_user``, ``set_password`` and
-``update_password_hash``. It never imports ``set_active`` or
-``count_active_admins`` — the maintenance statements that rule exists to
-confine to ``app/services/accounts.py``. Flagged in the session report:
-``ARC-018``(b) as worded bans the whole module from every service but
-``accounts.py``, which no login can obey, and should name the two symbols
-instead.
+``ARC-018``(b), as **R51** (2026-09-22) rewords it, holds here by
+construction. The rule is now: no file but ``app/db/repositories/users.py``
+holds an ``UPDATE`` of ``users``, and the functions that write ``role`` or
+``is_active`` are referenced only from ``app/services/accounts.py``; reads
+of that module are unrestricted, because authentication cannot be written
+without them. This module imports exactly ``find_user_for_auth``,
+``read_user``, ``set_password`` and ``update_password_hash`` — two reads
+and the two password writes. It imports neither ``set_active`` nor
+``insert_user`` (the only writers of ``is_active`` and ``role``) nor
+``count_active_admins``, and it holds no SQL of its own.
 """
 
 from __future__ import annotations

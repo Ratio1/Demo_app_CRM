@@ -11,9 +11,13 @@ what keeps account administration off the attack surface entirely: an
 attacker with a session cannot create, disable or re-role anybody, because
 the code that could is not reachable over HTTP.
 
-``ARC-018``(b): this is the one module allowed to import ``set_active``
-and ``count_active_admins``, and the ``UPDATE`` behind them is the only
-place ``is_active`` is written.
+``ARC-018``(b), in **R51**'s (2026-09-22) wording: this is the one module
+that references the functions writing ``role`` or ``is_active`` —
+``insert_user`` and ``set_active`` — together with
+``count_active_admins``. The ``UPDATE`` behind ``set_active`` is the only
+place ``is_active`` is ever written, and it lives in
+``app/db/repositories/users.py`` like every other statement in this
+application.
 
 **``role`` is written once, at INSERT, and never updated** — ``ARC-018``(a).
 A role change in this MVP is ``create-user`` plus ``disable-user``: two
