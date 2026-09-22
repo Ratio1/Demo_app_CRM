@@ -1,0 +1,65 @@
+{#-  partials/stage_control.html — CONTRACTS.md §8.3: `deal_id`, `deal_title`,
+  `stage_form {idempotency_key, version, lateral_targets [{value,label}],
+  terminal, current_stage}`. R22: a real form with a <select> of allowed
+  LATERAL targets + a "Move" button; Won and Lost are separate explicit
+  actions behind a <details> confirmation, no JS, no drag. Renders
+  IDENTICALLY on `deals/detail.html` and each contact-workspace deal card
+  (`contacts/detail.html`'s `#deals` region) — never on a pipeline card
+  (read-only, R22, UX_FLOWS.md §4.7 S8).
+
+  This template is `{% with %}`-included, never `{% include ... with
+  context=False %}`'d standalone — every variable above is set by the
+  including block immediately before `{% include "partials/stage_control.
+  html" %}`, exactly as `partials/confirm.html`'s own header documents for
+  itself.
+
+  slice-c.md §2(d): the terminal target is in the PATH, not in a hidden
+  field — `/deals/{id}/won` and `/deals/{id}/lost` carry no `to_stage`
+  (deviation 2 from `UX_FLOWS.md` §4.8's own illustrative markup, F-5,
+  which is superseded here). The lateral form posts `to_stage` to
+  `/deals/{id}/stage`. slice-c.md §2(d) F-4: ONE `idempotency_key` per
+  control render, shared by all three forms — only one of the three can
+  ever be submitted per render (each answers 303 and a full reload), so a
+  second, different action posted with the same key meets `ACC-226`'s 409
+  `duplicate` by design.
+
+  The Won/Lost confirmations reuse `partials/confirm.html` (already built
+  for the contact archive disclosure) rather than a bespoke `<details>` —
+  same component, same non-JS mechanism (UI_SPEC.md §4.20); its default
+  `.btn-warning-outline` summary/button size is used as-is (no
+  `btn-compact` variant exists on the shared partial, a documented,
+  non-regressive simplification — the touch target is larger, not
+  smaller, than UI_SPEC §4.18's dense-card illustration).
+
+  Terminal case: the deal cannot move at all — `<p class="deal-terminal-
+  note">` + the stage badge + CP-35 ("{Won|Lost} deals cannot be moved to
+  another stage."), no control of any kind (UX_FLOWS.md §4.8 "Closed
+  deals"). `stage_form.current_stage` is one of exactly "won"/"lost" here
+  (STAGE_ORDER's two terminal values, slice-c.md §1(b)), and
+  `|capitalize` on either produces CP-35's exact "Won"/"Lost".
+-#}
+{% from "partials/badges.html" import stage_badge %}
+{% if stage_form.terminal %}
+<p class="deal-terminal-note">{{ stage_badge(stage_form.current_stage) }} <span>{{ stage_form.current_stage|capitalize }} deals cannot be moved to another stage.</span></p>
+{% else %}
+<form method="post" action="/deals/{{ deal_id }}/stage" class="stage-move">
+  <div class="field">
+    <label for="stage-{{ deal_id }}">Move "{{ deal_title }}" to</label>
+    <select id="stage-{{ deal_id }}" name="to_stage">
+      {% for _value, _label in stage_form.lateral_targets %}
+      <option value="{{ _value }}">{{ _label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="idempotency_key" value="{{ stage_form.idempotency_key }}">
+  <input type="hidden" name="version" value="{{ stage_form.version }}">
+  <button type="submit" class="btn btn-secondary btn-compact">Move</button>
+</form>
+{% with summary_text="Mark as won…", body_text="Won deals cannot be moved to another stage afterwards.", button_text="Mark as won", action_url="/deals/" ~ deal_id ~ "/won", hidden={"idempotency_key": stage_form.idempotency_key, "version": stage_form.version} %}
+{% include "partials/confirm.html" %}
+{% endwith %}
+{% with summary_text="Mark as lost…", body_text="Lost deals cannot be moved to another stage afterwards.", button_text="Mark as lost", action_url="/deals/" ~ deal_id ~ "/lost", hidden={"idempotency_key": stage_form.idempotency_key, "version": stage_form.version} %}
+{% include "partials/confirm.html" %}
+{% endwith %}
+{% endif %}
