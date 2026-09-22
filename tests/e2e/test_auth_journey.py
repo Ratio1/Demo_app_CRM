@@ -156,8 +156,14 @@ def test_prd001_login_forced_reset_change_password_logout_back_button(
   expect(page.get_by_role("heading", name="Change password")).to_be_visible()
 
   new_password = "a fictional new e2e passphrase 2"
+  # `exact=True` on "New password": Playwright's `get_by_label` does a
+  # case-insensitive *substring* match by default, and "Repeat new
+  # password" contains "new password" — without `exact`, this locator
+  # resolves to both fields and Playwright refuses to `fill` an ambiguous
+  # one (strict mode). A test defect, not a backend one: the two labels
+  # are legitimately distinct and accessible on the rendered page.
   page.get_by_label("Current password").fill(password)
-  page.get_by_label("New password").fill(new_password)
+  page.get_by_label("New password", exact=True).fill(new_password)
   page.get_by_label("Repeat new password").fill(new_password)
   page.get_by_role("button", name="Change password").click()
 
@@ -172,6 +178,20 @@ def test_prd001_login_forced_reset_change_password_logout_back_button(
   page.goto(f"{live_server.base_url}/account/password")
   expect(page.get_by_text("Set a new password to continue")).not_to_be_visible()
 
+  # `partials/nav.html` renders the account block twice — an always-open
+  # ``<nav>`` at >=1024px, and a closed native ``<details>``/``<summary>``
+  # "Menu" toggle below that width (its own docstring's documented
+  # breakpoint) — with CSS hiding whichever does not apply. A closed
+  # ``<details>``'s children are not in the accessibility tree, so below
+  # the breakpoint "Sign out" must be revealed by opening the menu first.
+  # The ``<details>`` element itself is exposed as an accessible *group*
+  # named after its ``<summary>`` text, not as a "button" role (confirmed
+  # live via ``page.aria_snapshot()``: ``group: Menu``, nested one level
+  # under ``navigation "Primary"``) — while closed its bounding box is
+  # exactly the summary's, so a plain structural locator on the summary
+  # itself is the direct, unambiguous way to open it.
+  if viewport["width"] < 1024:
+    page.locator(".app-menu > details > summary").click()
   page.get_by_role("button", name="Sign out").click()
   expect(page).to_have_url(f"{live_server.base_url}/login?notice=signed_out")
 
