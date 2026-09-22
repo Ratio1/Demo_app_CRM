@@ -1,0 +1,131 @@
+{#-  errors/409.html — CONTRACTS.md §8.4: `context: "stale" |
+  "archived_parent" | "duplicate" | "stage_terminal"` (R19), plus per-
+  context: `stale {object_label, updated_at, fields [{label, submitted,
+  current, differs}], keep_form {action_url, values, version,
+  idempotency_key}, reload_url}`, `archived_parent {contact_id,
+  contact_name, restore_form | None}`, `duplicate {record_url}`,
+  `stage_terminal {deal_url, stage_label}`. Authenticated shell (follows
+  the session, R56). Only the ACTIVE context's dict is ever referenced
+  below, so the other three keys never need to exist in a given render.
+
+  `correlation_id` is rendered unconditionally, although CONTRACTS.md
+  §8.4's 409 row is the one row in that table that omits it from its own
+  column (every other error template's row lists it explicitly) — R27's
+  blanket "every state panel... shows its correlation id" clearly still
+  applies, and `app/routes/errors.py`'s `conflict()` helper does pass
+  it (`extra={"context": context, "correlation_id": current_correlation_id(),
+  **extra}`), confirming the table's own omission rather than a missing
+  key here.
+
+  `archived_parent` — slice-b.md §2(d) says the "body"/"state" select
+  CP-13 vs CP-23, but the FROZEN `extra` shape in CONTRACTS.md §8.4's own
+  table carries no `body`/`state` key at all. Confirmed as a real
+  documentation gap, not a guess: `app/routes/contacts.py`'s
+  `_blocked_response` builds `archived_parent` with `body`/`state` always
+  present, and its own docstring says so — "The two keys are additions to
+  CONTRACTS.md §8.4's frozen archived_parent row ... recorded for the
+  contract step rather than assumed." This template reads them with
+  `.get(...)` regardless, so a render is defensive either way.
+
+  §4.23's stale-diff marker glyph: UX_FLOWS.md §3.9 says "a ★ marker",
+  UI_SPEC.md §4.23's own literal snippet uses "✎" — a cross-document
+  conflict. This template follows UI_SPEC's executable snippet (✎,
+  `aria-hidden`, plus the visible word "changed" — never the glyph
+  alone), flagged for the copy authority to reconcile.
+
+  Zero-field stale (archive/restore, slice-b.md §1(b) note 5: "no fields;
+  version only") — UX_FLOWS.md §3.9's suppression clause (CP-12a) is
+  scoped to "a stage change ... or an admin reassignment", which does not
+  list archive/restore, so it is not applied here; the panel renders with
+  no per-field rows and both actions stay available. The exact zero-field
+  copy is UI_SPEC.md's own open ask A-11 (not yet answered) — this
+  template adds no invented sentence beyond the orientation line CP-85's
+  own screen already carries (UX_FLOWS.md §3.9's example prose, which
+  itself has no CP id yet — §10).
+
+  `stale.keep_form.values` is read here as the form's WRITABLE fields
+  only (`name`/`company`/`email`/`phone`/`kind`, or empty for archive/
+  restore, or `{"owner_id": ...}` for reassign) — the same three names
+  this form already emits explicitly (`csrf_token`, `idempotency_key`,
+  `version`) are assumed absent from that map. Confirmed against
+  `app/services/contacts.py`: `_stale_after_race`'s callers pass
+  `submitted=values` (the validated field dict), `submitted={}` (archive/
+  restore) or `submitted={"owner_id": str(new_owner_id)}` (reassign) —
+  never the raw POST body, so this template never emits a repeated field.
+-#}
+{% extends "base.html" %}
+{% block main %}
+<div class="state-panel state-panel-409">
+  {% if context == "stale" %}
+  <h1 tabindex="-1">This record changed while you were editing</h1>
+  <p>Someone else saved changes to "{{ stale.object_label }}" at
+    <time datetime="{{ stale.updated_at.isoformat() }}">{{ stale.updated_at.strftime("%-d %b %Y %H:%M") }} UTC</time>.
+    Your version is on the left, the saved version on the right. Choose which to keep.</p>
+  <div class="stale-diff">
+    <section aria-labelledby="diff-yours-h">
+      <h2 id="diff-yours-h">Your changes</h2>
+      <dl>
+        {% for f in stale.fields %}
+        <div class="diff-row{% if f.differs %} diff-changed{% endif %}">
+          <dt>{{ f.label }}{% if f.differs %} <span class="diff-marker"><span aria-hidden="true">✎</span> changed</span>{% endif %}</dt>
+          <dd>{{ f.submitted if f.submitted else "(empty)" }}</dd>
+        </div>
+        {% endfor %}
+      </dl>
+    </section>
+    <section aria-labelledby="diff-saved-h">
+      <h2 id="diff-saved-h">Saved now</h2>
+      <dl>
+        {% for f in stale.fields %}
+        <div class="diff-row{% if f.differs %} diff-changed{% endif %}">
+          <dt>{{ f.label }}{% if f.differs %} <span class="diff-marker"><span aria-hidden="true">✎</span> changed</span>{% endif %}</dt>
+          <dd>{{ f.current if f.current else "(empty)" }}</dd>
+        </div>
+        {% endfor %}
+      </dl>
+    </section>
+  </div>
+  <form method="post" action="{{ stale.keep_form.action_url }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="idempotency_key" value="{{ stale.keep_form.idempotency_key }}">
+    <input type="hidden" name="version" value="{{ stale.keep_form.version }}">
+    {% for _name, _value in stale.keep_form.values.items() %}
+    <input type="hidden" name="{{ _name }}" value="{{ _value }}">
+    {% endfor %}
+    <button type="submit" class="btn btn-primary">Keep my changes</button>
+    <p class="field-help">Keeping your changes overwrites the saved version.</p>
+  </form>
+  <a href="{{ stale.reload_url }}" class="btn btn-secondary">Discard mine and reload</a>
+  <p class="field-help">Discarding loses what you typed.</p>
+
+  {% elif context == "archived_parent" %}
+  <h1 tabindex="-1">This contact is archived</h1>
+  {% if archived_parent.get("body") == "cp_23" %}
+  <p>That has already been done. The contact is {{ archived_parent.get("state", "archived") }} now.</p>
+  {% else %}
+  <p>This contact is archived. Restore it before adding or changing anything under it. Nothing was saved.</p>
+  {% endif %}
+  {% if archived_parent.restore_form %}
+  <form method="post" action="/contacts/{{ archived_parent.contact_id }}/restore">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="idempotency_key" value="{{ archived_parent.restore_form.idempotency_key }}">
+    <input type="hidden" name="version" value="{{ archived_parent.restore_form.version }}">
+    <button type="submit" class="btn btn-primary">Restore contact</button>
+  </form>
+  {% endif %}
+  <p class="state-panel-action"><a href="/contacts/{{ archived_parent.contact_id }}">Open the contact</a></p>
+
+  {% elif context == "duplicate" %}
+  <h1 tabindex="-1">This form was already submitted</h1>
+  <p>This form was already submitted. Open the record to see what was saved, then start a new change if you still need one.</p>
+  <p class="state-panel-action"><a href="{{ duplicate.record_url }}">Open the record</a></p>
+
+  {% elif context == "stage_terminal" %}
+  <h1 tabindex="-1">This deal is closed</h1>
+  <p>This deal is closed as {{ stage_terminal.stage_label|lower }}. Closed deals cannot be moved to another stage.</p>
+  <p class="state-panel-action"><a href="{{ stage_terminal.deal_url }}">Open the deal</a></p>
+  {% endif %}
+
+  <p class="correlation-id">Reference: {{ correlation_id }}</p>
+</div>
+{% endblock %}
