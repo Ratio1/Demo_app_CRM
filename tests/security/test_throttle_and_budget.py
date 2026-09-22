@@ -106,9 +106,17 @@ def _reset_throttle_and_budget_between_tests(
   autouse fixture defined in this file, applying to every test it
   collects), not as the literal pytest scope keyword. Depending on
   ``crm_test_schema`` (session-scoped) rather than assuming some earlier
-  module already requested it means this module is safe to run in
-  isolation too (``pytest tests/security/test_throttle_and_budget.py``),
-  not only as part of the full suite.
+  module already requested it means this module is meant to also be
+  collectible and runnable on its own
+  (``pytest tests/security/test_throttle_and_budget.py``), not only as
+  part of the full suite — verified: schema/data isolation hold either
+  way. ``test_sec034`` is a separate matter regardless of scope: it drives
+  10 genuinely concurrent Argon2 hashes against a real, timed queue depth,
+  so whether the 10th actually overflows it depends on ambient system
+  load at the moment it runs, not on this fixture or on standalone vs.
+  full-suite invocation — observed passing in both shapes, and also
+  observed to flake once in a standalone module run under load from other
+  back-to-back suite runs on the same machine.
   """
   _clear_throttle_and_budget_state(log_path=tmp_path / "clear-before.log")
   yield
