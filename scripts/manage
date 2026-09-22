@@ -128,13 +128,15 @@ def _checked_origin(value: str) -> str:
 def _read_password(*, from_stdin: bool) -> str:
   """Read the password, from one stdin line or from a hidden prompt.
 
-  The CLI enforces the length bounds only. The blocklist and the
-  context-word rule of app/security/passwords.py govern a password a user
-  chooses for themselves, on POST /account/password; every password set
-  here is a hand-over credential that `create-user` and `reset-password`
-  both mark `must_change_password`, so the account holder replaces it at
-  their first login and the self-service rule applies to that value.
-  Recorded as a deliberate deviation in the session report.
+  This reader enforces the length bounds only. `create-user` and
+  `reset-password` hand over a credential the holder must replace at their
+  first login (`must_change_password`), so the blocklist and context-word
+  rule of app/security/passwords.py governs the value they then choose for
+  themselves on POST /account/password. The two subcommands that create a
+  *permanent*, login-capable credential get no such second chance:
+  `seed-demo` therefore applies the full policy itself, in
+  `_check_demo_password`; `bootstrap`'s first administrator does not, which
+  is a known pre-existing gap and not a property of this reader.
   """
   if from_stdin:
     line = sys.stdin.buffer.readline().decode("utf-8")
@@ -155,6 +157,24 @@ def _read_password(*, from_stdin: bool) -> str:
 def _password_service() -> PasswordService:
   """Build the production Argon2 profile — the same one the server uses."""
   return PasswordService(production_hasher(), blocklist=DEFAULT_BLOCKLIST, clock=SystemClock())
+
+
+def _check_demo_password(passwords: PasswordService, password: str) -> None:
+  """Apply the full password policy to the shared demo-agent credential, or raise UsageError."""
+  # `accounts.ensure_demo_agent` sets `must_change_password=False`, so this
+  # one value is a permanent, login-capable credential for both demo
+  # accounts and nobody is ever asked to replace it: the blocklist and
+  # context-word rule that POST /account/password applies (S1) has to hold
+  # here instead. The context is each whole address plus the display name —
+  # a superset of that route's display-name-plus-local-part
+  # (app/services/auth.py), deliberately, because one password covers both
+  # accounts. Checked before any hashing and before the pool is opened.
+  messages: list[str] = []
+  for email, display_name in demo.DEMO_AGENTS:
+    messages.extend(passwords.validate(password, context=(email, display_name)))
+  if messages:
+    joined = " ".join(dict.fromkeys(messages))
+    raise UsageError(f"the shared demo-agent password is refused by the password policy: {joined}")
 
 
 async def _with_pool(work: Callable[..., Awaitable[None]]) -> None:
@@ -287,6 +307,7 @@ async def _seed_demo(arguments: argparse.Namespace) -> str:
     raise UsageError("--scale accepts 'small' only")
   password = _read_password(from_stdin=arguments.agent_password_stdin)
   passwords = _password_service()
+  _check_demo_password(passwords, password)
   reports: list[demo.SeedReport] = []
 
   async def _work(*, pool: Any, clock: Any) -> None:
