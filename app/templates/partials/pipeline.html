@@ -1,0 +1,55 @@
+{#-  partials/pipeline.html — CONTRACTS.md §8.3: `stages`, `query` + base —
+  the `#pipeline-results` swap target, `tabindex="-1"`.
+
+  UI_SPEC.md §4.18: five `<section aria-labelledby="col-{stage}-heading">`
+  columns >=1024px, five ALWAYS-VISIBLE stacked sections <1024px (no
+  `<details>` collapse — the € total is a required honesty value,
+  `ACC-302`, and must not hide behind an unstated default state), same
+  order and headers at both widths (`STAGE_ORDER`: new, qualified,
+  proposal, won, lost). R22: READ-ONLY — no stage control on any card,
+  every card links to the deal. slice-c.md §2(e): `focus_region` is
+  ALWAYS false here (no pager, no sort on this surface — `stage`/`sort`/
+  `page` are not in `ACCESS_MATRIX.md` §5.2's pipeline allowlist), so no
+  conditional `autofocus` is ever wired and this template references no
+  such key.
+
+  UX_FLOWS.md S8 / UI_SPEC.md §4.18 name slightly different card fields
+  (Title/Amount/Contact/Close date vs. Title/Amount/Owner chip/Contact) —
+  a genuine cross-document conflict, flagged rather than silently picked.
+  This template renders the union: title, amount, contact link (+
+  "Archived contact" badge when `deal.parent_archived`), close date, and
+  an owner chip for admin scope only (matching the deal list's own
+  admin-only Owner column, since an agent's pipeline shows only their own
+  deals and `is_own` would always read "you").
+-#}
+{% from "partials/badges.html" import archived_contact_badge %}
+<section id="pipeline-results" tabindex="-1" class="pipeline">
+  {% for col in stages %}
+  <section class="pipeline-column" aria-labelledby="col-{{ col.key }}-heading">
+    <h2 id="col-{{ col.key }}-heading" class="pipeline-column-heading">
+      <span>{{ col.label }}</span>
+      <span class="pipeline-column-meta">{{ col.count }} · {{ col.amount|eur }}</span>
+    </h2>
+    {% if col.deals %}
+    <ul class="pipeline-cards">
+      {% for deal in col.deals %}
+      <li>
+        <article class="pipeline-card">
+          <p class="pipeline-card-title"><a href="{{ deal.url }}">{{ deal.title }}</a></p>
+          <p class="pipeline-card-amount">{{ deal.amount|eur }}</p>
+          <p class="pipeline-card-contact">
+            <a href="{{ deal.contact_url }}">{{ deal.contact_name }}</a>{% if deal.parent_archived %} {{ archived_contact_badge() }}{% endif %}
+            {% if principal.is_admin %}<span class="chip chip-owner">{{ deal.owner_name }}</span>{% endif %}
+          </p>
+          {% if deal.close_date %}<p class="pipeline-card-date">Close <time datetime="{{ deal.close_date.isoformat() }}">{{ deal.close_date|day }}</time></p>{% endif %}
+        </article>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="pipeline-empty">None in this stage.</p>
+    {% endif %}
+  </section>
+  {% endfor %}
+</section>
+{% include "partials/announce.html" %}

@@ -1,0 +1,42 @@
+{#-  deals/pipeline.html — CONTRACTS.md §8.2: `query {status}`,
+  `stages [{key, label, count, amount, deals [deal_card]}]` — read-only
+  (R22): columns on desktop, stacked lists on mobile, each card linking
+  to the deal; no stage control on a pipeline card.
+
+  UX_FLOWS.md S8: filter is `status` only (active/archived/all), enhanced
+  into `#pipeline-results`; "the page repeats CP-37" (Archived contacts
+  and their deals are excluded) — rendered only under the DEFAULT
+  `status=active` filter, since it would misstate the page under
+  `archived`/`all`, which the dashboard (CP-37's other user, spec §4.19)
+  never offers a filter for at all.
+-#}
+{% extends "base.html" %}
+{% block main %}
+<header class="page-header">
+  <h1>Pipeline</h1>
+  <p class="scope-label">{{ scope_label }}</p>
+</header>
+{% include "partials/notice.html" %}
+
+<section aria-labelledby="pipeline-filter-h">
+  <h2 id="pipeline-filter-h" class="sr-only">Filter pipeline</h2>
+  <span class="region-status htmx-indicator" aria-hidden="true">Loading…</span>
+  <form id="pipeline-filters" method="get" action="/deals/pipeline"
+        hx-get="/deals/pipeline" hx-target="#pipeline-results" hx-swap="outerHTML"
+        hx-push-url="true" hx-trigger="submit, change from:#pipeline-status"
+        class="pipeline-filter-form">
+    <div class="field">
+      <label for="pipeline-status">Show</label>
+      <select id="pipeline-status" name="status">
+        <option value="active"{% if query.status == "active" %} selected{% endif %}>Active</option>
+        <option value="archived"{% if query.status == "archived" %} selected{% endif %}>Archived</option>
+        <option value="all"{% if query.status == "all" %} selected{% endif %}>All</option>
+      </select>
+    </div>
+    <button type="submit" class="btn btn-primary">Apply</button>
+  </form>
+  {% if query.status == "active" %}<p class="note">Archived contacts and their deals are excluded.</p>{% endif %}
+</section>
+
+{% include "partials/pipeline.html" %}
+{% endblock %}

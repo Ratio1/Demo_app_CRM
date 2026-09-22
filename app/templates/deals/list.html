@@ -1,0 +1,90 @@
+{#-  deals/list.html — CONTRACTS.md §8.2: `query {q, stage, status, sort,
+  dir, page}`, `results` (§8.3), `can_create: false`.
+
+  Contract addition (documented, not invented — see partials/
+  deal_results.html's own header comment): this page also supplies
+  `focus_region`, always `false` here — the fragment-only focus-move rule
+  never applies to a full page load (mirrors contacts/list.html's own
+  note).
+
+  UX_FLOWS.md §4.7 S7: structurally identical to S4 (contacts list) — same
+  table<->card transform at 640px, same <1024px filter disclosure, same
+  Pin U-2 pagination/focus/announcement rules. Differences: no "Add deal"
+  primary action here (CP-117 "Go to contacts" instead — a deal needs a
+  parent contact, and a contact picker here would duplicate the
+  ownership-validated parent flow for no gain); `can_create` is frozen
+  `false`. Sort allowlist (ACCESS_MATRIX.md §5.2): title, amount,
+  close_date, stage, created_at, default `created_at desc`.
+-#}
+{% extends "base.html" %}
+{% block main %}
+<header class="page-header">
+  <h1>Deals</h1>
+  <p class="scope-label">{{ scope_label }}</p>
+</header>
+{% include "partials/notice.html" %}
+<div class="page-actions">
+  <a href="/contacts" class="btn btn-secondary">Go to contacts</a>
+</div>
+
+{% set _applied = (1 if query.q else 0) + (1 if query.stage else 0) + (1 if query.status != "active" else 0) %}
+<section aria-labelledby="deals-filter-h">
+  <h2 id="deals-filter-h" class="sr-only">Filter deals</h2>
+  <span class="region-status htmx-indicator" aria-hidden="true">Loading…</span>
+  <details class="filter-disclosure">
+    <summary>
+      <svg class="icon" aria-hidden="true"><use href="/static/img/icons.svg#icon-filter"></use></svg>
+      {% if _applied %}Search and filters — {{ _applied }} applied{% else %}Search and filters{% endif %}
+    </summary>
+    <form id="deal-filters" method="get" action="/deals"
+          hx-get="/deals" hx-target="#deal-results" hx-swap="outerHTML"
+          hx-push-url="true"
+          hx-trigger="submit, change from:#filter-stage, change from:#filter-status">
+      <div class="field">
+        <label for="filter-q">Search</label>
+        <input id="filter-q" type="search" name="q" maxlength="160" value="{{ query.q or '' }}">
+      </div>
+      <div class="field">
+        <label for="filter-stage">Stage</label>
+        <select id="filter-stage" name="stage">
+          <option value=""{% if not query.stage %} selected{% endif %}>Any</option>
+          <option value="new"{% if query.stage == "new" %} selected{% endif %}>New</option>
+          <option value="qualified"{% if query.stage == "qualified" %} selected{% endif %}>Qualified</option>
+          <option value="proposal"{% if query.stage == "proposal" %} selected{% endif %}>Proposal</option>
+          <option value="won"{% if query.stage == "won" %} selected{% endif %}>Won</option>
+          <option value="lost"{% if query.stage == "lost" %} selected{% endif %}>Lost</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="filter-status">Show</label>
+        <select id="filter-status" name="status">
+          <option value="active"{% if query.status == "active" %} selected{% endif %}>Active</option>
+          <option value="archived"{% if query.status == "archived" %} selected{% endif %}>Archived</option>
+          <option value="all"{% if query.status == "all" %} selected{% endif %}>All</option>
+        </select>
+      </div>
+      <div class="field sort-mobile-only">
+        <label for="sort-key">Sort by</label>
+        <select id="sort-key" name="sort">
+          <option value="title"{% if query.sort == "title" %} selected{% endif %}>Title</option>
+          <option value="amount"{% if query.sort == "amount" %} selected{% endif %}>Amount</option>
+          <option value="close_date"{% if query.sort == "close_date" %} selected{% endif %}>Close date</option>
+          <option value="stage"{% if query.sort == "stage" %} selected{% endif %}>Stage</option>
+          <option value="created_at"{% if query.sort == "created_at" %} selected{% endif %}>Created</option>
+        </select>
+      </div>
+      <div class="field sort-mobile-only">
+        <label for="sort-dir">Direction</label>
+        <select id="sort-dir" name="dir">
+          <option value="asc"{% if query.dir == "asc" %} selected{% endif %}>Ascending</option>
+          <option value="desc"{% if query.dir == "desc" %} selected{% endif %}>Descending</option>
+        </select>
+      </div>
+      <button type="submit" id="filter-apply" class="btn btn-primary">Apply</button>
+      <a href="{{ results.clear_url }}" class="btn btn-secondary">Clear filters</a>
+    </form>
+  </details>
+</section>
+
+{% include "partials/deal_results.html" %}
+{% endblock %}

@@ -1,0 +1,90 @@
+{#-  partials/deal_results.html — CONTRACTS.md §8.3: `results` + base —
+  the `#deal-results` swap target, `tabindex="-1"`.
+
+  Mirrors `partials/contact_results.html`'s mechanism (R40 focus-on-swap,
+  table<->card at 640px, R23/R24 pagination) — see that file's own header
+  comment for the shared rationale, not repeated here. Contract addition,
+  documented not invented, same as that file's own note: `deals/list.html`
+  also supplies `focus_region` on every render (always `false` on the full
+  page; computed on the fragment per slice-c.md §2(e)).
+
+  UX_FLOWS.md §4.7 S7: Title (link) · Contact (link, "Archived contact"
+  badge when `row.parent_archived`) · Amount (right-aligned) · Stage
+  (badge) · Close date · Owner (admin only). Sort allowlist
+  (ACCESS_MATRIX.md §5.2): title, amount, close_date, stage, created_at —
+  "Contact"/"Owner" are not sortable, same convention as the contacts
+  list's Type/Owner columns.
+
+  "The amount stays on the card's first line with the title" below 640px
+  (UX_FLOWS.md §4.7 S7): the Title and Amount `<td>`s share the FIRST grid
+  row via named `grid-area`s (`.cell-title`/`.cell-amount`, app.css) rather
+  than each cell taking its own row the way the generic `.responsive-table`
+  pattern does — no content is duplicated, so a screen reader still hears
+  Title once and Amount once, each with its own `<th>` and sort link.
+-#}
+{%- macro _sort_href(key) -%}
+{%- set _dir = "desc" if (query.sort == key and query.dir == "asc") else "asc" -%}
+{%- set _pairs = [] -%}
+{%- if query.q %}{% set _x = _pairs.append("q=" ~ query.q|urlencode) %}{% endif -%}
+{%- if query.stage %}{% set _x = _pairs.append("stage=" ~ query.stage) %}{% endif -%}
+{%- if query.status and query.status != "active" %}{% set _x = _pairs.append("status=" ~ query.status) %}{% endif -%}
+{%- set _x = _pairs.append("sort=" ~ key) -%}
+{%- set _x = _pairs.append("dir=" ~ _dir) -%}
+/deals?{{ _pairs|join("&") }}
+{%- endmacro -%}
+{%- macro _sort_th(key, label, extra_class) -%}
+{%- set _active = (query.sort == key) -%}
+<th role="columnheader" scope="col" class="{{ extra_class }}"{% if _active %} aria-sort="{{ 'ascending' if query.dir == 'asc' else 'descending' }}"{% endif %}>
+  <a href="{{ _sort_href(key) }}">{{ label }}{% if _active %} <span aria-hidden="true">{{ "▲" if query.dir == "asc" else "▼" }}</span>{% endif %}</a>
+</th>
+{%- endmacro -%}
+{% from "partials/badges.html" import stage_badge, archived_contact_badge %}
+{% from "partials/pagination.html" import pagination %}
+<section id="deal-results" tabindex="-1"{% if focus_region %} autofocus{% endif %}>
+  {% if results.result_state == "empty" %}
+  <div class="state-panel state-panel-region">
+    <img src="/static/img/empty-deals.svg" alt="" width="200" height="160">
+    <h2 tabindex="-1">No deals yet</h2>
+    <p>No deals yet. Open a contact and add the first deal.</p>
+    <p class="state-panel-action"><a href="/contacts" class="btn btn-primary">Go to contacts</a></p>
+  </div>
+  {% else %}
+    {% if results.result_state == "no_results" %}
+    <div class="state-panel state-panel-region">
+      <img src="/static/img/no-results.svg" alt="" width="200" height="160">
+      <h2 tabindex="-1">No deals match these filters</h2>
+      <p>No deals match these filters.</p>
+      <p class="state-panel-action"><a href="{{ results.clear_url }}" class="btn btn-secondary">Clear filters</a></p>
+    </div>
+    {% else %}
+    <table class="responsive-table deals-table" role="table" aria-label="Deals">
+      <thead role="rowgroup">
+        <tr role="row">
+          {{ _sort_th("title", "Title", "cell-title") }}
+          <th role="columnheader" scope="col" class="cell-contact">Contact</th>
+          {{ _sort_th("amount", "Amount", "cell-amount amount-col") }}
+          {{ _sort_th("stage", "Stage", "cell-stage") }}
+          {{ _sort_th("close_date", "Close date", "cell-close") }}
+          {% if principal.is_admin %}<th role="columnheader" scope="col" class="cell-owner">Owner</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody role="rowgroup">
+        {% for row in results.items %}
+        <tr role="row">
+          <td role="cell" class="cell-title"><span class="cell-label">Title</span><a href="{{ row.url }}">{{ row.title }}</a></td>
+          <td role="cell" class="cell-contact"><span class="cell-label">Contact</span><a href="{{ row.contact_url }}">{{ row.contact_name }}</a>{% if row.parent_archived %} {{ archived_contact_badge() }}{% endif %}</td>
+          <td role="cell" class="cell-amount amount-col"><span class="cell-label">Amount</span>{{ row.amount|eur }}</td>
+          <td role="cell" class="cell-stage"><span class="cell-label">Stage</span>{{ stage_badge(row.stage) }}</td>
+          <td role="cell" class="cell-close"><span class="cell-label">Close date</span>{% if row.close_date %}<time datetime="{{ row.close_date.isoformat() }}">{{ row.close_date|day }}</time>{% endif %}</td>
+          {% if principal.is_admin %}
+          <td role="cell" class="cell-owner"><span class="cell-label">Owner</span><span class="chip chip-owner">{{ row.owner_name }}</span></td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    {{ pagination(results, "#deal-results", "page", "Pagination", "Previous", "Next") }}
+  {% endif %}
+</section>
+{% include "partials/announce.html" %}
