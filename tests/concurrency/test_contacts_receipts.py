@@ -1,10 +1,4 @@
-"""Slice B concurrency and idempotency — SQL-010, SQL-011, SQL-023, SQL-028.
-
-Authority: ``ACCESS_MATRIX.md`` §7 (SQL-010, SQL-011, SQL-023, SQL-028);
-``DATA_CONTRACT.md`` §10 (mechanisms), §6.2-§6.4 (the canonical mutation
-shape, stale edit, duplicate submission); ``contracts/slice-b.md`` §1(g)
-probes 3-8 (the SQL-side mechanism's own executed evidence) and PIN 1
-(receipt protocol), PIN 3 (stale edit), PIN 9 (reassign).
+"""Contact-surface concurrency and idempotency: receipt replay, stale edit, duplicate payload.
 
 Drives the real HTTP surface over ``live_server`` — true concurrency
 between independent connections on one ``httpx.AsyncClient``, the same
@@ -15,9 +9,9 @@ its CLI pairs — and verifies outcomes with a direct ``db_connection``
 
 Known gap, recorded rather than hidden: ``ProvisionedUser`` (root
 ``conftest.py``) carries no user id — ``scripts/manage create-user`` never
-echoes one back to the caller, by design (§6.8's own boundary). The
-reassign tests below therefore submit a placeholder ``owner_id`` and
-record both possible outcomes; once ``contacts/detail.html`` ships its
+echoes one back to the caller, by design. The reassign tests below
+therefore submit a placeholder ``owner_id`` and record both possible
+outcomes; once ``contacts/detail.html`` ships its
 ``reassign.assignable_users [{id, display_name}]`` list, the right fix is
 to parse the real id off that rendered option rather than guessing a
 value here.
@@ -88,16 +82,16 @@ async def _receipt_and_contact_counts(
   return contacts, receipts, audits
 
 
-async def test_sql011_sequential_duplicate_submission_leaves_exactly_one_of_each_row(
+async def test_sequential_duplicate_submission_leaves_exactly_one_of_each_row(
   agent_a: LoggedInPrincipal, db_connection: Any
 ) -> None:
   """Same key, same payload, submitted twice in sequence: one contact, one receipt, one audit row.
 
-  PIN 1 / SQL-011: the second POST finds the stored receipt (same
-  ``payload_sha256``) and replays it — a ``303`` to the same ``Location``,
-  doing nothing — rather than inserting a second time.
+  The second POST finds the stored receipt (same ``payload_sha256``) and
+  replays it — a ``303`` to the same ``Location``, doing nothing — rather
+  than inserting a second time.
   """
-  email = f"sql011-seq+{uuid.uuid4().hex[:8]}@example.test"
+  email = f"receipt-seq+{uuid.uuid4().hex[:8]}@example.test"
   before = await _receipt_and_contact_counts(db_connection, owner_email=agent_a.user.email)
 
   new_form = await agent_a.client.get("/contacts/new")
@@ -115,7 +109,7 @@ async def test_sql011_sequential_duplicate_submission_leaves_exactly_one_of_each
   assert first.status_code == 303
   assert second.status_code == 303
   assert first.headers.get("location") == second.headers.get("location"), (
-    "the replay must be a 303 to the SAME location as the original (PIN 1)"
+    "the replay must be a 303 to the SAME location as the original"
   )
 
   after = await _receipt_and_contact_counts(db_connection, owner_email=agent_a.user.email)
@@ -124,19 +118,17 @@ async def test_sql011_sequential_duplicate_submission_leaves_exactly_one_of_each
   assert after[2] - before[2] == 1, "exactly one audit_events row"
 
 
-async def test_sql011_concurrent_duplicate_submission_replays_leaving_one_of_each_row(
+async def test_concurrent_duplicate_submission_replays_leaving_one_of_each_row(
   agent_a: LoggedInPrincipal, db_connection: Any
 ) -> None:
   """Two truly concurrent POSTs with the same key and payload still leave exactly one of each row.
 
   The loser resolves either on a ``23505`` (the receipt's unique
-  constraint — re-read and replay, PIN 1) or a ``40001`` SSI abort whose
-  retry then finds the receipt (``slice-b.md`` §1(g) probe 5: with the
-  receipt SELECT in front, all three of that probe's own trials came back
-  ``40001``). Either mechanism, the database-level count is identical —
-  this test does not care which one fired.
+  constraint — re-read and replay) or a ``40001`` serialization abort whose
+  retry then finds the receipt. Either mechanism, the database-level count
+  is identical — this test does not care which one fired.
   """
-  email = f"sql011-conc+{uuid.uuid4().hex[:8]}@example.test"
+  email = f"receipt-conc+{uuid.uuid4().hex[:8]}@example.test"
   before = await _receipt_and_contact_counts(db_connection, owner_email=agent_a.user.email)
 
   new_form = await agent_a.client.get("/contacts/new")
@@ -162,19 +154,18 @@ async def test_sql011_concurrent_duplicate_submission_replays_leaving_one_of_eac
   assert after[1] - before[1] == 1, "exactly one mutation_receipts row survives the race"
 
 
-async def test_sql028_same_key_different_payload_is_409_duplicate(
+async def test_same_key_different_payload_is_409_duplicate(
   agent_a: LoggedInPrincipal, db_connection: Any
 ) -> None:
   """Reusing an idempotency key with a DIFFERENT payload is `409 duplicate`, never a second write.
 
-  `SQL-028` — the scope `SQL-011` explicitly excludes (`ACCESS_MATRIX.md`
-  §7): a `23505` on the receipt's unique key still fires (same
+  A `23505` on the receipt's unique key still fires (same
   ``(user_id, operation, idempotency_key)``), but the stored
   ``payload_sha256`` now disagrees with the second submission's digest, so
   the replay path answers ``duplicate`` instead of re-issuing the original
   ``Applied`` outcome — no second business row is ever created.
   """
-  email = f"sql028+{uuid.uuid4().hex[:8]}@example.test"
+  email = f"conflict+{uuid.uuid4().hex[:8]}@example.test"
   new_form = await agent_a.client.get("/contacts/new")
   csrf_token = extract_csrf_token(new_form.text)
   idempotency_key = extract_hidden_field(new_form.text, "idempotency_key")
@@ -221,18 +212,18 @@ async def test_sql028_same_key_different_payload_is_409_duplicate(
   assert contact_count == 1, "no second business row was created for the conflicting payload"
 
 
-async def test_sql010_stale_edit_preserves_submitted_values_and_reissues_version_and_key(
+async def test_stale_edit_preserves_submitted_values_and_reissues_version_and_key(
   agent_a: LoggedInPrincipal,
 ) -> None:
-  """The 409 recovery view re-issues the CURRENT version and a FRESH idempotency key (PIN 3).
+  """The 409 recovery view re-issues the CURRENT version and a FRESH idempotency key.
 
-  Complements ``tests/access/test_contacts.py::test_acc017`` (which checks
-  only that the loser's own submitted value survives): this additionally
-  asserts the re-issued ``version`` differs from the stale one that lost
-  the race, and the re-issued ``idempotency_key`` differs from the one the
-  losing request itself carried — resubmitting *that* key would meet the
-  now-stored receipt and answer ``409 duplicate`` instead, which explains
-  nothing to the user (``contracts/slice-b.md`` §2(d)).
+  Complements ``tests/access/test_contacts.py``'s stale-edit test (which
+  checks only that the loser's own submitted value survives): this
+  additionally asserts the re-issued ``version`` differs from the stale one
+  that lost the race, and the re-issued ``idempotency_key`` differs from
+  the one the losing request itself carried — resubmitting *that* key
+  would meet the now-stored receipt and answer ``409 duplicate`` instead,
+  which explains nothing to the user.
   """
   contact = await create_contact(agent_a, **{**_CREATE_FIELDS, "email": "stale-edit@example.test"})
   edit_form = await agent_a.client.get(f"/contacts/{contact.id}/edit")
@@ -273,16 +264,15 @@ async def test_sql010_stale_edit_preserves_submitted_values_and_reissues_version
   assert reissued_key != original_idempotency_key, "the recovery form must mint a FRESH key"
 
 
-async def test_sql023_reassignment_atomicity_no_reader_observes_a_torn_state(
+async def test_reassignment_atomicity_no_reader_observes_a_torn_state(
   agent_a: LoggedInPrincipal, agent_b: LoggedInPrincipal, admin: LoggedInPrincipal
 ) -> None:
   """An admin reassigns while an agent repeatedly reads; no response is a `500` or a torn state.
 
-  Slice B ships no child object yet (deals arrive in Slice C), so the
-  "children follow by join" half of `SQL-023` is not exercisable here —
-  this drives the half Slice B *can* prove: the contact's own row changes
-  through exactly one atomic `UPDATE`, and a reader racing it never
-  observes a broken intermediate state.
+  There is no child object to join through here (deals belong to a
+  different surface), so this drives the half this module *can* prove: the
+  contact's own row changes through exactly one atomic `UPDATE`, and a
+  reader racing it never observes a broken intermediate state.
   """
   contact = await create_contact(
     agent_a, **{**_CREATE_FIELDS, "email": "reassign-race@example.test"}

@@ -1,4 +1,4 @@
-"""Racing writes on `POST /activities` — plan §4 task 6.
+"""Racing writes on `POST /activities`.
 
 Two duplicate-submission shapes: sequential (the wire-level `303`/`303`
 replay pair `tests/access/test_activities.py` already proves at the status

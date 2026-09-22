@@ -1,20 +1,17 @@
-"""Audit atomicity — SQL-016.
+"""Audit atomicity: a failure between the audit INSERT and COMMIT leaves no row in either table.
 
-Authority: ``ACCESS_MATRIX.md`` §7 (SQL-016); ``DATA_CONTRACT.md`` §10
-(SQL-016's mechanism: "Force a failure after the audit INSERT and before
-COMMIT; assert zero rows for that ``correlation_id`` in both the business
-table and ``audit_events``"); ``slice-a.md`` §10(b) (``insert_event``: "the
-**caller's** transaction" — never its own).
+Force a failure after the audit INSERT and before COMMIT; assert zero rows
+for that ``correlation_id`` in both the business table and
+``audit_events``. ``insert_event`` writes into the **caller's**
+transaction — never its own.
 
 In-process, not through ``live_server``: forcing a failure *inside* a
 specific transaction requires code in this same process, which a separate
 uvicorn subprocess cannot give us (``live_server`` runs a different
 process's Python entirely). This module therefore builds its own pool
-(``app.db.pool``, already shipped) and drives ``app.db.retry.run_serializable``
-(already shipped) directly around ``promote_session`` and ``insert_event``
-(``app.db.repositories.*``, not yet shipped) — the same generic mechanism
-every Slice A mutation uses, rather than guessing at the not-yet-contracted
-internal signature of ``app.services.auth.login``.
+(``app.db.pool``) and drives ``app.db.retry.run_serializable`` directly
+around ``promote_session`` and ``insert_event`` (``app.db.repositories.*``)
+— the same generic mechanism every mutation uses.
 """
 
 from __future__ import annotations
@@ -36,32 +33,20 @@ class _ForcedRollback(RuntimeError):
   """
 
 
-async def test_sql016_a_forced_failure_after_the_audit_insert_leaves_no_row_in_either_table(
+async def test_a_forced_failure_after_the_audit_insert_leaves_no_row_in_either_table(
   clock: Any, tmp_path: object
 ) -> None:
   """Both the session row and the audit row vanish together when the transaction aborts.
 
-  Does not *name* ``crm_test_schema`` as a parameter, but no longer needs
-  to: as of ruling **R57** that fixture is session-scoped **autouse**, so
-  it already ran — migrating ``crm_test`` — before the first test in the
-  session, this one included, regardless of whether any test requests it
-  by name. (History, since the fragility this paragraph used to describe
-  is resolved by that same ruling, not merely avoided: before R57,
-  ``crm_test_schema`` was lazy, and this module deliberately avoided
-  requesting it, because doing so made *this* file the session's first
-  requester — running the shared reset *before*
-  ``test_last_admin_race.py``'s own independent, module-scoped reset,
-  which then wiped and re-bootstrapped the schema *again* on top of it, so
-  that the later, still-cached ``bootstrap_admin`` fixture tried ``manage
-  bootstrap`` a second time against an already-provisioned database and
-  failed outright — taking down every ``live_server``-dependent test in
-  the suite. R57 removes the conflict at its root by moving
-  ``test_last_admin_race.py`` to run **absolute last** in collection order
-  — after ``tests/e2e``, after every fixture this file or any other module
-  could still need — so its independent reset can no longer land in
-  between two other fixtures' requests for the shared one. See
+  Does not *name* ``crm_test_schema`` as a parameter, but does not need
+  to: that fixture is session-scoped **autouse**, so it already ran —
+  migrating ``crm_test`` — before the first test in the session, this one
+  included, regardless of whether any test requests it by name. See
   ``conftest.py``'s ``crm_test_schema``/``pytest_collection_modifyitems``
-  docstrings for the mechanism.)
+  docstrings for why collection order matters here: a module-scoped reset
+  running out of order could re-bootstrap the schema on top of already-live
+  fixtures and take down every dependent test in the suite, which is why
+  the schema-wiping modules are ordered to run last.
   """
   from conftest import insert_test_user_row
 
@@ -85,8 +70,8 @@ async def test_sql016_a_forced_failure_after_the_audit_insert_leaves_no_row_in_e
 
   insert_test_user_row(
     user_id=user_id,
-    email=f"sql016+{uuid.uuid4().hex[:8]}@example.test",
-    display_name="SQL-016 Test",
+    email=f"audit-atomicity+{uuid.uuid4().hex[:8]}@example.test",
+    display_name="Audit Atomicity Test User",
     role="agent",
     password_hash="$argon2id$v=19$m=19456,t=2,p=1$" + "a" * 32,
     must_change_password=False,
@@ -125,7 +110,7 @@ async def test_sql016_a_forced_failure_after_the_audit_insert_leaves_no_row_in_e
       raise _ForcedRollback("deliberate failure after the audit INSERT, before COMMIT")
 
     with pytest.raises(_ForcedRollback):
-      await run_serializable(pool, _mutate, op="test-sql-016")
+      await run_serializable(pool, _mutate, op="audit-atomicity-forced-failure")
 
     # A fresh connection/transaction, well after the aborted one, reads
     # what actually persisted.
@@ -147,7 +132,7 @@ async def test_sql016_a_forced_failure_after_the_audit_insert_leaves_no_row_in_e
     await close_pool(pool)
 
 
-async def test_sql016_control_the_same_mutation_without_a_forced_failure_commits_both(
+async def test_control_the_same_mutation_without_a_forced_failure_commits_both(
   clock: Any, tmp_path: object
 ) -> None:
   """Negative control: without a forced failure, both rows commit (proves the harness works).
@@ -177,8 +162,8 @@ async def test_sql016_control_the_same_mutation_without_a_forced_failure_commits
 
   insert_test_user_row(
     user_id=user_id,
-    email=f"sql016-control+{uuid.uuid4().hex[:8]}@example.test",
-    display_name="SQL-016 Control",
+    email=f"audit-atomicity-control+{uuid.uuid4().hex[:8]}@example.test",
+    display_name="Audit Atomicity Control User",
     role="agent",
     password_hash="$argon2id$v=19$m=19456,t=2,p=1$" + "a" * 32,
     must_change_password=False,
@@ -215,7 +200,7 @@ async def test_sql016_control_the_same_mutation_without_a_forced_failure_commits
         correlation_id=correlation_id,
       )
 
-    await run_serializable(pool, _mutate, op="test-sql-016-control")
+    await run_serializable(pool, _mutate, op="audit-atomicity-control")
 
     async with pool.connection() as verify_conn:
       session_row = await read_live_session(

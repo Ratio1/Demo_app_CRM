@@ -1,4 +1,4 @@
-"""``scripts/manage seed-demo`` / ``reset-demo`` — plan §4 task 5's CLI, tested here.
+"""``scripts/manage seed-demo`` / ``reset-demo`` — the demo-data CLI.
 
 Deliberately **not** ``pytest.mark.asyncio``: this module's owner-role
 counts are read through their own subprocess (mirroring
@@ -39,8 +39,8 @@ from conftest import (
 from app.security.passwords import CP_73_BLOCKLISTED, MIN_PASSWORD_LENGTH
 
 #: Every table `reset-demo` touches, plus the four it must leave alone
-#: (operator decision 7; `app/db/repositories/maintenance.py`'s
-#: `DEMO_DELETE_ORDER` and its own "NOT in this tuple" contract).
+#: (`app/db/repositories/maintenance.py`'s `DEMO_DELETE_ORDER` and its own
+#: "NOT in this tuple" contract).
 _DELETED_TABLES: Final[tuple[str, ...]] = (
   "activities",
   "deals",
@@ -83,12 +83,11 @@ _COUNT_LINE: Final = re.compile(r"^(\w+)=(\d+)$", re.MULTILINE)
 #: A fictional demo-agent password, well inside `MIN_PASSWORD_LENGTH` (15)
 #: and `MAX_PASSWORD_LENGTH` (128), and clear of the blocklist and of both
 #: demo agents' context words (`scripts/manage`'s `_check_demo_password`) —
-#: never logged, never printed, read only from a mode-0600 stdin file
-#: (`AGENTS.md`).
+#: never logged, never printed, read only from a mode-0600 stdin file.
 _DEMO_AGENT_PASSWORD: Final = "a fictional shared passphrase of nine words"
 
 #: Long enough for the length bound, but built from blocklisted words
-#: ("demo", "agent") — the F1 regression case below.
+#: ("demo", "agent") — the regression case below.
 _BLOCKLISTED_AGENT_PASSWORD: Final = "a fictional demo agent passphrase, nine words long"
 
 
@@ -142,7 +141,7 @@ def test_seed_demo_twice_is_idempotent_and_reset_demo_keeps_accounts_and_audit(
   tmp_path: Path, crm_test_schema: None
 ) -> None:
   """seed-demo (small) twice writes 20/20/100 once, then nothing; reset-demo (--yes) clears it."""
-  del crm_test_schema  # documents the real dependency; already satisfied (session autouse, R57)
+  del crm_test_schema  # documents the real dependency; already satisfied (session-scoped autouse)
   password_file = write_password_fixture(tmp_path, _DEMO_AGENT_PASSWORD)
 
   before_seed = _counts(tmp_path, label="00-before-seed")
@@ -221,7 +220,7 @@ def test_seed_demo_twice_is_idempotent_and_reset_demo_keeps_accounts_and_audit(
 
 
 def test_seed_demo_refuses_a_blocklisted_agent_password(tmp_path: Path) -> None:
-  """A long-enough but blocklisted demo-agent password is refused with exit 2, unechoed (F1)."""
+  """A long-enough but blocklisted demo-agent password is refused with exit 2, unechoed."""
   assert len(_BLOCKLISTED_AGENT_PASSWORD) >= MIN_PASSWORD_LENGTH, (
     "this case must fail the blocklist, not the length bound"
   )

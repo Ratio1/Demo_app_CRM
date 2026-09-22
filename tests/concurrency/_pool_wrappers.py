@@ -1,8 +1,9 @@
-"""Connection/pool wrapper seams for Slice C's two concurrency proofs.
+"""Connection/pool wrapper seams for the deal concurrency proofs.
 
-Authority: ``contracts/slice-c.md`` §1(c)/§2(b) (**PIN C5**, the ambiguous
-commit seam is the *pool*), §2(g) hook 2 (the barrier's exact ordering and
-its "attempt-aware" requirement).
+The ambiguous-commit seam is the *pool*: a wrapper can make a specific
+connection's commit fail, or gate a specific statement until a signal
+fires, without the repository or service code under test knowing anything
+was substituted.
 
 Not a test module itself (no ``test_*`` name, so pytest never collects it);
 imported by ``test_deals_concurrency.py``. Every import here is deferred by
@@ -165,10 +166,9 @@ class _GatedConnectionContext:
 class GatedPool:
   """A ``Pool`` proxy that gates every statement executed on any connection it hands out.
 
-  Used for both of Slice C's harness seams (``contracts/slice-c.md``
-  §2(g) hooks 2 and 4): a barrier race (``SQL-012`` part 1) gates a
-  specific ``UPDATE`` until a signal fires, and an ambiguous-commit
-  wrapper (``SQL-013``) gates nothing on ``execute`` and instead forces
+  Used for both of the deal-concurrency harness seams: a barrier race
+  gates a specific ``UPDATE`` until a signal fires, and an
+  ambiguous-commit wrapper gates nothing on ``execute`` and instead forces
   the commit itself to fail — the caller picks which by what it passes.
 
   Parameters
@@ -229,7 +229,7 @@ def statement_matches(text: str, *needles: str) -> bool:
 
 
 class CommitFailingPool:
-  """A ``Pool`` proxy whose every transaction's commit raises (**PIN C5**, ``SQL-013``).
+  """A ``Pool`` proxy whose every transaction's commit raises, to simulate an ambiguous outcome.
 
   Parameters
   ----------
@@ -277,7 +277,7 @@ class CommitFailingPool:
       A bare :class:`psycopg.OperationalError` (``sqlstate is None``) is
       exactly what ``app/db/retry.py``'s ``_commit_outcome_unknown``
       classifies as an unknown outcome — a client-side failure with no
-      word at all from the server (``contracts/slice-c.md`` §1(g) probe 10).
+      word at all from the server.
       """
 
       def __init__(self, real: Any) -> None:
@@ -301,7 +301,8 @@ class CommitFailingPool:
         else:
           # Force a rollback (the row never lands), then raise the same
           # client-side error — indistinguishable to the caller from the
-          # "landed" case, which is PIN C5's whole point.
+          # "landed" case, which is the whole point of the ambiguous-commit
+          # class of failure.
           rollback_error = psycopg.OperationalError("simulated rollback before COMMIT")
           await self._real.__aexit__(type(rollback_error), rollback_error, None)
         raise psycopg.OperationalError("simulated connection loss around COMMIT")

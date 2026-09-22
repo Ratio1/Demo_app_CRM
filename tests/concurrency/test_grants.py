@@ -1,22 +1,17 @@
-"""``SQL-019`` — the runtime role's live grant set, table by table.
+"""The runtime role's live grant set, table by table.
 
-Authority: ``DATA_CONTRACT.md`` §5.2 (the exact grant set); ``ACCESS_MATRIX.md``
-§7 ``SQL-019`` ("the runtime role's grant set matches `DATA_CONTRACT.md` §5.2
-**exactly**, table by table, read from `information_schema.table_privileges`
-— every expected privilege present and **no unexpected one**, so an
-over-grant fails the test — plus the live negatives: no `UPDATE`/`DELETE`
-on `audit_events`, no write to `app_settings`, no `INSERT` into `users`, no
-`DELETE` on `contacts` or `mutation_receipts`").
+The runtime role's grant set matches the data contract **exactly**, table
+by table, read from `information_schema.table_privileges` — every expected
+privilege present and **no unexpected one**, so an over-grant fails the
+test — plus the live negatives: no `UPDATE`/`DELETE` on `audit_events`, no
+write to `app_settings`, no `INSERT` into `users`, no `DELETE` on
+`contacts` or `mutation_receipts`.
 
 Runs entirely through ``db_connection`` — the suite process's own runtime
 role (``crm_test_app``, per ``tests/README.md``) — so every assertion below
 is the **live** grant this role actually holds today, never a value this
-suite reads or prints from an env file (``AGENTS.md``). ``deals`` shipped
-with the Slice C contract step (``migrations/0004_deals`` step 04) and is
-now asserted against its own row of ``DATA_CONTRACT.md`` §5.2, exactly as
-every other table is; ``activities`` is Slice D and is still absent from
-`crm_test` today, so this module asserts that absence explicitly rather
-than silently skipping it.
+suite reads or prints from an env file. Every table this migration chain
+has created is asserted against its expected grant row.
 """
 
 from __future__ import annotations
@@ -28,14 +23,13 @@ import pytest
 
 pytestmark = pytest.mark.asyncio
 
-#: `DATA_CONTRACT.md` §5.2, restricted to the tables that exist in `crm_test`
-#: as of Slice D. `activities` ships with `migrations/0005_activities`
-#: step 03 and holds **SELECT and INSERT only**: immutability is the absence
-#: of `UPDATE` and `DELETE` on the runtime role, not a missing route. `deals`'s
-#: three privileges and no `DELETE` are `migrations/0004_deals` step 04's
-#: exact grant (`SQL-019`'s extension, `contracts/slice-c.md` §1(f)) — "a
-#: deal is never deleted by the application" is what makes the *absence*
-#: of the privilege load-bearing, not a convention.
+#: The expected grant set, restricted to the tables that exist in
+#: `crm_test`. `activities` holds **SELECT and INSERT only**: immutability
+#: is the absence of `UPDATE` and `DELETE` on the runtime role, not a
+#: missing route. `deals`'s three privileges and no `DELETE` are the exact
+#: grant its migration applies — "a deal is never deleted by the
+#: application" is what makes the *absence* of the privilege load-bearing,
+#: not a convention.
 _EXPECTED_TABLE_GRANTS: dict[str, frozenset[str]] = {
   "users": frozenset({"SELECT", "UPDATE"}),
   "sessions": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),
@@ -50,9 +44,9 @@ _EXPECTED_TABLE_GRANTS: dict[str, frozenset[str]] = {
   "activities": frozenset({"SELECT", "INSERT"}),
 }
 
-#: Tables `DATA_CONTRACT.md` §5.2 describes that this migration chain has not
-#: created. Empty as of Slice D: every table in the contract now exists, so
-#: there is nothing left to assert absent.
+#: Tables the data contract describes that this migration chain has not
+#: created. Empty today: every table in the contract now exists, so there
+#: is nothing left to assert absent.
 _NOT_YET_SHIPPED_TABLES: frozenset[str] = frozenset()
 
 
@@ -69,10 +63,10 @@ async def _live_table_grants(db_connection: Any) -> dict[str, frozenset[str]]:
   return {table: frozenset(privileges) for table, privileges in grants.items()}
 
 
-async def test_sql019_live_grant_set_for_crm_test_app_equals_the_data_contract(
+async def test_live_grant_set_for_crm_test_app_equals_the_data_contract(
   db_connection: Any,
 ) -> None:
-  """The runtime role's live table-level grants equal `DATA_CONTRACT.md` §5.2, table by table.
+  """The runtime role's live table-level grants equal the data contract, table by table.
 
   Both directions: every expected privilege is present, and no unexpected
   one is — an over-grant (e.g. a stray `DELETE` on `contacts`) fails this
@@ -82,8 +76,7 @@ async def test_sql019_live_grant_set_for_crm_test_app_equals_the_data_contract(
 
   for table in _NOT_YET_SHIPPED_TABLES:
     assert table not in live, (
-      f"{table!r} is a Slice C table and must not exist (or be granted) in crm_test yet; "
-      f"got grants {live.get(table)}"
+      f"{table!r} must not exist (or be granted) in crm_test yet; got grants {live.get(table)}"
     )
 
   for table, expected in _EXPECTED_TABLE_GRANTS.items():
@@ -103,8 +96,8 @@ async def test_sql019_live_grant_set_for_crm_test_app_equals_the_data_contract(
   )
 
 
-async def test_sql019_schema_public_usage_only_never_create(db_connection: Any) -> None:
-  """`schema public` grants `USAGE` only — never `CREATE` (`DATA_CONTRACT.md` §5.2's first row)."""
+async def test_schema_public_usage_only_never_create(db_connection: Any) -> None:
+  """`schema public` grants `USAGE` only — never `CREATE`."""
   cursor = await db_connection.execute(
     "SELECT has_schema_privilege(current_user, 'public', 'USAGE'), "
     "has_schema_privilege(current_user, 'public', 'CREATE')"
@@ -133,14 +126,14 @@ async def _assert_refused_with_42501(db_connection: Any, sql: str) -> None:
   )
 
 
-async def test_sql019_no_delete_on_contacts(db_connection: Any) -> None:
-  """The runtime role holds no `DELETE` on `contacts` — archive is the only removal (S7)."""
+async def test_no_delete_on_contacts(db_connection: Any) -> None:
+  """The runtime role holds no `DELETE` on `contacts` — archive is the only removal."""
   await _assert_refused_with_42501(
     db_connection, "DELETE FROM contacts WHERE id = '00000000-0000-4000-8000-000000000000'"
   )
 
 
-async def test_sql019_no_delete_on_mutation_receipts(db_connection: Any) -> None:
+async def test_no_delete_on_mutation_receipts(db_connection: Any) -> None:
   """No `DELETE` on `mutation_receipts` — write-once, cleanup is maintenance-only."""
   await _assert_refused_with_42501(
     db_connection,
@@ -148,7 +141,7 @@ async def test_sql019_no_delete_on_mutation_receipts(db_connection: Any) -> None
   )
 
 
-async def test_sql019_no_update_on_mutation_receipts(db_connection: Any) -> None:
+async def test_no_update_on_mutation_receipts(db_connection: Any) -> None:
   """No `UPDATE` on `mutation_receipts` — a stored outcome is never rewritten."""
   await _assert_refused_with_42501(
     db_connection,
@@ -157,8 +150,8 @@ async def test_sql019_no_update_on_mutation_receipts(db_connection: Any) -> None
   )
 
 
-async def test_sql019_no_update_or_delete_on_audit_events(db_connection: Any) -> None:
-  """`INSERT`/`SELECT` on `audit_events` only — never `UPDATE`/`DELETE` (S7)."""
+async def test_no_update_or_delete_on_audit_events(db_connection: Any) -> None:
+  """`INSERT`/`SELECT` on `audit_events` only — never `UPDATE`/`DELETE`."""
   await _assert_refused_with_42501(
     db_connection,
     "UPDATE audit_events SET outcome = 'success' WHERE id = '00000000-0000-4000-8000-000000000000'",
@@ -168,7 +161,7 @@ async def test_sql019_no_update_or_delete_on_audit_events(db_connection: Any) ->
   )
 
 
-async def test_sql019_no_write_to_app_settings(db_connection: Any) -> None:
+async def test_no_write_to_app_settings(db_connection: Any) -> None:
   """The runtime role holds `SELECT` on `app_settings` only — the origin is read, never written."""
   await _assert_refused_with_42501(
     db_connection, "UPDATE app_settings SET value = 'https://evil.example.test' WHERE key = 'x'"
@@ -178,34 +171,32 @@ async def test_sql019_no_write_to_app_settings(db_connection: Any) -> None:
   )
 
 
-async def test_sql019_no_insert_into_users(db_connection: Any) -> None:
+async def test_no_insert_into_users(db_connection: Any) -> None:
   """The runtime role holds no `INSERT` on `users` — account creation is CLI-only."""
   await _assert_refused_with_42501(
     db_connection, "INSERT INTO users (id) VALUES ('00000000-0000-4000-8000-000000000000')"
   )
 
 
-async def test_sql019_no_delete_on_deals(db_connection: Any) -> None:
+async def test_no_delete_on_deals(db_connection: Any) -> None:
   """The runtime role holds no `DELETE` on `deals` — a deal is never deleted by the application.
 
-  `contracts/slice-c.md` §1(a): deletion exists only in `reset-demo` and
-  `erase-subject`, under the maintenance role — the absence of the
-  privilege here is what makes "no deal disappears" structural.
+  Deletion exists only in `reset-demo` and `erase-subject`, under the
+  maintenance role — the absence of the privilege here is what makes "no
+  deal disappears" structural.
   """
   await _assert_refused_with_42501(
     db_connection, "DELETE FROM deals WHERE id = '00000000-0000-4000-8000-000000000000'"
   )
 
 
-async def test_sql019_no_update_on_activities(db_connection: Any) -> None:
+async def test_no_update_on_activities(db_connection: Any) -> None:
   """The runtime role holds no `UPDATE` on `activities` — a live negative probe, not a grant read.
 
-  Plan §4 task 6: "a live negative UPDATE and DELETE as crm_test_app
-  (42501)". `migrations/0005_activities` step 03 grants `SELECT, INSERT`
-  only — this is what makes "once logged, an activity cannot be edited"
-  a privilege of the database, exercised here with an actual `UPDATE`
-  rather than only read from `information_schema` as the table-grant test
-  above already does.
+  The activities migration grants `SELECT, INSERT` only — this is what
+  makes "once logged, an activity cannot be edited" a privilege of the
+  database, exercised here with an actual `UPDATE` rather than only read
+  from `information_schema` as the table-grant test above already does.
   """
   await _assert_refused_with_42501(
     db_connection,
@@ -213,7 +204,7 @@ async def test_sql019_no_update_on_activities(db_connection: Any) -> None:
   )
 
 
-async def test_sql019_no_delete_on_activities(db_connection: Any) -> None:
+async def test_no_delete_on_activities(db_connection: Any) -> None:
   """The runtime role holds no `DELETE` on `activities` — a live negative probe.
 
   The append-only history is enforced by the grant set, never by a missing
