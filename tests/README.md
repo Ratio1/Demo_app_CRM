@@ -67,12 +67,23 @@ test trips can never leak into another.
   risking a `:00`-boundary flake. Its origin is the fixed
   `https://crm.test` (never `live_server`'s ephemeral port) — see
   `tests/inprocess/conftest.py`'s module docstring for why, and why `tests/inprocess` is
-  collected **first** in the session (`conftest.py`'s `pytest_collection_modifyitems`).
+  collected **first** in the session (`conftest.py`'s `pytest_collection_modifyitems`). The
+  process itself always serves plain HTTP; it is the *stored* origin's scheme, and nothing
+  else, that decides the session cookie's name/`Secure` flag and whether
+  `Strict-Transport-Security` is sent (`app.security.sessions`, `app.security.headers`). Since
+  `live_server` below now serves the `http://` half of that contract, `tests/inprocess` is also
+  the one remaining place in this suite with an `https://` origin, and is where that half
+  (`Secure`, the `__Host-` cookie name, HSTS) is proved — `in_process_client`
+  (`https://crm.test`, the default above) alongside a second, independent client,
+  `http_mode_in_process_client` (`http://crm.test`), both exercised in
+  `tests/inprocess/test_origin_scheme.py`.
 - **Out-of-process, one uvicorn subprocess per *session*** (`live_server`):
-  every test that needs genuinely wire-level behaviour (TLS itself, real cookie attributes,
-  real header casing, `tests/e2e`) shares **one** server for the whole session, over TLS on an
-  ephemeral `127.0.0.1` port with a throwaway self-signed certificate; port `3002` (the human
-  dev-run assignment) is never used by a test. `live_server`'s clock is the real, production
+  every test that needs genuinely wire-level behaviour (real cookie attributes, real header
+  casing, `tests/e2e`) shares **one** server for the whole session, in plain HTTP on an
+  ephemeral `127.0.0.1` port; port `3002` (the human dev-run assignment) is never used by a
+  test. The process serves plain HTTP — no certificate of any kind, dev or otherwise, the same
+  as the shipped application, which never terminates TLS itself (a Cloudflare, or equivalent,
+  terminator in front of it does in production). `live_server`'s clock is the real, production
   `SystemClock` and cannot be swapped — nothing driven through it can be clock-tested; that is
   what `tests/inprocess` exists for. Isolation between the tests that share it is by data
   (dedicated `example.test` identities, never the shared `bootstrap_admin`, for anything that
