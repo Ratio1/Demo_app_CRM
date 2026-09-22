@@ -12,9 +12,10 @@ mutation is a plain form `POST`), psycopg3 + psycopg-pool, uvicorn.
   Docker Desktop resolves automatically; not guaranteed on plain Linux Docker.
 - Shared local PostgreSQL: `_tools/pgsql/pg ensure`, then once (idempotent) `_tools/pgsql/pg
   create-app crm`.
-- `uv` — for local development only (§7); the image itself never invokes it.
+- `uv` — for local development only (see Development below); the image itself never invokes it.
 
-Commands below run from the meta-repo root unless a section says otherwise.
+Commands below assume a working directory that contains `_tools/pgsql` (see Prerequisites)
+unless a section says otherwise.
 
 ## 1. Credentials
 
@@ -28,8 +29,9 @@ _tools/pgsql/pg env crm --server host.docker.internal:5432 --write Demo_app_CRM/
 _tools/pgsql/pg env crm --role owner --server host.docker.internal:5432 --write Demo_app_CRM/.env.docker.owner.local
 ```
 
-The first (`crm_app`, runtime role) is what `scripts/run-local` (§4) hands the served container;
-the second (`crm_owner`, maintenance role) is what every `scripts/manage` command below needs.
+The first (`crm_app`, runtime role) is what `scripts/run-local` (see Run below) hands the
+served container; the second (`crm_owner`, maintenance role) is what every `scripts/manage`
+command below needs.
 
 ## 2. Build
 
@@ -165,14 +167,13 @@ A bare `pytest` is not a supported invocation — credentials only ever reach a 
 
 ## 8. Deferred
 
-This push shipped the journey above and deferred the rest by operator decision
-(`_agents/projects/CRM/SIMPLIFICATION_PLAN.md`, 2026-09-22): the 20-minute resource-profile gate,
-the two-replica test, `manage cleanup`/`export-subject`/`erase-subject`, a standalone
-`SECURITY.md`, `DEPLOY.md`, administrator MFA, and the wider multi-reviewer process this plan
-replaced with one reviewer pass. None of it has run here and none is claimed as passing — the
-full list, with what is actually true for each item, is in `REVIEW.md`. This build holds only
-fictional `example.test` data and must not hold real data until the deferred privacy and MFA
-items close.
+This build ships the journey above and defers the rest, by decision of the operator: the
+20-minute resource-profile gate, the two-replica test, `manage cleanup`/`export-subject`/
+`erase-subject`, a standalone `SECURITY.md`, `DEPLOY.md`, administrator MFA, and a broader
+multi-pass review beyond the one review recorded here. None of it has run here and none is
+claimed as passing — the full list, with what is actually true for each item, is in
+`REVIEW.md`. This build holds only fictional `example.test` data and must not hold real data
+until the deferred privacy and MFA items close.
 
 ## 9. Assets
 
