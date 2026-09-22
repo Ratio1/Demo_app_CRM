@@ -270,9 +270,15 @@ class DealView:
   created_at, updated_at : datetime
     Record timestamps.
   can_edit, can_change_stage : bool
-    **UI hiding only** — both false under an archived parent, and
-    ``can_change_stage`` false in a terminal stage. Every one of them is
-    re-decided server-side, and a crafted ``POST`` still meets 409
+    **UI hiding only** — both false **exactly when the parent is
+    archived** (§2(a) note 9). ``can_change_stage`` is *not* narrowed by a
+    terminal stage: the terminal case is carried by :attr:`lateral_targets`
+    and by ``stage_form.terminal``, and ``partials/stage_control.html``
+    renders ``CP-35``'s *"{Won|Lost} deals cannot be moved to another
+    stage"* from that flag. Narrowing it here would take the whole panel
+    off a won deal's page and the sentence with it — absence without the
+    words, which is the one thing ``UX_FLOWS.md`` §4.8 rules out. Every
+    flag is re-decided server-side, and a crafted ``POST`` still meets 409
     ``archived_parent`` or 409 ``stage_terminal`` (``ACCESS_MATRIX.md``
     §1.4).
   lateral_targets : tuple[tuple[str, str], ...]
@@ -674,7 +680,7 @@ def _view(row: DealRow, scope: Scope) -> DealView:
     # archived parent and the controls are absent. A crafted POST still
     # meets 409 archived_parent, decided in the transaction.
     can_edit=not archived_parent,
-    can_change_stage=not archived_parent and row.stage not in TERMINAL,
+    can_change_stage=not archived_parent,
     lateral_targets=lateral_targets(row.stage),
   )
 
