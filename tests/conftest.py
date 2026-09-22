@@ -1392,3 +1392,343 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
   special = {id(item) for item in inprocess_items + last_admin_race_items + e2e_items}
   other_items = [item for item in items if id(item) not in special]
   items[:] = inprocess_items + other_items + e2e_items + last_admin_race_items
+
+
+# ---------------------------------------------------------------------------
+# Slice B — contacts: three-principal fixtures and HTTP helpers, shared by
+# every contact-surface module under tests/access, tests/security and
+# tests/concurrency. Defined here, at the root, rather than in a
+# sub-package conftest: every consuming module then gets `admin`/`agent_a`/
+# `agent_b` as ordinary fixtures with **no import at all**, so a test
+# function's own same-named parameter can never collide with an imported
+# fixture object (the cross-package-import shape this replaced produced a
+# `ruff` `F811 redefinition` on every single test using it — this file's
+# fixtures don't have that problem, the same way `admin_session`/
+# `agent_client` above never did).
+#
+# Authority: `contracts/slice-b.md` §2(g) hook 1 ("Three principals":
+# bootstrap admin plus two `create-user` agents, each barred from every
+# contact route by the forced-reset gate until its own
+# `POST /account/password` completes); `ACCESS_MATRIX.md` §1.5 (actors
+# `ADM`, `AG-O`, `AG-X`).
+#
+# Why login is driven fresh per principal here rather than reusing
+# `admin_session`/`agent_client` directly: `create-user` sets
+# `must_change_password = TRUE` (`app/services/accounts.py`), so a freshly
+# provisioned agent's first login lands on `/account/password`, not on any
+# contact route — completing that forced change is part of the fixture,
+# not an afterthought.
+# ---------------------------------------------------------------------------
+
+_CANONICAL_UUID_PATTERN = re.compile(
+  r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+_CONTACT_LOCATION_PATTERN = re.compile(r"^/contacts/([0-9a-fA-F-]{36})(?:[?].*)?$")
+
+
+def extract_hidden_field(html: str, name: str) -> str:
+  """Pull one hidden-field ``value`` out of a rendered form page, by ``name``.
+
+  Generalizes :func:`extract_csrf_token` to any of the other
+  server-generated hidden fields Slice B's mutation forms carry
+  (``idempotency_key`` — PIN 1; ``version`` — PIN 3, the concurrency token).
+
+  Parameters
+  ----------
+  html : str
+    A rendered mutation form (``contacts/form.html``, or a detail page's
+    embedded archive/restore/reassign form).
+  name : str
+    The field's ``name`` attribute.
+
+  Returns
+  -------
+  str
+
+  Raises
+  ------
+  AssertionError
+    If no such hidden field is present.
+  """
+  pattern = re.compile(rf'<input[^>]*name="{re.escape(name)}"[^>]*value="([^"]*)"', re.IGNORECASE)
+  match = pattern.search(html)
+  assert match is not None, f"no {name!r} hidden field found in the response body"
+  return match.group(1)
+
+
+@dataclass(frozen=True, slots=True)
+class LoggedInPrincipal:
+  """One authenticated actor, ready to drive contact routes.
+
+  Attributes
+  ----------
+  user : ProvisionedUser
+    The principal's current (post-forced-reset, where applicable) credentials.
+  client : httpx.AsyncClient
+    Its own cookie jar, already carrying a full (non-forced) session.
+  """
+
+  user: ProvisionedUser
+  client: httpx.AsyncClient
+
+
+async def complete_forced_reset(
+  client: httpx.AsyncClient, *, user: ProvisionedUser
+) -> ProvisionedUser:
+  """Drive ``GET`` -> ``POST /account/password`` so a ``create-user`` agent can reach contacts.
+
+  Every agent Slice B's tests provision is forced to change its password on
+  first login (``must_change_password = TRUE``, set by ``create-user``); the
+  order step 2 forced-reset gate (``ACCESS_MATRIX.md`` §1.1) would otherwise
+  answer every contact route with a ``403`` regardless of ownership, making
+  every ``ACC-0xx``/``ACC-1xx`` cell untestable for an agent. Not an
+  afterthought — slice-b.md §2(g) hook 1 names this step explicitly.
+
+  Parameters
+  ----------
+  client : httpx.AsyncClient
+    Already logged in (its cookie jar carries the forced-reset session that
+    ``POST /login`` just issued).
+  user : ProvisionedUser
+    The principal's current credentials — ``user.password`` is submitted as
+    ``current_password``.
+
+  Returns
+  -------
+  ProvisionedUser
+    The same principal, with ``password`` replaced by the fresh one this
+    call set. The caller's client now carries a full, non-forced session.
+
+  Raises
+  ------
+  AssertionError
+    If either leg fails — an honest signal that the forced-reset path
+    itself (Slice A, already shipped) regressed, not a Slice B finding.
+  """
+  get_response = await client.get("/account/password")
+  assert get_response.status_code == 200, (
+    f"expected the forced-reset change-password form, got {get_response.status_code}"
+  )
+  csrf_token = extract_csrf_token(get_response.text)
+  new_password = f"a fictional post-reset passphrase {uuid.uuid4().hex}"
+  post_response = await client.post(
+    "/account/password",
+    data={
+      "csrf_token": csrf_token,
+      "current_password": user.password,
+      "new_password": new_password,
+      "confirm_password": new_password,
+    },
+  )
+  assert post_response.status_code == 303, (
+    f"the mandatory forced password change failed (status {post_response.status_code}); "
+    "every fixture depending on it assumes it succeeds"
+  )
+  return ProvisionedUser(email=user.email, name=user.name, password=new_password, role=user.role)
+
+
+async def _login_contacts_agent(
+  http_client_factory: Callable[[], httpx.AsyncClient],
+  provision_agent: Callable[[], ProvisionedUser],
+) -> LoggedInPrincipal:
+  """Provision one fresh agent, log in, complete its forced reset, return it ready to use."""
+  user = provision_agent()
+  client = http_client_factory()
+  login_response = await login_via_http(client, email=user.email, password=user.password)
+  assert login_response.status_code == 303, (
+    f"first login for a freshly provisioned agent failed (status {login_response.status_code})"
+  )
+  assert login_response.headers.get("location") == "/account/password", (
+    "a freshly create-user'd agent must land on the forced-reset form on its "
+    f"first login; got Location: {login_response.headers.get('location')!r}"
+  )
+  user = await complete_forced_reset(client, user=user)
+  return LoggedInPrincipal(user=user, client=client)
+
+
+@pytest_asyncio.fixture
+async def admin(
+  admin_session: httpx.AsyncClient, bootstrap_admin: ProvisionedUser
+) -> LoggedInPrincipal:
+  """``ADM`` — the shared bootstrap admin, already logged in.
+
+  ``bootstrap`` keeps ``must_change_password = FALSE`` by design (R58), so
+  no forced-reset step applies here — unlike ``agent_a``/``agent_b`` below.
+  """
+  return LoggedInPrincipal(user=bootstrap_admin, client=admin_session)
+
+
+@pytest_asyncio.fixture
+async def agent_a(
+  http_client_factory: Callable[[], httpx.AsyncClient],
+  provision_agent: Callable[[], ProvisionedUser],
+) -> LoggedInPrincipal:
+  """``AG-O`` for its own objects, ``AG-X`` for ``agent_b``'s — a freshly provisioned agent."""
+  return await _login_contacts_agent(http_client_factory, provision_agent)
+
+
+@pytest_asyncio.fixture
+async def agent_b(
+  http_client_factory: Callable[[], httpx.AsyncClient],
+  provision_agent: Callable[[], ProvisionedUser],
+) -> LoggedInPrincipal:
+  """The second agent — always foreign (``AG-X``) with respect to ``agent_a``'s objects."""
+  return await _login_contacts_agent(http_client_factory, provision_agent)
+
+
+def normalize_body(body: str) -> str:
+  """Replace a canonical-UUID-shaped correlation id with a fixed placeholder.
+
+  Slice B test hook 4 (slice-b.md §2(g)): the byte-identical-404 assertion
+  compares two responses for the *same* principal "modulo correlation id" —
+  every error page embeds one (``CONTRACTS.md`` §8.4/``SEC-062``), and it is
+  freshly generated per request, so a raw ``==`` on two error bodies would
+  always fail even when the page is otherwise identical.
+
+  Parameters
+  ----------
+  body : str
+    A rendered response body.
+
+  Returns
+  -------
+  str
+    The same text with every canonical 36-character UUID replaced by
+    ``"<cid>"``. This also normalizes any UUID-shaped object id the body
+    might otherwise leak, which is fine here: the whole point of the
+    identical-404 rule is that *no* id-shaped value may differ between the
+    foreign and the missing case.
+  """
+  return _CANONICAL_UUID_PATTERN.sub("<cid>", body)
+
+
+def normalized_headers(response: httpx.Response) -> dict[str, str]:
+  """Return ``response.headers`` as a plain dict, minus ``Date`` and ``Content-Length``.
+
+  Slice B test hook 4: the identical-404 comparison is also made over
+  "response headers minus ``Date`` and ``Content-Length``" — ``Date``
+  changes with wall-clock time and ``Content-Length`` tracks the
+  correlation id's own text length once it is embedded in the body, so
+  both are expected, meaningless differences rather than evidence of a
+  behavioural difference.
+
+  Parameters
+  ----------
+  response : httpx.Response
+
+  Returns
+  -------
+  dict[str, str]
+  """
+  return {
+    key.lower(): value
+    for key, value in response.headers.items()
+    if key.lower() not in ("date", "content-length")
+  }
+
+
+@dataclass(frozen=True, slots=True)
+class SeededContact:
+  """A contact created through the real HTTP surface, for a test to act on.
+
+  Attributes
+  ----------
+  id : str
+    Parsed from the ``303``'s ``Location: /contacts/{id}?notice=...``.
+  owner : LoggedInPrincipal
+    Whoever created it (``AG-O`` for their own objects).
+  """
+
+  id: str
+  owner: LoggedInPrincipal
+
+
+def parse_contact_id_from_location(location: str) -> str:
+  """Pull ``{id}`` out of a ``/contacts/{id}...`` ``Location`` header.
+
+  Parameters
+  ----------
+  location : str
+    E.g. ``"/contacts/3fa85f64-5717-4562-b3fc-2c963f66afa6?notice=contact_created"``.
+
+  Returns
+  -------
+  str
+
+  Raises
+  ------
+  AssertionError
+    If the header does not match the expected shape — an honest failure
+    naming what was expected, since a malformed redirect target is itself
+    a finding.
+  """
+  match = _CONTACT_LOCATION_PATTERN.match(location)
+  assert match is not None, f"unexpected Location header shape: {location!r}"
+  return match.group(1)
+
+
+async def create_contact(
+  principal: LoggedInPrincipal,
+  *,
+  name: str = "Alice Example",
+  company: str = "Acme Corp",
+  email: str | None = None,
+  phone: str = "+1 555 0100",
+  kind: str = "lead",
+) -> SeededContact:
+  """Drive ``GET /contacts/new`` -> ``POST /contacts`` for one principal, return the new id.
+
+  Parameters
+  ----------
+  principal : LoggedInPrincipal
+    Creates the contact as themselves (``owner_id := scope.actor_id``,
+    ``ACC-007`` — never supplied by the caller).
+  name, company, phone, kind : str
+    Fictional field values (``AGENTS.md``: fictional data only).
+  email : str | None
+    Defaults to a fresh, unique ``example.test`` address per call so
+    repeated calls in one test never collide on anything an accidental
+    future unique constraint might add (``contacts.email`` itself carries
+    none — ``SQL-022`` — but the fixture stays collision-free regardless).
+
+  Returns
+  -------
+  SeededContact
+
+  Raises
+  ------
+  AssertionError
+    If either leg does not behave as the contract requires — reported
+    honestly, never hidden, until ``app/routes/contacts.py`` ships.
+  """
+  if email is None:
+    email = f"contact+{uuid.uuid4().hex[:12]}@example.test"
+  new_form = await principal.client.get("/contacts/new")
+  assert new_form.status_code == 200, (
+    f"GET /contacts/new failed (status {new_form.status_code}) — contact creation cannot proceed"
+  )
+  csrf_token = extract_csrf_token(new_form.text)
+  idempotency_key = extract_hidden_field(new_form.text, "idempotency_key")
+  create_response = await principal.client.post(
+    "/contacts",
+    data={
+      "csrf_token": csrf_token,
+      "idempotency_key": idempotency_key,
+      "name": name,
+      "company": company,
+      "email": email,
+      "phone": phone,
+      "kind": kind,
+    },
+  )
+  assert create_response.status_code == 303, (
+    f"POST /contacts failed (status {create_response.status_code}); body follows: "
+    f"{create_response.text[:500]!r}"
+  )
+  contact_id = parse_contact_id_from_location(create_response.headers.get("location", ""))
+  return SeededContact(id=contact_id, owner=principal)
+
+
+def fresh_idempotency_key() -> str:
+  """Return a fresh ``uuid.uuid4()`` string, for a test that needs to mint its own (PIN 1)."""
+  return str(uuid.uuid4())
