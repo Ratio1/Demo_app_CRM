@@ -1,31 +1,14 @@
-"""Static architecture gates for Slice A and Slice B.
-
-Authority: ``ACCESS_MATRIX.md`` §7 — ``ARC-003``, ``ARC-006``, ``ARC-008``,
-``ARC-009``, ``SEC-063``; ``slice-a.md`` §1.1 (middleware/module map),
-ruling **R43** (the vendored htmx SHA-256); ``contracts/slice-b.md``
-§2(h) (``ARC-001``/``SQL-032``'s Slice B allowlist), ``DATA_CONTRACT.md``
-§9.1 (``SQL-031``'s server-clock ban and its one named exemption).
+"""Static architecture gates: module boundaries, forbidden template patterns, money-type discipline.
 
 Each gate below either runs for real against the code that already exists
-(``ARC-006``, ``ARC-009``, the htmx SRI check) or fails loudly, naming the
-missing prerequisite, rather than passing vacuously on an empty glob
-(``ARC-003``, ``ARC-008``, ``SEC-063``, which need ``app/routes/**`` and
-``app/main.py`` that the Backend lane has not shipped yet).
+(the template-pattern check, the environment-read check, the htmx SRI
+check) or fails loudly, naming the missing prerequisite, rather than
+passing vacuously on an empty glob.
 
-``ARC-018`` (**R51**/**R58**) is added at the bottom: (a) no ``UPDATE`` of
-``users`` lives outside ``app/db/repositories/users.py``; (b) the
-functions that write ``role`` or ``is_active`` — ``insert_user`` and
-``set_active`` — are referenced only from ``app/services/accounts.py``.
-
-``ARC-001``/``SQL-032`` and ``SQL-031`` (Slice B, ruling R66) are added at
-the very bottom, extended for Slice C's ``deals.py``/``migrations/0004_deals``
-(both already covered generically by the existing walks over
-``app/db/**``/``migrations/**``, except the two tests that named
-``contacts`` explicitly). ``ARC-021`` (Slice C, **proposed** — not yet in
-``ACCESS_MATRIX.md`` §7, `contracts/slice-c.md` §2(h)) is added after it:
-money is ``decimal.Decimal`` end to end, both halves — no ``float(``/
+Money is ``decimal.Decimal`` end to end, both halves — no ``float(``/
 ``round(`` over a float on a money path (static), and the runtime guards
-``format_eur``/``DealFields``/``DealRow`` actually enforce (behavioural).
+``format_eur``/``DealFields``/``DealRow`` actually enforce (behavioural,
+covered in ``tests/unit/test_money.py``).
 """
 
 from __future__ import annotations
@@ -44,13 +27,13 @@ SCRIPTS_DIR = APP_ROOT / "scripts"
 TEMPLATES_DIR = APP_DIR / "templates"
 ROUTES_DIR = APP_DIR / "routes"
 
-#: R43 — the exact vendored file and the exact digest the ruling pins.
+#: The exact vendored htmx file and its pinned digest.
 _VENDORED_HTMX = APP_DIR / "static" / "vendor" / "htmx-2.0.10.min.js"
 _VENDORED_HTMX_SHA256 = "71ea67185bfa8c98c39d31717c6fce5d852370fcdfd129db4543774d3145c0de"
 
 
 # ---------------------------------------------------------------------------
-# ARC-009 — app/config.py is the only module reading the environment.
+# app/config.py is the only module reading the environment.
 # ---------------------------------------------------------------------------
 
 
@@ -61,7 +44,7 @@ def _python_files_under(root: Path) -> list[Path]:
   return sorted(root.rglob("*.py"))
 
 
-def test_arc009_only_app_config_reads_the_environment() -> None:
+def test_only_app_config_reads_the_environment() -> None:
   """No module under ``app/`` other than ``app/config.py`` reads ``os.environ``/``os.getenv``."""
   environment_pattern = re.compile(r"\bos\.environ\b|\bos\.getenv\s*\(")
   offenders: list[str] = []
@@ -79,7 +62,7 @@ def test_arc009_only_app_config_reads_the_environment() -> None:
   assert offenders == [], f"environment read outside app/config.py: {offenders}"
 
 
-def test_arc009_env_names_is_exactly_the_five_contracted_names() -> None:
+def test_env_names_is_exactly_the_five_contracted_names() -> None:
   """``app.config.ENV_NAMES`` is exactly the five-name contract, re-asserted at this layer."""
   from app.config import ENV_NAMES
 
@@ -87,10 +70,10 @@ def test_arc009_env_names_is_exactly_the_five_contracted_names() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ARC-006 — no hx-on, js:, on*=, Jinja |safe or Markup( in any template.
+# No hx-on, js:, on*=, Jinja |safe or Markup( in any template.
 # ---------------------------------------------------------------------------
 
-_ARC006_PATTERNS: dict[str, re.Pattern[str]] = {
+_BANNED_TEMPLATE_PATTERNS: dict[str, re.Pattern[str]] = {
   "hx-on attribute": re.compile(r"\bhx-on\b"),
   "js: event handler prefix": re.compile(r"\bjs:"),
   "inline on*= handler": re.compile(r"\bon[a-zA-Z]+\s*="),
@@ -99,14 +82,14 @@ _ARC006_PATTERNS: dict[str, re.Pattern[str]] = {
 }
 
 
-def test_arc006_no_unsafe_pattern_in_any_shipped_template() -> None:
+def test_no_unsafe_pattern_in_any_shipped_template() -> None:
   """Every ``.html`` template under ``app/templates/`` is free of the five banned patterns."""
   templates = sorted(TEMPLATES_DIR.rglob("*.html")) if TEMPLATES_DIR.is_dir() else []
-  assert templates, f"no templates found under {TEMPLATES_DIR} yet (frontend lane pending)"
+  assert templates, f"no templates found under {TEMPLATES_DIR} yet"
   violations: list[str] = []
   for template in templates:
     text = template.read_text(encoding="utf-8")
-    for label, pattern in _ARC006_PATTERNS.items():
+    for label, pattern in _BANNED_TEMPLATE_PATTERNS.items():
       for match in pattern.finditer(text):
         line_number = text.count("\n", 0, match.start()) + 1
         violations.append(f"{template.relative_to(APP_ROOT)}:{line_number}: {label}")
@@ -114,19 +97,19 @@ def test_arc006_no_unsafe_pattern_in_any_shipped_template() -> None:
 
 
 # ---------------------------------------------------------------------------
-# R43 — the vendored htmx file's SHA-256, independent of the download step.
+# The vendored htmx file's SHA-256, independent of the download step.
 # ---------------------------------------------------------------------------
 
 
-def test_r43_vendored_htmx_sha256_matches_the_pinned_digest() -> None:
-  """``app/static/vendor/htmx-2.0.10.min.js`` hashes to exactly R43's pinned SHA-256."""
-  assert _VENDORED_HTMX.is_file(), f"{_VENDORED_HTMX} does not exist yet (frontend lane pending)"
+def test_vendored_htmx_sha256_matches_the_pinned_digest() -> None:
+  """``app/static/vendor/htmx-2.0.10.min.js`` hashes to exactly its pinned SHA-256."""
+  assert _VENDORED_HTMX.is_file(), f"{_VENDORED_HTMX} does not exist yet"
   digest = hashlib.sha256(_VENDORED_HTMX.read_bytes()).hexdigest()
   assert digest == _VENDORED_HTMX_SHA256
 
 
 # ---------------------------------------------------------------------------
-# ARC-008 — app/routes/** never imports app/db/repositories/**.
+# app/routes/** never imports app/db/repositories/**.
 # ---------------------------------------------------------------------------
 
 
@@ -142,10 +125,10 @@ def _module_imports(tree: ast.AST) -> set[str]:
   return imports
 
 
-def test_arc008_routes_never_import_repositories() -> None:
+def test_routes_never_import_repositories() -> None:
   """No file under ``app/routes/`` imports anything from ``app.db.repositories``."""
   route_files = _python_files_under(ROUTES_DIR)
-  assert route_files, f"{ROUTES_DIR} does not exist yet (Backend lane pending)"
+  assert route_files, f"{ROUTES_DIR} does not exist yet"
   offenders: list[str] = []
   for path in route_files:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -156,25 +139,22 @@ def test_arc008_routes_never_import_repositories() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ARC-003 — no GET/HEAD handler's direct calls reach app.services.* mutations.
+# No GET/HEAD handler's direct calls reach app.services.* mutations.
 # ---------------------------------------------------------------------------
 
 _SAFE_METHODS = {"get", "head"}
 
-#: ``contracts/slice-b.md`` line 1447's ``ARC-003`` row: *"The mutating names
-#: are exactly `create_contact`, `update_contact`, `archive_contact`,
-#: `restore_contact`, `reassign_contact` — the gate can read that list."*
-#: ``contracts/slice-c.md`` §2(h)'s own ``ARC-003`` row extends it: *"The
-#: mutating service names are exactly `create_for_contact`, `update_deal`,
-#: `change_stage`."* The gate's scope **is** the assertion
-#: (``ACCESS_MATRIX.md`` §7 ``ARC-003``, echoing the P1 final fix round):
-#: a GET/HEAD handler calling a **read** service function — `list_contacts`,
-#: `get_for_detail`, `build_contact_query`, `list_deals`, `pipeline`,
-#: `parent_for_form`, `blocked_parent`, all of `app/services/contacts.py`/
-#: `deals.py`'s read side — is the ordinary, contracted shape of the
-#: list/detail/edit-form routes, not a violation. Extend this set, never
-#: widen it back to "every name imported from `app.services`", as later
-#: slices add their own mutations (`activity_create`).
+#: The mutating service names: exactly `create_contact`, `update_contact`,
+#: `archive_contact`, `restore_contact`, `reassign_contact`,
+#: `create_for_contact`, `update_deal`, `change_stage`, `log_activity` —
+#: the gate's scope **is** this list. A GET/HEAD handler calling a
+#: **read** service function — `list_contacts`, `get_for_detail`,
+#: `build_contact_query`, `list_deals`, `pipeline`, `parent_for_form`,
+#: `blocked_parent`, all of `app/services/contacts.py`/`deals.py`'s read
+#: side — is the ordinary, contracted shape of the list/detail/edit-form
+#: routes, not a violation. Extend this set, never widen it back to
+#: "every name imported from `app.services`", as new mutations are added
+#: (`activity_create`).
 _SERVICE_MUTATION_NAMES: Final[frozenset[str]] = frozenset(
   {
     "create_contact",
@@ -212,11 +192,10 @@ def _route_method_decorators(function_def: ast.FunctionDef | ast.AsyncFunctionDe
 def _service_call_names(tree: ast.Module, module_path: Path) -> set[str]:
   """Return the local names this file bound to a service **mutation** import.
 
-  Scoped to :data:`_SERVICE_MUTATION_NAMES` (``ACCESS_MATRIX.md`` §7
-  ``ARC-003``'s own wording) — not every name imported from
+  Scoped to :data:`_SERVICE_MUTATION_NAMES` — not every name imported from
   ``app.services``. A GET/HEAD route legitimately imports and calls a
-  **read** service function (Slice B's `list_contacts`/`get_for_detail`,
-  by contract); only a mutation import is this gate's business.
+  **read** service function (`list_contacts`/`get_for_detail`, by
+  contract); only a mutation import is this gate's business.
   """
   names: set[str] = set()
   for node in ast.walk(tree):
@@ -237,25 +216,23 @@ def _service_call_names(tree: ast.Module, module_path: Path) -> set[str]:
   return names
 
 
-def test_arc003_no_get_or_head_handler_directly_calls_a_services_import() -> None:
+def test_no_get_or_head_handler_directly_calls_a_services_import() -> None:
   """No ``GET``/``HEAD`` handler's own body directly calls a service **mutation**.
 
   Heuristic, documented rather than overclaimed: this checks direct calls in
   the handler's own body, one level deep. It does not follow calls into a
   helper function defined elsewhere in the same file or in another module,
-  so it cannot by itself prove the full transitive-call-graph claim
-  ``ACCESS_MATRIX.md`` ARC-003 makes; it is the cheap static half that a
-  route calling a service *mutation* **directly** — the overwhelmingly
-  common shape in this codebase's module map — is caught immediately.
-  Scoped to :data:`_SERVICE_MUTATION_NAMES`, exactly as ``ACCESS_MATRIX.md``
-  §7 states the gate's own scope: a GET/HEAD handler calling a **read**
+  so it cannot by itself prove the full transitive-call-graph claim; it is
+  the cheap static half that a route calling a service *mutation*
+  **directly** — the overwhelmingly common shape in this codebase's
+  module map — is caught immediately. Scoped to
+  :data:`_SERVICE_MUTATION_NAMES`: a GET/HEAD handler calling a **read**
   service function is the ordinary, contracted shape of a list/detail/
-  edit-form route, not a violation (Slice B's `list_contacts`/
-  `get_for_detail`, called from `contacts_page`/`contact_detail`/
-  `contact_edit`).
+  edit-form route, not a violation (`list_contacts`/`get_for_detail`,
+  called from `contacts_page`/`contact_detail`/`contact_edit`).
   """
   route_files = _python_files_under(ROUTES_DIR)
-  assert route_files, f"{ROUTES_DIR} does not exist yet (Backend lane pending)"
+  assert route_files, f"{ROUTES_DIR} does not exist yet"
   offenders: list[str] = []
   for path in route_files:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -285,27 +262,26 @@ def test_arc003_no_get_or_head_handler_directly_calls_a_services_import() -> Non
 
 
 # ---------------------------------------------------------------------------
-# SEC-063 — /docs, /redoc and /openapi.json all 404.
+# /docs, /redoc and /openapi.json all 404.
 # ---------------------------------------------------------------------------
 
 _DISABLED_DOC_PATHS: Final = frozenset({"/docs", "/redoc", "/openapi.json"})
 
 
-def test_sec063_docs_routes_are_404_in_the_shipped_configuration() -> None:
-  """The auto-docs routes are disabled at construction time (slice-a.md §1.1).
+def test_docs_routes_are_404_in_the_shipped_configuration() -> None:
+  """The auto-docs routes are disabled at construction time.
 
   Asserts directly on the constructed ``FastAPI`` object rather than making
-  a live HTTP request through ``TestClient``: ``app.main.OriginHostMiddleware``
-  (slice-a.md §2.1 step 0a) runs before routing on every non-health path and
-  answers ``503`` — never ``404`` — whenever ``app.state.context`` is unset,
-  which is exactly the state of an app built by ``create_app()`` and never
-  given a running lifespan (no live server, no database, as this test's own
-  original comment already required). A previous revision of this test drove
-  a bare ``TestClient(create_app())`` (lifespan never entered) through that
-  middleware expecting ``404`` and got ``503`` instead — not a backend
-  defect, but this test asking a question the shipped, documented,
-  fail-closed architecture cannot answer without a live database. The
-  contract's own wording (slice-a.md §1.1, line 32) is exactly
+  a live HTTP request through ``TestClient``: the origin/host middleware
+  runs before routing on every non-health path and answers ``503`` — never
+  ``404`` — whenever ``app.state.context`` is unset, which is exactly the
+  state of an app built by ``create_app()`` and never given a running
+  lifespan (no live server, no database). A previous revision of this test
+  drove a bare ``TestClient(create_app())`` (lifespan never entered)
+  through that middleware expecting ``404`` and got ``503`` instead — not
+  a backend defect, but this test asking a question the shipped,
+  documented, fail-closed architecture cannot answer without a live
+  database. The contract is exactly
   ``FastAPI(docs_url=None, redoc_url=None, openapi_url=None)``, which this
   now checks precisely, plus that no route answers any of the three paths
   either.
@@ -325,13 +301,10 @@ def test_sec063_docs_routes_are_404_in_the_shipped_configuration() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ARC-018 — R51's reworded gate, mechanized per ruling R58.
-#
 # (a) No file other than app/db/repositories/users.py contains an UPDATE of
-#     the users table (ARC-018(a) itself — "role" never in any SET list —
-#     stays a human-reviewed invariant of that one file, not re-derived
-#     here: a regex cannot tell a SET list's column names apart from an
-#     UPDATE's mere presence).
+#     the users table ("role" never in any SET list stays a human-reviewed
+#     invariant of that one file, not re-derived here: a regex cannot tell
+#     a SET list's column names apart from an UPDATE's mere presence).
 # (b) The functions that write role or is_active — insert_user and
 #     set_active — are referenced only from app/services/accounts.py.
 # ---------------------------------------------------------------------------
@@ -351,19 +324,19 @@ _ACCOUNTS_SERVICE: Final = APP_DIR / "services" / "accounts.py"
 #: itself, the one file this gate exempts).
 _UPDATE_USERS_PATTERN: Final = re.compile(r"\bUPDATE\s+(?:public\.)?users\b", re.IGNORECASE)
 
-#: The two functions ``R51``/``R58`` name as writers of ``role`` or
-#: ``is_active``. ``insert_user`` writes ``role`` (``H-07``: role is set at
-#: INSERT and nowhere else); ``set_active`` writes ``is_active``.
+#: The two functions that write ``role`` or ``is_active``. ``insert_user``
+#: writes ``role`` (role is set at INSERT and nowhere else); ``set_active``
+#: writes ``is_active``.
 _ROLE_OR_ACTIVE_WRITERS: Final[frozenset[str]] = frozenset({"insert_user", "set_active"})
 
 
 def _files_scanned_for_arc018() -> list[Path]:
   """Every ``.py`` file under ``app/``, plus ``scripts/manage`` (extensionless).
 
-  ``ARC-018``'s own wording ("no file … ") is not confined to ``app/``:
-  the one CLI entrypoint that can reach account administration at all
-  lives in ``scripts/manage``, so the gate scans it too, by explicit path
-  since it carries no ``.py`` suffix for ``rglob`` to find.
+  This gate is not confined to ``app/``: the one CLI entrypoint that can
+  reach account administration at all lives in ``scripts/manage``, so the
+  gate scans it too, by explicit path since it carries no ``.py`` suffix
+  for ``rglob`` to find.
   """
   files = _python_files_under(APP_DIR)
   manage_script = SCRIPTS_DIR / "manage"
@@ -372,7 +345,7 @@ def _files_scanned_for_arc018() -> list[Path]:
   return files
 
 
-def test_arc018a_no_update_of_users_outside_its_one_repository_file() -> None:
+def test_no_update_of_users_outside_its_one_repository_file() -> None:
   """No file other than ``app/db/repositories/users.py`` contains an ``UPDATE`` of ``users``."""
   files = _files_scanned_for_arc018()
   assert files, "no files found to scan (app/ is empty) yet"
@@ -433,7 +406,7 @@ def _ast_referenced_names(tree: ast.AST, names: frozenset[str]) -> set[str]:
   return found
 
 
-def test_arc018b_role_and_active_writers_referenced_only_from_accounts_service() -> None:
+def test_role_and_active_writers_referenced_only_from_accounts_service() -> None:
   """The role/``is_active`` writers are referenced only from ``app/services/accounts.py``."""
   files = _files_scanned_for_arc018()
   assert files, "no files found to scan (app/ is empty) yet"
@@ -462,20 +435,17 @@ def test_arc018b_role_and_active_writers_referenced_only_from_accounts_service()
 
 
 # ---------------------------------------------------------------------------
-# ARC-001 / SQL-032 (Slice B, ruling R66) — every public function of
-# app/db/repositories/contacts.py takes `scope` as its second positional
-# argument; the identity/infrastructure modules (sessions, users, throttle,
-# settings, audit, receipts) take none — contracts/slice-b.md §1(b) B2,
-# §2(h), ACCESS_MATRIX.md §7 ARC-001's allowlist.
+# Every public function of a business repository (contacts, deals,
+# activities) takes `scope` as its second positional argument; the
+# identity/infrastructure modules (sessions, users, throttle, settings,
+# audit, receipts, maintenance) take none.
 # ---------------------------------------------------------------------------
 
 _REPOSITORIES_DIR: Final = APP_DIR / "db" / "repositories"
 
-#: The identity/infrastructure modules ARC-001's allowlist names —
-#: `contracts/slice-b.md` §1(b) B2 (`receipts.py`, the two `users.py`
-#: additive reads) and `slice-a.md`'s shipped session/throttle/settings/
-#: audit layer, all of which take explicit ids rather than a `Scope`
-#: because they hold no owner column and answer no scoped question.
+#: The identity/infrastructure modules the allowlist names — all of which
+#: take explicit ids rather than a `Scope` because they hold no owner
+#: column and answer no scoped question.
 _SCOPE_EXEMPT_REPOSITORY_MODULES: Final[frozenset[str]] = frozenset(
   {"sessions", "users", "throttle", "settings", "audit", "receipts", "maintenance"}
 )
@@ -492,48 +462,43 @@ def _public_top_level_functions(
   ]
 
 
-#: Slice C, `contracts/slice-c.md` §1(b): "`deals.py` is a business
-#: repository with no identity-keyed exception" — joins `contacts` on the
-#: ARC-001 allowlist's business side. Updated here rather than left to trip
-#: (`slice-b.md` §1(b) B2's own instruction, extended by the same logic).
-#:
-#: Slice D adds `activities.py` on the same terms — `conn` first, `scope`
-#: second, ownership through the join to `contacts` — and `maintenance.py`
-#: to the EXEMPT set above, which is the opposite case and the reason it is
-#: written out here: its statements are unscoped by design because they run
-#: as the owner role from `scripts/manage` (seed-demo / reset-demo), never
-#: from a request, and the runtime role holds no DELETE to execute them with.
+#: `deals.py` is a business repository with no identity-keyed exception —
+#: it joins `contacts` on the allowlist's business side. `activities.py`
+#: is on the same terms — `conn` first, `scope` second, ownership through
+#: the join to `contacts`. `maintenance.py` is in the EXEMPT set above
+#: instead, which is the opposite case: its statements are unscoped by
+#: design because they run as the owner role from `scripts/manage`
+#: (seed-demo / reset-demo), never from a request, and the runtime role
+#: holds no DELETE to execute them with.
 _BUSINESS_REPOSITORY_MODULES: Final[frozenset[str]] = frozenset({"contacts", "deals", "activities"})
 
 
-def test_arc001_sql032_business_repositories_are_exactly_contacts_and_deals() -> None:
-  """The ARC-001 allowlist is exactly the identity/infrastructure modules — not `contacts`/`deals`.
+def test_business_repositories_are_exactly_contacts_and_deals() -> None:
+  """The allowlist is exactly the identity/infrastructure modules — never the business ones.
 
   Written as a frozenset in this test (not inferred from the allowlist a
-  gate happens to check), per `contracts/slice-b.md` §1(b) B2's own
-  instruction: "this must be stated in ARC-001/SQL-032's allowlist or the
-  ast gate trips on both" — extended here for Slice C's `deals.py`.
+  gate happens to check): this must be stated explicitly here or the ast
+  gate below trips on any module it does not already know about.
   """
   assert _REPOSITORIES_DIR.is_dir(), f"{_REPOSITORIES_DIR} does not exist yet"
   modules = {path.stem for path in _REPOSITORIES_DIR.glob("*.py") if path.stem != "__init__"}
   assert modules, f"no repository modules found under {_REPOSITORIES_DIR}"
   business_modules = modules - _SCOPE_EXEMPT_REPOSITORY_MODULES
   assert business_modules == _BUSINESS_REPOSITORY_MODULES, (
-    f"expected exactly the business repository modules outside the ARC-001 allowlist "
+    f"expected exactly the business repository modules outside the allowlist "
     f"({sorted(_SCOPE_EXEMPT_REPOSITORY_MODULES)}): {sorted(_BUSINESS_REPOSITORY_MODULES)}. "
     f"Got {sorted(business_modules)}"
   )
 
 
 @pytest.mark.parametrize("module_name", sorted(_BUSINESS_REPOSITORY_MODULES))
-def test_arc001_sql032_business_repository_functions_take_scope_second(module_name: str) -> None:
+def test_business_repository_functions_take_scope_second(module_name: str) -> None:
   """Every public function of a business repository takes `scope` as its 2nd positional arg.
 
-  `contracts/slice-b.md` §1(b) B1: "`scope` is the second positional
-  argument, not the first" — `conn` stays first (the shipped Slice A
-  convention), `scope` is the first *business* argument, so the gate can
-  see it by position. `contracts/slice-c.md` §1(b) reconciles the same
-  convention for `deals.py`, unchanged.
+  `scope` is the second positional argument, not the first — `conn` stays
+  first (the shipped convention), `scope` is the first *business*
+  argument, so the gate can see it by position. The same convention holds
+  for `deals.py` and `activities.py`, unchanged.
   """
   path = _REPOSITORIES_DIR / f"{module_name}.py"
   assert path.is_file(), f"{path} does not exist yet"
@@ -548,7 +513,7 @@ def test_arc001_sql032_business_repository_functions_take_scope_second(module_na
   assert offenders == [], f"public {path.name} function(s) missing `scope` as arg 2: {offenders}"
 
 
-def test_arc001_sql032_identity_infrastructure_modules_take_no_scope() -> None:
+def test_identity_infrastructure_modules_take_no_scope() -> None:
   """None of the allowlisted identity/infrastructure modules' public functions take a `scope`.
 
   The empirical half of the allowlist claim: every module named in
@@ -580,20 +545,20 @@ def test_arc001_sql032_identity_infrastructure_modules_take_no_scope() -> None:
 
 
 @pytest.mark.parametrize("module_name", sorted(_BUSINESS_REPOSITORY_MODULES))
-def test_sql032_business_repository_has_no_python_side_ownership_filter(module_name: str) -> None:
+def test_business_repository_has_no_python_side_ownership_filter(module_name: str) -> None:
   """A business repository filters ownership in SQL only, never by post-filtering rows.
 
-  A cheap structural guard, not a proof (documented as such, like
-  `ARC-003` above): walks every `ast.Compare` node for an `==`/`!=`
-  comparison whose operand is literally named or attributed `owner_id` —
-  the shape a Python-side post-filter (``if row.owner_id ==
+  A cheap structural guard, not a proof (documented as such, like the
+  no-direct-mutation-call gate above): walks every `ast.Compare` node for
+  an `==`/`!=` comparison whose operand is literally named or attributed
+  `owner_id` — the shape a Python-side post-filter (``if row.owner_id ==
   scope.actor_id``) would take. The real predicate lives in `sql.SQL`
   string literals (`_visible_where`/`_read_scope`/`_write_scope`), which
   this walk never flags because a string literal is not an `ast.Compare`.
-  `deals.py` carries no `owner_id` column at all (**PIN C8**) — its
-  ownership predicate is entirely the join to `contacts`, so this gate is
-  vacuously satisfied there and still worth running: a future edit adding
-  a `deals.owner_id` shortcut would trip it immediately.
+  `deals.py` carries no `owner_id` column at all — its ownership predicate
+  is entirely the join to `contacts`, so this gate is vacuously satisfied
+  there and still worth running: a future edit adding a `deals.owner_id`
+  shortcut would trip it immediately.
   """
   path = _REPOSITORIES_DIR / f"{module_name}.py"
   assert path.is_file(), f"{path} does not exist yet"
@@ -615,9 +580,8 @@ def test_sql032_business_repository_has_no_python_side_ownership_filter(module_n
 
 
 # ---------------------------------------------------------------------------
-# SQL-031 (Slice B, ruling R66) — no server-clock function reaches
-# app/db/** or migrations/**, with the one named exemption
-# DATA_CONTRACT.md §9.1 records: app/db/journal.py's
+# No server-clock function reaches app/db/** or migrations/**, with one
+# named exemption: app/db/journal.py's
 # _INSERT_JOURNAL_SQL/_MARK_VERIFIED_SQL, which stamp
 # schema_migrations.applied_at/verified_at with CURRENT_TIMESTAMP.
 # ---------------------------------------------------------------------------
@@ -626,9 +590,9 @@ _DB_DIR: Final = APP_DIR / "db"
 _MIGRATIONS_DIR: Final = APP_ROOT / "migrations"
 _JOURNAL_PY: Final = _DB_DIR / "journal.py"
 
-#: DATA_CONTRACT.md §9.1's clock/window-arithmetic ban: every instant and
-#: window boundary is computed in Python and bound, never read from the
-#: server's own clock inside SQL.
+#: The clock/window-arithmetic ban: every instant and window boundary is
+#: computed in Python and bound, never read from the server's own clock
+#: inside SQL.
 _SERVER_CLOCK_PATTERN: Final = re.compile(
   r"\bnow\s*\(\)|\bcurrent_timestamp\b|\bclock_timestamp\s*\(\)|"
   r"\btransaction_timestamp\s*\(\)|\bstatement_timestamp\s*\(\)|"
@@ -677,9 +641,9 @@ def _docstring_line_ranges(path: Path) -> list[tuple[int, int]]:
   Used to exclude *prose describing a banned pattern* (this codebase's
   docstrings routinely name the very construct they forbid, e.g. "no
   ``%f``") from a raw-text regex scan, the same false-positive
-  ``_docstring_node_ids`` already guards the SQL-031 gate against — but
-  expressed as line spans rather than node ids, since a plain regex over
-  source text has no node identity to compare against.
+  ``_docstring_node_ids`` already guards the server-clock gate against —
+  but expressed as line spans rather than node ids, since a plain regex
+  over source text has no node identity to compare against.
   """
   tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
   ranges: list[tuple[int, int]] = []
@@ -721,12 +685,12 @@ def _non_docstring_string_constants(path: Path) -> list[tuple[int, str]]:
   ]
 
 
-def test_sql031_no_server_clock_function_outside_journals_documented_exemption() -> None:
+def test_no_server_clock_function_outside_journals_documented_exemption() -> None:
   """No server-clock function reaches `app/db/**` or `migrations/**` — one named exemption.
 
-  `DATA_CONTRACT.md` §9.1: every instant and window boundary is computed
-  in Python and bound as a parameter, never read from the database's own
-  clock inside SQL — with one named exemption, `app/db/journal.py`'s
+  Every instant and window boundary is computed in Python and bound as a
+  parameter, never read from the database's own clock inside SQL — with
+  one named exemption, `app/db/journal.py`'s
   `_INSERT_JOURNAL_SQL`/`_MARK_VERIFIED_SQL`, which stamp
   `schema_migrations.applied_at`/`verified_at` with `CURRENT_TIMESTAMP`
   and nothing else, anywhere.
@@ -766,10 +730,8 @@ def test_sql031_no_server_clock_function_outside_journals_documented_exemption()
 
 
 # ---------------------------------------------------------------------------
-# ARC-021 (Slice C, **proposed** — `contracts/slice-c.md` §2(h), not yet
-# allocated in `ACCESS_MATRIX.md` §7; **PIN C1**: "money is `decimal.Decimal`
-# end to end"). Static half only, over the four paths the pin names:
-# `app/services/money.py`, `app/services/deals.py`,
+# Money is `decimal.Decimal` end to end. Static half only, over the four
+# paths that matter: `app/services/money.py`, `app/services/deals.py`,
 # `app/db/repositories/deals.py`, `app/templates/**`. The runtime half —
 # `format_eur` raising `TypeError` on a non-`Decimal` — is
 # `tests/unit/test_money.py::test_format_eur_rejects_a_float_with_typeerror`;
@@ -783,8 +745,8 @@ _MONEY_PATH_MODULES: Final[tuple[Path, ...]] = (
   _REPOSITORIES_DIR / "deals.py",
 )
 
-#: `float(`, `round(` (over anything — the pin bans it outright on a money
-#: path, not only over a known-float argument, since the ast gate cannot
+#: `float(`, `round(` (over anything — banned outright on a money path,
+#: not only over a known-float argument, since the ast gate cannot
 #: prove an argument's type without a type checker), `Decimal(` called with
 #: something that is not a string/int/tuple literal (a float literal would
 #: read `Decimal(1.5)` — a `Constant` node whose value is a `float`), and
@@ -796,7 +758,7 @@ _PERCENT_F_PATTERN: Final = re.compile(r"%\s*\.?\d*f\b")
 _FORMAT_F_PATTERN: Final = re.compile(r":\s*,?\.?\d*f\}")
 
 
-def test_arc021_no_float_or_round_call_on_a_money_path() -> None:
+def test_no_float_or_round_call_on_a_money_path() -> None:
   """`float(`/`round(` never appear, as a call, in any of the four money-path modules."""
   offenders: list[str] = []
   for path in _MONEY_PATH_MODULES:
@@ -812,7 +774,7 @@ def test_arc021_no_float_or_round_call_on_a_money_path() -> None:
   assert offenders == [], "\n".join(offenders)
 
 
-def test_arc021_no_decimal_built_from_a_float_literal_on_a_money_path() -> None:
+def test_no_decimal_built_from_a_float_literal_on_a_money_path() -> None:
   """`Decimal(1.5)`-shaped construction (a float literal argument) never appears."""
   offenders: list[str] = []
   for path in _MONEY_PATH_MODULES:
@@ -841,7 +803,7 @@ def _matches_outside_docstrings(
   return hits
 
 
-def test_arc021_no_percent_f_or_format_f_specifier_on_a_money_path() -> None:
+def test_no_percent_f_or_format_f_specifier_on_a_money_path() -> None:
   """No `%f`-style or `:.2f`-style format specifier appears in the four money-path modules.
 
   `format_eur`'s own `f"€ {value:,.2f}"` is exempt by construction: at
@@ -874,7 +836,7 @@ def test_arc021_no_percent_f_or_format_f_specifier_on_a_money_path() -> None:
   assert offenders == [], "\n".join(offenders)
 
 
-def test_arc021_templates_carry_no_float_round_or_raw_percent_f_format() -> None:
+def test_templates_carry_no_float_round_or_raw_percent_f_format() -> None:
   """No `.html` template calls `float(`/`round(` or spells a raw `%f` (Jinja has neither builtin).
 
   Templates cannot call `Decimal(` with a float literal (Jinja has no
@@ -894,12 +856,12 @@ def test_arc021_templates_carry_no_float_round_or_raw_percent_f_format() -> None
   assert offenders == [], "\n".join(offenders)
 
 
-def test_arc021_no_numpy_or_fractions_import_on_the_deal_money_path() -> None:
+def test_no_numpy_or_fractions_import_on_the_deal_money_path() -> None:
   """No alternate numeric-module import (`numpy`, `fractions`) shadows `Decimal` on a money path.
 
-  `contracts/slice-c.md` §2(h) also says "`import decimal` is the only
-  numeric import on the path", read here as *money-relevant* numerics —
-  `app/services/deals.py` legitimately imports `math` for
+  `import decimal` is the only numeric import that matters on the path,
+  read here as *money-relevant* numerics — `app/services/deals.py`
+  legitimately imports `math` for
   `math.ceil(total / per_page)` (`DealListView.pages`, an integer page
   count, never an amount), so a blanket "no other numeric import at all"
   reading would fail on that unrelated, harmless call. `numpy` and
