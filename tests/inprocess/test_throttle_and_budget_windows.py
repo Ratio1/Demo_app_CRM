@@ -1,18 +1,17 @@
-"""Throttle lock recovery and global-budget windows, driven by ``ManualClock`` (ruling R57).
+"""Throttle lock recovery and global-budget windows, driven by ``ManualClock``.
 
-Authority: ``ACCESS_MATRIX.md`` §7 (SEC-030, SEC-031); ``slice-a.md`` §1.1
-(``LOGIN_FAILURES=5``, ``LOGIN_WINDOW=15min``, ``LOGIN_LOCK=15min``,
-``BUDGET_WINDOW=1min``); ``_agents/projects/CRM/DECISIONS.md`` §9 ruling
-**R57**: "throttle/budget window tests use the in-process app with
-``ManualClock``... SEC-031a's ``:00``-boundary flake is eliminated by
-advancing the clock, not by timing the burst."
+The failure-rate constants under test: ``LOGIN_FAILURES=5``,
+``LOGIN_WINDOW=15min``, ``LOGIN_LOCK=15min``, ``BUDGET_WINDOW=1min``.
+Throttle/budget window tests use the in-process app with ``ManualClock`` so
+a `:00`-minute-boundary flake is eliminated by advancing the clock, not by
+timing the burst.
 
 Two properties this module proves that ``tests/security/test_throttle_and_budget.py``
 (``live_server``, real wall clock) cannot prove without either sleeping for
 real or risking a flake:
 
-1. **A login lock actually lifts.** SEC-030 (still in ``test_throttle_and_budget.py``)
-   proves the 6th failure is ``429``; nothing there proves the lock is
+1. **A login lock actually lifts.** ``test_throttle_and_budget.py`` proves
+   the 6th failure is ``429``; nothing there proves the lock is
    *temporary*, because doing so over the wire would mean sleeping 15
    real minutes. Here, the clock is advanced past ``LOGIN_LOCK`` and the
    very next attempt is asserted to succeed.
@@ -107,17 +106,16 @@ async def test_login_lock_engages_at_the_6th_failure_and_lifts_after_login_lock_
   )
 
 
-async def test_sec031a_the_global_preauth_budget_trips_deterministically_in_one_fixed_window(
+async def test_the_global_preauth_budget_trips_deterministically_in_one_fixed_window(
   in_process_client: httpx.AsyncClient,
 ) -> None:
   """A burst of 130 pre-auth ``GET /login`` requests (over the 120/min budget) yields a 429.
 
-  Moved from ``test_throttle_and_budget.py`` (ruling R57): the clock is
-  never advanced during the burst (this test never requests ``clock``
-  itself, and nothing else in it advances one), so every request computes
-  the exact same ``window_start_of(now)`` — the count cannot be split
-  across two windows by real elapsed time the way a wall-clock version
-  can.
+  The clock is never advanced during the burst (this test never requests
+  ``clock`` itself, and nothing else in it advances one), so every request
+  computes the exact same ``window_start_of(now)`` — the count cannot be
+  split across two windows by real elapsed time the way a wall-clock
+  version can.
   """
   from app.security.throttle import PREAUTH_GLOBAL_LIMIT
 
@@ -127,16 +125,15 @@ async def test_sec031a_the_global_preauth_budget_trips_deterministically_in_one_
   assert 429 in statuses
 
 
-async def test_sec031b_the_global_preauth_budget_recovers_exactly_one_window_later(
+async def test_the_global_preauth_budget_recovers_exactly_one_window_later(
   in_process_client: httpx.AsyncClient, clock: ManualClock
 ) -> None:
   """After a burst trips the global pre-auth budget, one request past ``BUDGET_WINDOW`` succeeds.
 
-  Moved from ``test_throttle_and_budget.py`` (ruling R57): recovery is
-  proved by advancing the clock past ``BUDGET_WINDOW``, not by sending a
-  moderate burst and hoping *some* of it lands in a fresh real-time
-  window — the previous version's weakest-true-statement caveat is what
-  this version replaces with an exact one.
+  Recovery is proved by advancing the clock past ``BUDGET_WINDOW``, not by
+  sending a moderate burst and hoping *some* of it lands in a fresh
+  real-time window — an exact recovery window rather than a weakest-true
+  caveat.
   """
   from app.security.throttle import BUDGET_WINDOW, PREAUTH_GLOBAL_LIMIT
 

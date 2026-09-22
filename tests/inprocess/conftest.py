@@ -1,9 +1,4 @@
-"""Fixtures for the in-process, whole-app, ``ManualClock``-driven transport (ruling R54).
-
-Authority: ``_agents/projects/CRM/DECISIONS.md`` §9 ruling **R54** (the
-``create_app`` injection seam and the exact fixture shape); ``CONTRACTS.md``
-§5.1; ``CLAUDE.md``/``AGENTS.md`` (credential discipline — every database
-credential reaches a process only through ``scripts/with-env``).
+"""Fixtures for the in-process, whole-app, ``ManualClock``-driven transport.
 
 Why this directory exists, and how it differs from ``tests/conftest.py``'s
 ``live_server``
@@ -29,17 +24,17 @@ The origin: ``https://crm.test``, not an ephemeral port
 --------------------------------------------------------
 ``live_server`` points ``crm_test``'s one stored ``public_origin`` row at its
 own ``https://127.0.0.1:<port>`` the moment it is first constructed, and
-never repoints it again for the rest of the session (it is session-scoped,
-ruling R46(b)/R57). This module needs its **own**, different, fixed origin
-so that (a) it does not depend on ``live_server`` ever having started, and
-(b) it does not silently steal ``live_server``'s effect if it ran first —
-whichever fixture sets the row last wins for everything that runs
-afterward. ``conftest.py``'s ``pytest_collection_modifyitems`` (root
-``conftest.py``) orders ``tests/inprocess`` **first** in the session
-specifically so this module's own ``manage set-origin --origin
-https://crm.test`` call always runs before ``live_server`` is ever
-constructed, and ``live_server`` then sets its own origin exactly once,
-after — no toggling back and forth is needed either way.
+never repoints it again for the rest of the session (it is session-scoped).
+This module needs its **own**, different, fixed origin so that (a) it does
+not depend on ``live_server`` ever having started, and (b) it does not
+silently steal ``live_server``'s effect if it ran first — whichever fixture
+sets the row last wins for everything that runs afterward. ``conftest.py``'s
+``pytest_collection_modifyitems`` (root ``conftest.py``) orders
+``tests/inprocess`` **first** in the session specifically so this module's
+own ``manage set-origin --origin https://crm.test`` call always runs before
+``live_server`` is ever constructed, and ``live_server`` then sets its own
+origin exactly once, after — no toggling back and forth is needed either
+way.
 
 The set-origin fixture below depends on ``bootstrap_admin``, not merely on
 ``crm_test_schema``: ``manage bootstrap`` — which provisions the one first
@@ -81,7 +76,7 @@ if TYPE_CHECKING:
 
   from app.security.clock import ManualClock
 
-#: The fixed, fictional origin every in-process request presents (R54).
+#: The fixed, fictional origin every in-process request presents.
 #: httpx derives the ``Host`` header from ``base_url``'s netloc, so setting
 #: this as the client's ``base_url`` is what makes every request carry
 #: ``Host: crm.test`` without this module stamping the header by hand.
@@ -119,11 +114,10 @@ def _set_inprocess_origin(
     (``https://crm.test``) -> every ``tests/inprocess`` test -> whichever
     ``live_server`` test runs first repoints it again, once, to its own
     ephemeral port. Depending on the weaker ``crm_test_schema`` instead
-    would let ``tests/inprocess`` (collected first, ruling R57) write the
-    origin *before* ``bootstrap`` ever runs, which would then make
-    ``bootstrap`` itself fail for every later, ``live_server``-dependent
-    test in the session — not a hypothetical, this was caught before it
-    ever ran.
+    would let ``tests/inprocess`` (collected first) write the origin
+    *before* ``bootstrap`` ever runs, which would then make ``bootstrap``
+    itself fail for every later, ``live_server``-dependent test in the
+    session — not a hypothetical, this was caught before it ever ran.
   tmp_path_factory : pytest.TempPathFactory
     For the one subprocess log, which nothing here prints.
   """
@@ -151,7 +145,7 @@ async def in_process_app(clock: ManualClock) -> AsyncIterator[FastAPI]:
     The instance this test will advance; every clock-dependent service the
     lifespan builds (``PasswordService``, ``ThrottleService``,
     ``BudgetService``, the origin/readiness caches,
-    ``CorrelationMiddleware``) receives this exact object (**R54**).
+    ``CorrelationMiddleware``) receives this exact object.
 
   Yields
   ------
@@ -163,12 +157,11 @@ async def in_process_app(clock: ManualClock) -> AsyncIterator[FastAPI]:
   Notes
   -----
   ``password_hasher`` is left at its default (the real, pinned production
-  profile — R54's own default), deliberately, even though it costs real
-  Argon2 time on every hash in these tests: the fast test profile
-  (``fast_password_hasher``, §7.4) exists for *fixture setup that seeds
-  many users*, not for driving the actual login path a test asserts on,
-  and the throttle/budget tests in this package pass hashing time as part
-  of what they exercise.
+  profile), deliberately, even though it costs real Argon2 time on every
+  hash in these tests: the fast test profile (``fast_password_hasher``)
+  exists for *fixture setup that seeds many users*, not for driving the
+  actual login path a test asserts on, and the throttle/budget tests in
+  this package pass hashing time as part of what they exercise.
 
   Reads its configuration through ``app.config.load_config()`` with no
   explicit mapping (the same as every other in-process fixture in this
@@ -185,7 +178,7 @@ async def in_process_app(clock: ManualClock) -> AsyncIterator[FastAPI]:
 
 @pytest_asyncio.fixture
 async def in_process_client(in_process_app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
-  """One httpx client driving ``in_process_app`` through ``httpx.ASGITransport`` (R54).
+  """One httpx client driving ``in_process_app`` through ``httpx.ASGITransport``.
 
   Parameters
   ----------
@@ -240,7 +233,7 @@ def _reset_throttle_and_budget_around_inprocess_tests(
   ----------
   crm_test_schema : None
     Documents the real dependency (the two tables must exist); already
-    satisfied regardless, since it is session-scoped autouse (R57).
+    satisfied regardless, since it is session-scoped autouse.
   tmp_path : Path
     For the two owner-role subprocess logs.
   """

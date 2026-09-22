@@ -1,18 +1,14 @@
-"""Session expiry, end to end through the real route table (ruling R54).
+"""Session expiry, end to end through the real route table.
 
-Authority: ``ACCESS_MATRIX.md`` §7 (SEC-013); ``slice-a.md`` §1.1
-(``PREAUTH_TTL``/``IDLE_TTL``/``ABSOLUTE_TTL``), §2.1 step 1 (idle/absolute
-expiry read from ``sessions``), §2.4 step 0b (CSRF against the pre-auth
-row); ``_agents/projects/CRM/DECISIONS.md`` §9 ruling **R54**.
-
-``tests/security/test_sessions.py`` already proves these three TTLs
-*at the repository layer* (``read_live_session`` given an explicit ``now``).
-This module proves the same three properties **through the served
-application** instead — the real ``GET``/``POST /login`` and
-``GET /account/password`` handlers, the real middleware stack, the real
-CSRF check — using ``in_process_client`` and the injected ``ManualClock``
-it shares with the app under test, so every advance below moves the whole
-application's notion of "now" in one call and no test here ever sleeps.
+The three TTLs — pre-auth, idle and absolute — are also proved
+*at the repository layer* in ``tests/security/test_sessions.py``
+(``read_live_session`` given an explicit ``now``). This module proves the
+same three properties **through the served application** instead — the
+real ``GET``/``POST /login`` and ``GET /account/password`` handlers, the
+real middleware stack, the real CSRF check — using ``in_process_client``
+and the injected ``ManualClock`` it shares with the app under test, so
+every advance below moves the whole application's notion of "now" in one
+call and no test here ever sleeps.
 """
 
 from __future__ import annotations
@@ -30,7 +26,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.asyncio
 
 #: A dedicated, never-registered identifier — this module never needs a
-#: real account for the pre-auth half (SEC-013's first case authenticates
+#: real account for the pre-auth half (the first case authenticates
 #: nobody; only the *pre-auth row's* age is under test).
 _NOBODY_EMAIL = "nobody+preauth-expiry@example.test"
 _IRRELEVANT_PASSWORD = "irrelevant123456"  # fictional, never a real credential
@@ -39,17 +35,14 @@ _IRRELEVANT_PASSWORD = "irrelevant123456"  # fictional, never a real credential
 async def test_preauth_session_is_refused_10min01s_after_get_login_but_a_fresh_one_still_works(
   in_process_client: httpx.AsyncClient, clock: ManualClock
 ) -> None:
-  """A pre-auth CSRF token older than ``PREAUTH_TTL`` is refused at step 0b (403).
+  """A pre-auth CSRF token older than ``PREAUTH_TTL`` is refused before credential checking (403).
 
-  Mirrors, through the real route, what
-  ``tests/security/test_sessions.py::test_sec013_preauth_session_is_live_at_9m59s_and_dead_at_10m01s``
-  already proves at the repository layer: the boundary is
-  ``PREAUTH_TTL`` (10 minutes), plus one second past it. The control half
-  (a *fresh* pre-auth session at the same advanced instant reaching
-  credential checking normally) is what proves the ``403`` above is
-  genuinely the expiry and not some other side effect of having advanced
-  the clock — the identical check the R54 seam's own landing commit
-  verified by hand.
+  Mirrors, through the real route, what the repository-layer pre-auth
+  expiry test already proves: the boundary is ``PREAUTH_TTL`` (10
+  minutes), plus one second past it. The control half (a *fresh* pre-auth
+  session at the same advanced instant reaching credential checking
+  normally) is what proves the ``403`` above is genuinely the expiry and
+  not some other side effect of having advanced the clock.
   """
   from app.security.sessions import PREAUTH_TTL
 
@@ -69,7 +62,7 @@ async def test_preauth_session_is_refused_10min01s_after_get_login_but_a_fresh_o
   )
   assert stale_response.status_code == 403, (
     "a POST /login carrying a pre-auth CSRF token older than PREAUTH_TTL must be refused "
-    f"at step 0b; got {stale_response.status_code}"
+    f"before credential checking; got {stale_response.status_code}"
   )
 
   fresh_get = await in_process_client.get("/login")
@@ -131,13 +124,13 @@ async def test_absolute_8h_expiry_ends_a_full_session_even_with_continuous_idle_
   """``ABSOLUTE_TTL`` (8 h) ends a session even though every gap stays well inside ``IDLE_TTL``.
 
   Proves the two bounds are independent, through the real route, the same
-  property ``test_sec013_idle_30min_and_absolute_8h_both_independently_expire_a_full_session``
-  proves at the repository layer for its second case: touching the session
-  regularly (every 25 minutes — comfortably under the 30-minute idle bound,
-  and comfortably over ``TOUCH_INTERVAL`` so each touch actually extends
-  the idle window) keeps it alive past where idle expiry alone would have
-  killed it, but the absolute 8-hour bound still ends it once total
-  elapsed time crosses that boundary.
+  property the repository-layer test proves for idle-vs-absolute
+  independence: touching the session regularly (every 25 minutes —
+  comfortably under the 30-minute idle bound, and comfortably over
+  ``TOUCH_INTERVAL`` so each touch actually extends the idle window) keeps
+  it alive past where idle expiry alone would have killed it, but the
+  absolute 8-hour bound still ends it once total elapsed time crosses that
+  boundary.
   """
   from app.security.sessions import ABSOLUTE_TTL, IDLE_TTL
 

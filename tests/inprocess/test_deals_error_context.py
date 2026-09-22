@@ -1,26 +1,16 @@
-"""R70 — the cookieless-vs-presented-cookie `401` fragment body, through the real route table.
+"""The cookieless-vs-presented-cookie `401` fragment body, through the real route table.
 
-Authority: ``contracts/slice-c.md`` §2(f) (R70, a Slice C backend task,
-built beside R67/R69); ``ACCESS_MATRIX.md`` §7 (``ACC-037``, ``SEC-025``);
-``tests/inprocess/test_contacts_hx_session.py`` (the ``ACC-037``/PIN 5
-tests this module sits beside — same transport, same reason: R70's
-"presented but dead" half needs ``ManualClock`` control the same way
-``ACC-037b`` does).
-
-Ruling **R70** (2026-09-22): ``app/routes/errors.py``'s
-``_REGION_TEXT[401]`` becomes a pair, selected by whether a session
-cookie was presented — presented -> ``"Your session ended. Sign in to
-continue."`` (``CP-07``, unchanged); **cookieless -> ``"Sign in to
-continue."``** (no "Your session ended" sentence). This module asserts
-BOTH halves against the real, shipped ``app/routes/errors.py``, driven
-through a deal route (the surface R70 was built for in Slice C) rather
+``app/routes/errors.py``'s ``_REGION_TEXT[401]`` is a pair, selected by
+whether a session cookie was presented — presented -> "Your session ended.
+Sign in to continue." (unchanged); cookieless -> "Sign in to continue." (no
+"Your session ended" sentence). This module asserts BOTH halves against the
+real, shipped ``app/routes/errors.py``, driven through a deal route rather
 than duplicating the existing contact-route assertions.
 
-Neither existing ``ACC-037`` test (``tests/inprocess/test_contacts_hx_session.py``)
-asserts on response body TEXT today — both stop at the ``HX-Redirect``
-header — so this file adds the text assertion rather than flipping an
-existing one (checked before writing this module, per the task's
-instruction not to duplicate).
+The existing contact-route session-expiry test
+(``tests/inprocess/test_contacts_hx_session.py``) does not assert on
+response body TEXT — it stops at the ``HX-Redirect`` header — so this file
+adds the text assertion rather than flipping an existing one.
 """
 
 from __future__ import annotations
@@ -42,7 +32,7 @@ pytestmark = pytest.mark.asyncio
 _SOME_DEAL_ID = "00000000-0000-4000-8000-000000000000"
 
 
-async def test_r70_cookieless_hx_401_reads_sign_in_to_continue_only(
+async def test_cookieless_hx_401_reads_sign_in_to_continue_only(
   in_process_client: httpx.AsyncClient,
 ) -> None:
   """No cookie at all + `HX-Request`: the fragment body is exactly `"Sign in to continue."`.
@@ -58,10 +48,10 @@ async def test_r70_cookieless_hx_401_reads_sign_in_to_continue_only(
   assert "<html" not in response.text.lower(), "the HX-Request answer must be the compact fragment"
 
 
-async def test_r70_presented_but_dead_cookie_hx_401_keeps_cp07(
+async def test_presented_but_dead_cookie_hx_401_keeps_full_session_ended_message(
   in_process_client: httpx.AsyncClient, clock: ManualClock, provision_agent: Any
 ) -> None:
-  """A cookie that WAS presented but no longer names a live session keeps `CP-07` in full."""
+  """A cookie that WAS presented but no longer names a live session keeps the full message."""
   from app.security.sessions import IDLE_TTL
 
   user: ProvisionedUser = provision_agent()
