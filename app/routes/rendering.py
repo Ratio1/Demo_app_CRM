@@ -23,6 +23,14 @@ a 500 or a 503 needs to be rendered.
 fixed allowlist and the table below turns it into copy. An unknown,
 repeated or malformed value renders no banner at all: it is never echoed
 and never becomes a 400 (**R20**).
+
+*Two filters, registered once* (``contracts/slice-c.md`` §2(a)). ``eur``
+and ``day`` are the only entries in the environment's filter table, so a
+template can render ``€ 12,345.00`` and ``21 Sep 2026`` without reaching
+for a platform-dependent ``strftime("%-d")`` or building a money string by
+hand. Filters are not context keys, so ``CONTRACTS.md`` §8 is untouched by
+their existence; ``eur`` refuses anything that is not a
+:class:`decimal.Decimal` (``ARC-021``'s runtime half).
 """
 
 from __future__ import annotations
@@ -35,6 +43,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.security.csrf import csrf_for_token
 from app.security.sessions import COOKIE_NAME
+from app.services.money import format_day, format_eur
 
 if TYPE_CHECKING:
   from collections.abc import Mapping
@@ -76,18 +85,36 @@ def _templates_dir() -> Path:
 
 TEMPLATES_DIR: Final = _templates_dir()
 
-TEMPLATES: Final = Jinja2Templates(
-  env=jinja2.Environment(
+
+def _environment() -> jinja2.Environment:
+  """Build the one Jinja environment, with its two filters already on it.
+
+  Returns
+  -------
+  jinja2.Environment
+    The explicit environment of delta **D11**, carrying ``eur`` and ``day``
+    (``contracts/slice-c.md`` §2(a)). Registering them here rather than at
+    first use is what makes the filter table a property of the module: a
+    template that renders money can never reach a differently-configured
+    environment, and an error page built outside the application still has
+    both filters.
+  """
+  environment = jinja2.Environment(
     loader=jinja2.FileSystemLoader(str(TEMPLATES_DIR)),
     autoescape=True,
     undefined=jinja2.StrictUndefined,
     auto_reload=False,
   )
-)
+  environment.filters["eur"] = format_eur
+  environment.filters["day"] = format_day
+  return environment
 
-#: Slice A's three codes (``slice-a.md`` §2.7) plus Slice B's five
-#: (``CONTRACTS.md`` §8.5, ``UX_FLOWS.md`` §6.6). Later slices extend this
-#: table additively; nothing else may render a banner.
+
+TEMPLATES: Final = Jinja2Templates(env=_environment())
+
+#: Slice A's three codes (``slice-a.md`` §2.7), Slice B's five and Slice
+#: C's five (``CONTRACTS.md`` §8.5, ``UX_FLOWS.md`` §6.6). Later slices
+#: extend this table additively; nothing else may render a banner.
 NOTICE_CODES: Final[dict[str, dict[str, str]]] = {
   "signed_out": {"kind": "success", "text": "You are signed out."},
   "session_ended": {"kind": "info", "text": "Your session ended. Sign in to continue."},
@@ -100,6 +127,11 @@ NOTICE_CODES: Final[dict[str, dict[str, str]]] = {
   "contact_archived": {"kind": "success", "text": "Contact archived."},
   "contact_restored": {"kind": "success", "text": "Contact restored."},
   "owner_changed": {"kind": "success", "text": "Owner changed to {name}."},
+  "deal_created": {"kind": "success", "text": "Deal created."},
+  "deal_saved": {"kind": "success", "text": "Deal saved."},
+  "deal_won": {"kind": "success", "text": "Deal marked won."},
+  "deal_lost": {"kind": "success", "text": "Deal marked lost."},
+  "deal_moved": {"kind": "success", "text": "Deal moved to {stage}."},
 }
 
 #: The one substitution shape a notice string may carry. ``CP-57``'s
