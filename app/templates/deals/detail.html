@@ -1,0 +1,66 @@
+{#-  deals/detail.html — CONTRACTS.md §8.2: `deal {id, title, amount,
+  close_date, stage, stage_label, stage_changed_at, version, created_at,
+  updated_at}`, `contact {id, full_name, is_archived, owner_name,
+  is_own}`, `can {edit, change_stage}`, `stage_form {idempotency_key,
+  version, lateral_targets, terminal, current_stage}`, `breadcrumb
+  [{label, url}]`.
+
+  UX_FLOWS.md S10: single column at both widths: <h1> title, amount,
+  stage badge, close date, "For: {contact}" link (CP-134), owner line,
+  the stage control (§4.8), CP-119 "Edit deal" as primary, and the deal's
+  own short context — no timeline of its own (activities belong to the
+  contact, spec §2). Breadcrumb CP-130 as <nav aria-label="Breadcrumb"> at
+  >=1024px, collapsing to a single "‹ {contact}" back link below that
+  (UI_SPEC.md §4.2) — both rendered, CSS decides which shows, the same
+  two-renderings-one-list pattern `partials/nav.html` uses for itself.
+
+  slice-c.md §2(a) note 9 / ask A-8 (orchestrator-implemented conditional
+  reading, recorded not re-litigated here): `can.change_stage` is False
+  whenever the parent contact is archived, so `partials/stage_control.
+  html` — which itself renders the CP-35 "closed" note for a TERMINAL
+  deal — is included only when `can.change_stage` is true; a deal whose
+  parent is archived shows no stage control and no terminal note, only
+  the "Archived contact" badge next to the stage badge (matching the
+  list/pipeline card treatment, UX_FLOWS.md §4.7 S7).
+-#}
+{% extends "base.html" %}
+{% from "partials/badges.html" import stage_badge, archived_contact_badge, owner_line %}
+{% block main %}
+<nav aria-label="Breadcrumb" class="breadcrumb breadcrumb-full">
+  <ol>
+    {% for item in breadcrumb %}
+    <li{% if loop.last %} aria-current="page"{% endif %}>{% if not loop.last %}<a href="{{ item.url }}">{{ item.label }}</a>{% else %}{{ item.label }}{% endif %}</li>
+    {% if not loop.last %}<li aria-hidden="true" class="breadcrumb-sep">&rsaquo;</li>{% endif %}
+    {% endfor %}
+  </ol>
+</nav>
+<a href="{{ breadcrumb[-2].url }}" class="back-link breadcrumb-collapsed">&lsaquo; {{ breadcrumb[-2].label }}</a>
+
+<header class="page-header">
+  <h1>{{ deal.title }}</h1>
+  <p class="deal-amount-lede">{{ deal.amount|eur }}</p>
+  <p class="badges-row">{{ stage_badge(deal.stage) }}{% if contact.is_archived %} {{ archived_contact_badge() }}{% endif %}</p>
+  <p class="note">Close {% if deal.close_date %}<time datetime="{{ deal.close_date.isoformat() }}">{{ deal.close_date|day }}</time>{% else %}—{% endif %}</p>
+  <p class="owner-line">For: <a href="/contacts/{{ contact.id }}">{{ contact.full_name }}</a></p>
+  {{ owner_line(contact.owner_name, contact.is_own) }}
+</header>
+{% include "partials/notice.html" %}
+
+<div class="page-actions">
+  {% if can.edit %}<a href="/deals/{{ deal.id }}/edit" class="btn btn-primary">Edit deal</a>{% endif %}
+</div>
+
+{% if can.change_stage %}
+<section class="stage-control-panel" aria-labelledby="h-stage">
+  <h2 id="h-stage" class="sr-only">Stage</h2>
+  {% with deal_id=deal.id, deal_title=deal.title, stage_form=stage_form %}
+  {% include "partials/stage_control.html" %}
+  {% endwith %}
+</section>
+{% endif %}
+
+<dl class="detail-list detail-list-meta">
+  <div class="detail-row"><dt>Created</dt><dd><time datetime="{{ deal.created_at.date().isoformat() }}">{{ deal.created_at|day }}</time></dd></div>
+  <div class="detail-row"><dt>Updated</dt><dd><time datetime="{{ deal.updated_at.date().isoformat() }}">{{ deal.updated_at|day }}</time></dd></div>
+</dl>
+{% endblock %}

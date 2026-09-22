@@ -1,0 +1,90 @@
+{#-  deals/form.html — CONTRACTS.md §8.2: `mode: "new"|"edit"`,
+  `action_url`, `cancel_url`, `deal {id?, title, amount, close_date,
+  version?}`, `contact {id, full_name}`, `errors {field: [str]}`,
+  `idempotency_key`, `limits {title:160}`.
+
+  POST field names (slice-c.md §2(a)/§2(d)) are `title`, `amount`,
+  `close_date` (+ `version` on edit) — NOT `contact_id` (the parent is the
+  path; PIN C8/`ACC-217` — `contact_id` is immutable after create and
+  carries no form field at all, in either mode) and NOT `stage`
+  (`ACC-211`: never accepted on create, never a field on edit —
+  `ACCESS_MATRIX.md` §5.3). No back-link element above the header,
+  matching the shipped `contacts/form.html` precedent (Cancel, at the
+  bottom, is the one navigation-away control in both editors).
+
+  UX_FLOWS.md §4.7 S9: single column, max 640px, mirrors S5. Amount is
+  `type="text" inputmode="decimal"` — never `type="number"` (UI_SPEC.md
+  §4.6: its spinner/wheel-stepping/locale parsing are all wrong for
+  money). `deal.amount` on the wire is the CANONICAL string
+  (`app/services/money.py canonical_amount`, e.g. "1250.00") on a fresh
+  load, or the RAW submitted string after a failed validation
+  (slice-c.md §2(a): "the form's amount is never the € string" — `€`
+  appears only on read-only display surfaces, never in this input's
+  `value=`). Close date optional (R31, `<input type="date">`, ISO on the
+  wire). Stage is absent on create (`CP-33`) and never a field on edit —
+  this template has no stage input in either mode. R28: `autofocus` on
+  the first field on a fresh load only, none after a validation failure.
+-#}
+{% extends "base.html" %}
+{% from "partials/field_errors.html" import field_errors %}
+{% block main %}
+{% set field_labels = {"title": "deal-title", "amount": "deal-amount", "close_date": "deal-close-date"} %}
+{% set title_errors = errors.get("title") %}
+{% set amount_errors = errors.get("amount") %}
+{% set close_date_errors = errors.get("close_date") %}
+{% include "partials/error_summary.html" %}
+<header class="page-header">
+  <h1>{{ "New deal" if mode == "new" else "Edit deal" }}</h1>
+</header>
+<div class="form-shell">
+  <p class="owner-line">For: <a href="/contacts/{{ contact.id }}">{{ contact.full_name }}</a></p>
+  {% if mode == "new" %}<p class="field-help">New deals start at the New stage.</p>{% endif %}
+  <form method="post" action="{{ action_url }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="idempotency_key" value="{{ idempotency_key }}">
+    {% if mode == "edit" %}<input type="hidden" name="version" value="{{ deal.version }}">{% endif %}
+
+    <fieldset>
+      <legend class="sr-only">Deal details</legend>
+
+      <div class="field">
+        <label for="deal-title">Title <span class="field-required" aria-hidden="true">*</span></label>
+        <input id="deal-title" name="title" type="text" required maxlength="{{ limits.title }}"
+               value="{{ deal.title }}"
+               {% if not errors %}autofocus{% endif %}
+               {% if title_errors %}aria-invalid="true" aria-describedby="err-title"{% endif %}>
+        {% if title_errors %}
+        {{ field_errors("title", title_errors) }}
+        {% endif %}
+      </div>
+
+      <div class="field">
+        <label for="deal-amount">Amount <span class="field-required" aria-hidden="true">*</span></label>
+        <input id="deal-amount" name="amount" type="text" inputmode="decimal" required
+               value="{{ deal.amount }}"
+               {% if amount_errors %}aria-invalid="true" aria-describedby="err-amount"{% endif %}>
+        {% if amount_errors %}
+        {{ field_errors("amount", amount_errors) }}
+        {% else %}
+        <p class="field-help">Use two decimals, for example 1250.00.</p>
+        {% endif %}
+      </div>
+
+      <div class="field">
+        <label for="deal-close-date">Close date</label>
+        <input id="deal-close-date" name="close_date" type="date"
+               value="{{ deal.close_date or '' }}"
+               {% if close_date_errors %}aria-invalid="true" aria-describedby="err-close_date"{% endif %}>
+        {% if close_date_errors %}
+        {{ field_errors("close_date", close_date_errors) }}
+        {% endif %}
+      </div>
+    </fieldset>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary btn-form-submit">Save deal</button>
+      <a href="{{ cancel_url }}" class="btn btn-secondary btn-form-submit">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}
