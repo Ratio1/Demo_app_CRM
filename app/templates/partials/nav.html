@@ -25,7 +25,7 @@
   {% endif %}
 </nav>
 <nav aria-label="Account" class="app-nav-account">
-  <p class="menu-identity">{{ principal.display_name }} &middot; {{ _role_label }}</p>
+  <p class="menu-identity">{{ principal.display_name }} · {{ _role_label }}</p>
   <a href="/account/password"{% if nav_active == "account" %} aria-current="page"{% endif %}>Change password</a>
   <form method="post" action="/logout">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -48,7 +48,7 @@
         <li><a href="/deals"{% if nav_active == "deals" %} aria-current="page"{% endif %}>Deals</a></li>
       </ul>
       {% endif %}
-      <p class="menu-identity">{{ principal.display_name }} &middot; {{ _role_label }}</p>
+      <p class="menu-identity">{{ principal.display_name }} · {{ _role_label }}</p>
       <a href="/account/password"{% if nav_active == "account" %} aria-current="page"{% endif %}>Change password</a>
       <form method="post" action="/logout">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

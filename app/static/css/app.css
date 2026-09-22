@@ -354,7 +354,29 @@ button {
 .app-menu > details[open] {
   position: absolute;
   inset-inline: 0;
+  top: 0;
   z-index: 50;
+  background: var(--color-nav-bg);
+  /* Right-align the <summary> trigger within the now full-width box below
+     (a plain block child would stretch to 100% and jump to the left edge,
+     losing its position and height inside the 56px bar — confirmed by
+     screenshotting the open state, not assumed). Only the trigger needs
+     this: every other child (ul/p/a/form) stays a normal, full-width
+     block so the panel body is unaffected. */
+  text-align: right;
+}
+.app-menu > details[open] > summary {
+  display: inline-flex;
+  height: var(--topbar-height);
+}
+/* `text-align` is inherited: without this reset, the panel body's own
+   text (menu links, identity line) would also render right-aligned,
+   which is not what the fix above is for — only the trigger needs it. */
+.app-menu > details[open] > ul,
+.app-menu > details[open] > .menu-identity,
+.app-menu > details[open] > a,
+.app-menu > details[open] > form {
+  text-align: left;
 }
 .app-menu > details ul {
   background: var(--color-nav-bg);
