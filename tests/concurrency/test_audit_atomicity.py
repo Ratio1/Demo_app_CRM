@@ -39,18 +39,38 @@ class _ForcedRollback(RuntimeError):
 async def test_sql016_a_forced_failure_after_the_audit_insert_leaves_no_row_in_either_table(
   clock: Any, tmp_path: object
 ) -> None:
-  """Both the session row and the audit row vanish together when the transaction aborts."""
-  from app.db.repositories.audit import insert_event  # type: ignore[import-not-found]
-  from app.db.repositories.sessions import (  # type: ignore[import-not-found]
-    promote_session,
-    read_live_session,
-  )
-  from app.security.sessions import ABSOLUTE_TTL, IDLE_TTL  # type: ignore[import-not-found]
+  """Both the session row and the audit row vanish together when the transaction aborts.
+
+  Deliberately does **not** depend on the shared ``crm_test_schema``
+  fixture. This file is collected before ``test_last_admin_race.py``
+  (``tests/concurrency``, "audit" sorts before "last"), whose own
+  module-scoped ``isolated_two_admins`` fixture resets and re-migrates
+  ``crm_test`` independently of, and without consulting, the
+  session-scoped ``crm_test_schema`` fixture's cache (module docstring:
+  "this module's reset runs and completes before the shared session
+  fixture is first requested"). Adding ``crm_test_schema`` here was tried
+  and reverted: it makes *this* file the first requester instead, so
+  ``crm_test_schema`` runs and caches **before**
+  ``test_last_admin_race.py``'s own reset wipes and re-bootstraps the
+  schema again — after which the later, still-cached ``bootstrap_admin``
+  fixture (``tests/security``) tries ``manage bootstrap`` a second time
+  against an already-provisioned database and fails outright (exit 3),
+  taking down every ``live_server``-dependent test in the suite. Recorded
+  as a pre-existing ordering fragility (**not fixed here**, given the
+  collateral risk just demonstrated) rather than silently left unexplained
+  — see the round-3 test-engineer report.
+  """
   from conftest import insert_test_user_row
 
   from app.config import load_config
   from app.db.pool import close_pool, create_pool, open_pool
+  from app.db.repositories.audit import insert_event
+  from app.db.repositories.sessions import (
+    promote_session,
+    read_live_session,
+  )
   from app.db.retry import run_serializable
+  from app.security.sessions import ABSOLUTE_TTL, IDLE_TTL
 
   now = clock.now()
   correlation_id = str(uuid.uuid4())
@@ -127,18 +147,22 @@ async def test_sql016_a_forced_failure_after_the_audit_insert_leaves_no_row_in_e
 async def test_sql016_control_the_same_mutation_without_a_forced_failure_commits_both(
   clock: Any, tmp_path: object
 ) -> None:
-  """Negative control: without a forced failure, both rows commit (proves the harness works)."""
+  """Negative control: without a forced failure, both rows commit (proves the harness works).
+
+  Does not depend on ``crm_test_schema``, for the same reason the other
+  test in this module does not — see its docstring.
+  """
+  from conftest import insert_test_user_row
+
+  from app.config import load_config
+  from app.db.pool import close_pool, create_pool, open_pool
   from app.db.repositories.audit import insert_event
   from app.db.repositories.sessions import (
     promote_session,
     read_live_session,
   )
-  from app.security.sessions import ABSOLUTE_TTL, IDLE_TTL
-  from conftest import insert_test_user_row
-
-  from app.config import load_config
-  from app.db.pool import close_pool, create_pool, open_pool
   from app.db.retry import run_serializable
+  from app.security.sessions import ABSOLUTE_TTL, IDLE_TTL
 
   now = clock.now()
   correlation_id = str(uuid.uuid4())
