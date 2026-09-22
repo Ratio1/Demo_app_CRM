@@ -37,6 +37,18 @@
 #                                `--stop-timeout 25` or docker escalates to
 #                                SIGKILL before uvicorn's own window closes.
 #
+#   --no-access-log              uvicorn's own access line carries the full
+#                                request target, query string included, which
+#                                R1/SEC-061 forbids in a log. app/logging.py
+#                                emits one JSON record per request instead,
+#                                with `path` stripped of the query (delta D8).
+#
+# Every PG* variable is scrubbed before exec (delta D9, ruling R35). Every
+# libpq parameter is passed explicitly by app/config.py, so a hostile PGSSLMODE
+# or PGHOST cannot override one — but a PGSERVICE naming a service that does
+# not exist is a hard connection failure, and that is an availability lever an
+# unprivileged co-tenant of this process's environment could otherwise pull.
+#
 # `python -B` so nothing writes bytecode on the read-only root filesystem; the
 # .pyc files for the dependencies are baked in at build time by pip.
 #
@@ -47,12 +59,19 @@
 
 set -Eeuo pipefail
 
+# D9 / R35 — every PG* name, unconditionally, before the server starts.
+for pg_name in "${!PG@}"; do
+  unset "$pg_name"
+done
+unset pg_name
+
 exec python -B -m uvicorn app.main:app \
   --host 0.0.0.0 \
   --port 3000 \
   --workers 1 \
   --no-server-header \
   --no-proxy-headers \
+  --no-access-log \
   --limit-concurrency 64 \
   --backlog 128 \
   --timeout-graceful-shutdown 20
