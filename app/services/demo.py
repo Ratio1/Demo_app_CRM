@@ -62,8 +62,9 @@ __all__ = [
 #: order without importing ``app.db.repositories`` itself.
 DEMO_DELETE_ORDER: Final[tuple[str, ...]] = maintenance_repo.DEMO_DELETE_ORDER
 
-#: The only scale this command accepts (the plan defers ``profile``, which
-#: existed for the deferred resource gate and for nothing else).
+#: The only scale this command accepts. ``profile`` is not implemented:
+#: it existed only for the resource-usage gate, which is deferred, and
+#: nothing else needs it.
 SCALE_SMALL: Final = "small"
 
 #: 20 contacts, 20 deals, 100 activities.
