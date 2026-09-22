@@ -24,6 +24,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Final
 
 from fastapi import APIRouter
+from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
 
 from app.logging import current_correlation_id
@@ -58,7 +59,6 @@ from app.services.auth import (
 
 if TYPE_CHECKING:
   from starlette.datastructures import FormData
-  from starlette.requests import Request
 
   from app.security.principal import Principal
 

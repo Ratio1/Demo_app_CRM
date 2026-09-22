@@ -14,16 +14,13 @@ only.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final
+from typing import Final
 
 from fastapi import APIRouter
-from starlette.responses import PlainTextResponse
+from starlette.requests import Request
+from starlette.responses import PlainTextResponse, Response
 
 from app.security.context import context_of
-
-if TYPE_CHECKING:
-  from starlette.requests import Request
-  from starlette.responses import Response
 
 __all__ = ["HEALTH_PATHS", "router"]
 
