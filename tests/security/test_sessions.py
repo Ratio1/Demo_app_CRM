@@ -1,21 +1,16 @@
-"""Session lifecycle — SEC-011 through SEC-015, SEC-024, SEC-025, SEC-029, SEC-037.
-
-Authority: ``ACCESS_MATRIX.md`` §7; ``slice-a.md`` §1.1 (``app/security/sessions.py``,
-``PREAUTH_TTL``/``IDLE_TTL``/``ABSOLUTE_TTL``), §2.2 (cookie), §10(b)
-(``sessions.py`` repository — ``read_live_session``, expiry filtered in SQL).
+"""Session lifecycle: TTL expiry, revocation, cookie behaviour, and forced-password-reset scoping.
 
 Split by how the assertion is observable (module docstring of
-``conftest.py`` explains why): expiry and revocation (SEC-013, SEC-014,
-SEC-015) are **in-process, at the repository layer**, driving the
-repository's own ``now`` parameter against ``crm_test`` directly, without
-sleeping. ``live_server``'s own clock is the real, production
-``SystemClock`` and cannot be swapped, so nothing driven through it can be
-clock-tested this way — that half is why this module still exists at the
-repository layer rather than being subsumed entirely. As of ruling **R54**
-there is now a *third* way to test the same properties without sleeping:
-``tests/inprocess`` builds the whole app with an injected ``ManualClock``
-and drives it through ``httpx.ASGITransport``, which is the stronger,
-full-stack version of SEC-013's pre-auth-expiry case (see
+``conftest.py`` explains why): expiry and revocation are **in-process, at
+the repository layer**, driving the repository's own ``now`` parameter
+against ``crm_test`` directly, without sleeping. ``live_server``'s own
+clock is the real, production ``SystemClock`` and cannot be swapped, so
+nothing driven through it can be clock-tested this way — that half is why
+this module still exists at the repository layer rather than being
+subsumed entirely. There is also a *third* way to test the same properties
+without sleeping: ``tests/inprocess`` builds the whole app with an
+injected ``ManualClock`` and drives it through ``httpx.ASGITransport``,
+which is the stronger, full-stack version of the pre-auth-expiry case (see
 ``tests/inprocess/test_session_expiry.py``) — kept here *as well*, not
 replaced, because this module proves the repository's own contract
 independently of the route/middleware stack above it. Everything else
@@ -57,11 +52,11 @@ def _token_and_digest() -> tuple[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# SEC-013 — pre-auth 10 min, idle 30 min, absolute 8 h, in-process.
+# Pre-auth 10 min, idle 30 min, absolute 8 h, in-process.
 # ---------------------------------------------------------------------------
 
 
-async def test_sec013_preauth_session_is_live_at_9m59s_and_dead_at_10m01s(
+async def test_preauth_session_is_live_at_9m59s_and_dead_at_10m01s(
   db_connection: Any, clock: Any
 ) -> None:
   """A pre-auth row is readable one second before its 10-minute expiry, dead one second after."""
@@ -97,7 +92,7 @@ async def test_sec013_preauth_session_is_live_at_9m59s_and_dead_at_10m01s(
   assert just_after is None
 
 
-async def test_sec013_idle_30min_and_absolute_8h_both_independently_expire_a_full_session(
+async def test_idle_30min_and_absolute_8h_both_independently_expire_a_full_session(
   db_connection: Any, clock: Any, tmp_path: Path
 ) -> None:
   """A full session dies at idle timeout even while inside its absolute window, and vice versa."""
@@ -167,11 +162,11 @@ async def test_sec013_idle_30min_and_absolute_8h_both_independently_expire_a_ful
 
 
 # ---------------------------------------------------------------------------
-# SEC-014 / SEC-015 — revocation, in-process.
+# Revocation, in-process.
 # ---------------------------------------------------------------------------
 
 
-async def test_sec014_logout_deletes_the_session_row_and_it_is_no_longer_live(
+async def test_logout_deletes_the_session_row_and_it_is_no_longer_live(
   db_connection: Any, clock: Any, tmp_path: Path
 ) -> None:
   """``delete_session`` (logout) makes an immediately prior read return ``None``."""
@@ -219,7 +214,7 @@ async def test_sec014_logout_deletes_the_session_row_and_it_is_no_longer_live(
   assert after is None
 
 
-async def test_sec015_revoke_sessions_keeps_only_the_named_session(
+async def test_revoke_sessions_keeps_only_the_named_session(
   db_connection: Any, clock: Any, tmp_path: Path
 ) -> None:
   """``revoke_sessions(keep_session_id=...)`` (password change) kills every sibling session."""
@@ -274,18 +269,18 @@ async def test_sec015_revoke_sessions_keeps_only_the_named_session(
 
 
 # ---------------------------------------------------------------------------
-# SEC-011, SEC-012, SEC-024, SEC-025, SEC-029, SEC-037 — over HTTP.
+# Cookie identity, rotation, caching and logout headers, over HTTP.
 # ---------------------------------------------------------------------------
 
 
-async def test_sec011_the_session_cookie_is_named_exactly_dunder_host_crm_session(
+async def test_the_session_cookie_is_named_exactly_dunder_host_crm_session(
   admin_session: httpx.AsyncClient,
 ) -> None:
-  """The literal cookie name is ``__Host-crm_session`` (R10) — not merely the prefix."""
+  """The literal cookie name is ``__Host-crm_session`` — not merely the prefix."""
   assert "__Host-crm_session" in admin_session.cookies
 
 
-async def test_sec012_login_rotates_the_cookie_value_the_preauth_token_no_longer_works(
+async def test_login_rotates_the_cookie_value_the_preauth_token_no_longer_works(
   http_client_factory: Any, bootstrap_admin: ProvisionedUser
 ) -> None:
   """The pre-auth cookie value dies on login; only the new, post-login value authenticates."""
@@ -305,7 +300,7 @@ async def test_sec012_login_rotates_the_cookie_value_the_preauth_token_no_longer
   assert response.status_code in (303, 403), "the dead pre-auth token must not authenticate"
 
 
-async def test_sec024_private_page_carries_hx_history_false() -> None:
+async def test_private_page_carries_hx_history_false() -> None:
   """A private page's ``<body>`` carries ``hx-history="false"`` so it is never HTMX-cached.
 
   Static, template-level (see ``base.html``'s ``{% if private %}`` guard);
@@ -319,7 +314,7 @@ async def test_sec024_private_page_carries_hx_history_false() -> None:
   assert 'hx-history="false"' in base_html
 
 
-async def test_sec025_a_private_page_response_carries_cache_control_no_store(
+async def test_a_private_page_response_carries_cache_control_no_store(
   admin_session: httpx.AsyncClient,
 ) -> None:
   """Every private page response carries ``Cache-Control: no-store``."""
@@ -327,7 +322,7 @@ async def test_sec025_a_private_page_response_carries_cache_control_no_store(
   assert response.headers.get("cache-control") == "no-store"
 
 
-async def test_sec029_logout_carries_clear_site_data_and_expires_the_cookie(
+async def test_logout_carries_clear_site_data_and_expires_the_cookie(
   admin_session: httpx.AsyncClient,
 ) -> None:
   """``POST /logout`` carries ``Clear-Site-Data: "cache", "storage"`` and an expired cookie."""
@@ -374,7 +369,7 @@ def _run_manage_with_stdin(*args: str, password: str, tmp_path: Path, name: str)
     password_file.unlink(missing_ok=True)
 
 
-async def test_sec037_a_forced_reset_session_reaches_only_password_and_logout(
+async def test_a_forced_reset_session_reaches_only_password_and_logout(
   live_server: LiveServer,
   http_client_factory: Any,
   tmp_path: Path,
@@ -420,37 +415,37 @@ async def test_sec037_a_forced_reset_session_reaches_only_password_and_logout(
   assert denied.status_code == 403
 
 
-async def test_r60_forced_reset_with_a_valid_next_still_lands_on_account_password(
+async def test_forced_reset_with_a_valid_next_still_lands_on_account_password(
   live_server: LiveServer,
   http_client_factory: Any,
   tmp_path: Path,
 ) -> None:
-  """R55 regression (ruling **R60**): a valid ``next`` never outranks the forced-reset destination.
+  """A valid ``next`` never outranks the forced-reset destination.
 
   ``app/routes/auth.py::login_submit`` pins ``destination = PASSWORD_URL if
-  result.must_change_password else (next_path or DASHBOARD_URL)`` (R55).
+  result.must_change_password else (next_path or DASHBOARD_URL)``.
   Before this test, only the no-``next`` case had coverage
-  (``test_sec037_a_forced_reset_session_reaches_only_password_and_logout``,
-  above) — the whole point of R55 is that a *valid*, same-origin ``next``
-  (``/dashboard``, not one of ``SEC-042``'s hostile values) must still lose
-  to the forced-reset destination for a ``must_change_password`` account, so
-  this drives exactly that case end to end over ``POST /login``.
+  (``test_a_forced_reset_session_reaches_only_password_and_logout``,
+  above) — a *valid*, same-origin ``next`` (``/dashboard``, not one of the
+  hostile open-redirect values) must still lose to the forced-reset
+  destination for a ``must_change_password`` account, so this drives
+  exactly that case end to end over ``POST /login``.
 
   Provisions its own agent through ``manage reset-password`` (sets
-  ``must_change_password``), never the shared admin (R58: bootstrap keeps
+  ``must_change_password``), never the shared admin (bootstrap keeps
   ``must_change_password = FALSE`` by design, so the admin cannot exercise
   this path at all).
   """
   from conftest import extract_csrf_token, unique_email
 
-  email = unique_email("r60-forced-reset")
-  password = "a fictional r60 regression passphrase"
+  email = unique_email("forced-reset-next")
+  password = "a fictional forced-reset-next regression passphrase"
   _run_manage_with_stdin(
     "create-user",
     "--email",
     email,
     "--name",
-    "R60 Forced Reset",
+    "Forced Reset Next Regression",
     "--role",
     "agent",
     "--password-stdin",
@@ -483,6 +478,6 @@ async def test_r60_forced_reset_with_a_valid_next_still_lands_on_account_passwor
   assert response.status_code == 303
   assert response.headers.get("location") == "/account/password", (
     "a valid, same-origin `next` must never outrank the forced-reset "
-    f"destination (R55); got Location: {response.headers.get('location')!r}"
+    f"destination; got Location: {response.headers.get('location')!r}"
   )
   del live_server

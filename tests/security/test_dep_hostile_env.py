@@ -1,8 +1,4 @@
-"""DEP-004 (hostile ``PG*`` environment) and DEP-013 (TLS negative pair).
-
-Authority: ``ACCESS_MATRIX.md`` §7 (DEP-004, DEP-013); ``slice-a.md`` §8.1,
-§8.3 (the live evidence this module re-derives independently) and §6 delta
-**D9** (the ``PG*`` scrub, ruling **R35**).
+"""Hostile ``PG*`` environment resistance, and the TLS verify-full negative pair.
 
 Unlike most of ``tests/security``, these do **not** need ``app.main`` or a
 live server: ``app.config`` and a direct ``psycopg`` connection already
@@ -16,10 +12,10 @@ Every probe here runs as a ``python -c`` **subprocess** under
 Each probe script prints exactly one machine-parseable ``RESULT ...`` line
 containing only booleans, an exception *class* name, or TLS session
 metadata (``ssl``, negotiated version) — never a host, port, user, database
-name or password, none of which this module or its assertions ever touch,
-per ``AGENTS.md``'s "never print credentials or env values." The full
-subprocess output is additionally saved to a ``tmp_path`` log file that
-nothing here reads or asserts on, for a human to open by hand if needed.
+name or password, none of which this module or its assertions ever touch.
+The full subprocess output is additionally saved to a ``tmp_path`` log file
+that nothing here reads or asserts on, for a human to open by hand if
+needed.
 """
 
 from __future__ import annotations
@@ -37,11 +33,10 @@ VENV_PYTHON: Final[Path] = SUBMODULE_ROOT / ".venv" / "bin" / "python"
 WITH_ENV: Final[Path] = SUBMODULE_ROOT / "scripts" / "with-env"
 RUNTIME_ENV_FILE: Final[str] = ".env.test.local"
 
-#: DEP-004's exact hostile set, minus PGSERVICE/PGSERVICEFILE — which the
-#: register itself notes are a *separate*, availability-only claim (a
-#: nonexistent service name is a hard connection failure even with every
-#: parameter explicit) and must not be conflated with the downgrade/redirect
-#: claim this half tests.
+#: A hostile ``PG*`` set, minus ``PGSERVICE``/``PGSERVICEFILE`` — those two
+#: are a *separate*, availability-only claim (a nonexistent service name is
+#: a hard connection failure even with every parameter explicit) and must
+#: not be conflated with the downgrade/redirect claim this half tests.
 _HOSTILE_PG_ENV: Final[dict[str, str]] = {
   "PGSSLMODE": "disable",
   "PGHOST": "evil.invalid",
@@ -106,18 +101,18 @@ def _run_probe(
 
 
 # ---------------------------------------------------------------------------
-# DEP-004(a) — explicit kwargs reach crm_test under a hostile PG* environment.
+# Explicit connect kwargs reach crm_test under a hostile PG* environment.
 #
-# Ruling R53: `scripts/with-env` scrubs every `PG*` variable **before**
-# `exec`-ing the child (D9/R35), so setting the hostile set as `extra_env` on
-# the *launcher* subprocess (the previous shape of this test) is scrubbed
-# away before the child interpreter even starts — the child never sees a
-# hostile environment at all, and the test would pass regardless of whether
-# `connect_kwargs()` actually resists one. The probe below instead injects
-# the hostile `PG*` set with `os.environ.update(...)` **inside** the running
-# child process, immediately before `load_config()`/`connect` — after the
-# scrub, but exactly where a real hostile environment would sit — so a
-# connection succeeding here is real evidence, not a vacuous pass.
+# scripts/with-env scrubs every PG* variable **before** exec-ing the child,
+# so setting the hostile set as extra_env on the *launcher* subprocess (a
+# previous shape of this test) is scrubbed away before the child
+# interpreter even starts — the child never sees a hostile environment at
+# all, and the test would pass regardless of whether connect_kwargs()
+# actually resists one. The probe below instead injects the hostile PG*
+# set with os.environ.update(...) **inside** the running child process,
+# immediately before load_config()/connect — after the scrub, but exactly
+# where a real hostile environment would sit — so a connection succeeding
+# here is real evidence, not a vacuous pass.
 # ---------------------------------------------------------------------------
 
 _TLS_SESSION_PROBE = """
@@ -178,32 +173,29 @@ asyncio.run(main())
 """
 
 
-def test_dep004a_hostile_pg_env_still_reaches_crm_test_over_tls(tmp_path: Path) -> None:
+def test_hostile_pg_env_still_reaches_crm_test_over_tls(tmp_path: Path) -> None:
   """A hostile ``PG*`` set injected **inside** the connecting process still yields ``verify-full``.
 
-  Scope, exactly as the register pins it: every contracted kwarg is
-  explicit in ``connect_kwargs()`` — as of ``D1`` (ruling **R34**, commit
-  ``abff0ea``), that is the full twelve-key set (``host``, ``port``,
-  ``user``, ``password``, ``dbname``, ``sslmode=verify-full``,
-  ``sslrootcert``, ``connect_timeout``, ``options=""``,
-  ``ssl_min_protocol_version=TLSv1.2``, ``gssencmode=disable``,
-  ``client_encoding=UTF8``) — so libpq has no gap to fall back into for
-  *any* of them: this is the "cannot override" half.
-  ``tests/unit/test_config.py::test_d1_connect_kwargs_is_exactly_the_twelve_key_set``
-  asserts the key set itself, statically, against ``connect_kwargs()``'s
-  return value; this test complements it with the live half — a real TLS
-  session still negotiates against the configured host, despite
-  ``PGSSLMODE=disable`` and a nonexistent ``PGSSLROOTCERT`` sitting in
-  ``os.environ`` at connect time (R53 — injected inside the child so
-  ``with-env``'s own scrub, which would otherwise make this vacuous, is
-  irrelevant here).
+  Every contracted kwarg is explicit in ``connect_kwargs()`` — the full
+  twelve-key set (``host``, ``port``, ``user``, ``password``, ``dbname``,
+  ``sslmode=verify-full``, ``sslrootcert``, ``connect_timeout``,
+  ``options=""``, ``ssl_min_protocol_version=TLSv1.2``,
+  ``gssencmode=disable``, ``client_encoding=UTF8``) — so libpq has no gap
+  to fall back into for *any* of them: this is the "cannot override" half.
+  ``tests/unit/test_config.py``'s twelve-key test asserts the key set
+  itself, statically, against ``connect_kwargs()``'s return value; this
+  test complements it with the live half — a real TLS session still
+  negotiates against the configured host, despite ``PGSSLMODE=disable``
+  and a nonexistent ``PGSSLROOTCERT`` sitting in ``os.environ`` at connect
+  time (injected inside the child so ``with-env``'s own scrub, which would
+  otherwise make this vacuous, is irrelevant here).
   """
   # `-c`, not a script path: a script *path* puts the script's own directory
   # on sys.path[0], not the cwd, so `import app` would fail regardless of
-  # `cwd=SUBMODULE_ROOT` — the same reason slice-a.md §10(e) uses `-c`.
+  # `cwd=SUBMODULE_ROOT`.
   script = _HOSTILE_ENV_TLS_PROBE.replace("__HOSTILE_ENV__", repr(_HOSTILE_PG_ENV))
   argv = [str(WITH_ENV), RUNTIME_ENV_FILE, "--", str(VENV_PYTHON), "-B", "-c", script]
-  # No `extra_env` on the launcher: R53's whole point is that a hostile set
+  # No `extra_env` on the launcher: the whole point is that a hostile set
   # placed there is scrubbed by `with-env` before the child ever starts.
   result = _run_probe(argv, extra_env={}, log_path=tmp_path / "probe.log")
   assert "connected=True" in result
@@ -211,7 +203,7 @@ def test_dep004a_hostile_pg_env_still_reaches_crm_test_over_tls(tmp_path: Path) 
   assert "host_matches_config=True" in result
 
 
-def test_dep004a_baseline_without_hostile_env_also_connects_over_tls(tmp_path: Path) -> None:
+def test_baseline_without_hostile_env_also_connects_over_tls(tmp_path: Path) -> None:
   """Control case: the same (non-hostile) probe shape, for comparison."""
   argv = [str(WITH_ENV), RUNTIME_ENV_FILE, "--", str(VENV_PYTHON), "-B", "-c", _TLS_SESSION_PROBE]
   result = _run_probe(argv, extra_env={}, log_path=tmp_path / "probe.log")
@@ -220,7 +212,7 @@ def test_dep004a_baseline_without_hostile_env_also_connects_over_tls(tmp_path: P
 
 
 # ---------------------------------------------------------------------------
-# DEP-004(b) — the D9 scrub in scripts/with-env (ruling R35).
+# The PG* scrub in scripts/with-env.
 # ---------------------------------------------------------------------------
 
 _PG_STAR_SURVIVAL_PROBE = (
@@ -230,8 +222,8 @@ _PG_STAR_SURVIVAL_PROBE = (
 )
 
 
-def test_dep004b_with_env_scrubs_every_pg_star_variable_before_exec(tmp_path: Path) -> None:
-  """After ``scripts/with-env`` execs, no ``PG*`` variable survives into the child (D9/R35)."""
+def test_with_env_scrubs_every_pg_star_variable_before_exec(tmp_path: Path) -> None:
+  """After ``scripts/with-env`` execs, no ``PG*`` variable survives into the child."""
   argv = [str(WITH_ENV), RUNTIME_ENV_FILE, "--", str(VENV_PYTHON), "-B", "-c"]
   completed = subprocess.run(  # noqa: S603
     [*argv, _PG_STAR_SURVIVAL_PROBE],
@@ -251,7 +243,7 @@ def test_dep004b_with_env_scrubs_every_pg_star_variable_before_exec(tmp_path: Pa
 
 
 # ---------------------------------------------------------------------------
-# DEP-013 — the verify-full negative pair: wrong CA, wrong hostname.
+# The verify-full negative pair: wrong CA, wrong hostname.
 # ---------------------------------------------------------------------------
 
 _WRONG_CA_PROBE = """
@@ -296,7 +288,7 @@ asyncio.run(main())
 """
 
 
-def test_dep013_a_foreign_root_certificate_fails_closed(tmp_path: Path) -> None:
+def test_a_foreign_root_certificate_fails_closed(tmp_path: Path) -> None:
   """``verify-full`` against a valid-but-foreign CA is rejected, not silently trusted."""
   foreign_key = tmp_path / "foreign.key"
   foreign_cert = tmp_path / "foreign.crt"
@@ -330,7 +322,7 @@ def test_dep013_a_foreign_root_certificate_fails_closed(tmp_path: Path) -> None:
   assert "rejected=True" in result
 
 
-def test_dep013_a_hostname_absent_from_the_certificate_san_fails_closed(tmp_path: Path) -> None:
+def test_a_hostname_absent_from_the_certificate_san_fails_closed(tmp_path: Path) -> None:
   """``verify-full`` against a hostname the server certificate does not cover is rejected."""
   argv = [
     str(WITH_ENV),

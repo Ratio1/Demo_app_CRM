@@ -1,8 +1,4 @@
-"""Slice B contact-surface security — SEC-001 through SEC-006, SEC-076; CSRF on every new POST.
-
-Authority: ``ACCESS_MATRIX.md`` §7 (the IDs below); ``contracts/slice-b.md``
-§2(c) (route table), §2(f) (form field sets, §5.5 request-token map);
-``ACCESS_MATRIX.md`` §5.2 (sort/filter allowlists).
+"""Contact-surface security: SQL injection, allowlists, XSS, and CSRF on every mutating POST.
 
 Reuses ``tests/conftest.py``'s three-principal fixtures (``admin``,
 ``agent_a``, ``agent_b``) and its ``create_contact`` HTTP helper rather than
@@ -36,7 +32,7 @@ _CREATE_FIELDS = {
 
 
 # ---------------------------------------------------------------------------
-# SEC-001 — an SQLi corpus over every field, filter, path segment and sort key
+# An SQLi corpus over every field, filter, path segment and sort key
 # changes no query semantics.
 # ---------------------------------------------------------------------------
 
@@ -49,14 +45,14 @@ _SQLI_CORPUS: tuple[str, ...] = (
 
 
 @pytest.mark.parametrize("payload", _SQLI_CORPUS)
-async def test_sec001_sqli_corpus_in_create_fields_changes_no_query_semantics(
+async def test_sqli_corpus_in_create_fields_changes_no_query_semantics(
   agent_a: LoggedInPrincipal, payload: str
 ) -> None:
   """An SQLi payload in every writable create field is treated as inert data.
 
   ``psycopg`` binds every value as a parameter (no f-string/`%`-format/
-  concatenated SQL under ``app/db/**`` — ``ARC-002``), so the strongest
-  behavioural signal reachable from HTTP is: the request succeeds or fails
+  concatenated SQL under ``app/db/**``), so the strongest behavioural
+  signal reachable from HTTP is: the request succeeds or fails
   on ordinary validation grounds only, never with a `500` (a `500` would be
   the first sign a payload reached raw SQL), and the payload is never
   echoed back unescaped.
@@ -81,13 +77,13 @@ async def test_sec001_sqli_corpus_in_create_fields_changes_no_query_semantics(
 
 
 @pytest.mark.parametrize("payload", _SQLI_CORPUS)
-async def test_sec001_sqli_corpus_in_search_q_changes_no_query_semantics(
+async def test_sqli_corpus_in_search_q_changes_no_query_semantics(
   agent_a: LoggedInPrincipal, payload: str
 ) -> None:
   """An SQLi payload in `?q=` never produces a `500` and never widens the result set.
 
   Does **not** assert the payload is absent from the body: `query.q` is a
-  frozen context key (`CONTRACTS.md` §8.2) and the search box legitimately
+  frozen context key and the search box legitimately
   echoes back whatever was submitted, HTML-escaped, in its `value="..."`
   attribute — a corpus entry with no HTML metacharacter (for example
   ``1; SELECT pg_sleep(5)--``) is therefore unchanged by escaping and
@@ -102,7 +98,7 @@ async def test_sec001_sqli_corpus_in_search_q_changes_no_query_semantics(
 
 
 @pytest.mark.parametrize("payload", _SQLI_CORPUS)
-async def test_sec001_sqli_corpus_in_the_path_segment_is_a_clean_404_never_500(
+async def test_sqli_corpus_in_the_path_segment_is_a_clean_404_never_500(
   agent_a: LoggedInPrincipal, payload: str
 ) -> None:
   """An SQLi payload as the `{id}` path segment is a `404` (non-canonical id), never `500`."""
@@ -111,7 +107,7 @@ async def test_sec001_sqli_corpus_in_the_path_segment_is_a_clean_404_never_500(
 
 
 # ---------------------------------------------------------------------------
-# SEC-002 — writable-field and sort-key allowlists reject unknown values with 400.
+# Writable-field and sort-key allowlists reject unknown values with 400.
 # ---------------------------------------------------------------------------
 
 
@@ -124,7 +120,7 @@ async def test_sec001_sqli_corpus_in_the_path_segment_is_a_clean_404_never_500(
     ("kind", "prospect"),
   ],
 )
-async def test_sec002_allowlisted_query_keys_reject_out_of_allowlist_values(
+async def test_allowlisted_query_keys_reject_out_of_allowlist_values(
   agent_a: LoggedInPrincipal, key: str, bad_value: str
 ) -> None:
   """Every allowlisted query key on `/contacts` rejects an out-of-allowlist value with `400`."""
@@ -132,15 +128,14 @@ async def test_sec002_allowlisted_query_keys_reject_out_of_allowlist_values(
   assert response.status_code == 400
 
 
-async def test_sec002_create_rejects_an_out_of_allowlist_kind_value_as_a_field_error(
+async def test_create_rejects_an_out_of_allowlist_kind_value_as_a_field_error(
   agent_a: LoggedInPrincipal,
 ) -> None:
-  """`kind` outside `{lead, customer}` on create is `CP-66` — a writable field with a bad value.
+  """`kind` outside `{lead, customer}` on create is a validation error, not a crafted-request 400.
 
   Distinguished from an unknown/non-writable *field name* (`400`
   crafted-request): `kind` is legitimately writable, so an out-of-enum
-  *value* is a normal validation error re-rendering the form, per
-  ``contracts/slice-b.md`` §2(f)'s note on this exact field.
+  *value* is a normal validation error re-rendering the form.
   """
   new_form = await agent_a.client.get("/contacts/new")
   csrf_token = extract_csrf_token(new_form.text)
@@ -157,20 +152,19 @@ async def test_sec002_create_rejects_an_out_of_allowlist_kind_value_as_a_field_e
 
 
 # ---------------------------------------------------------------------------
-# SEC-003 — `owner_id` supplied through body, query or sort key never changes an owner.
+# `owner_id` supplied through body, query or sort key never changes an owner.
 # ---------------------------------------------------------------------------
 
 
-async def test_sec003_owner_id_in_the_create_body_never_changes_the_owner(
+async def test_owner_id_in_the_create_body_never_changes_the_owner(
   agent_a: LoggedInPrincipal, agent_b: LoggedInPrincipal
 ) -> None:
   """Submitting a foreign `owner_id` on create is rejected outright, with `400`.
 
   If accepted, the contact would still belong to the caller, never to the
   injected id — asserted from both directions: the request is rejected
-  outright (§5.1: `owner_id` is in no agent allowlist), and even so,
-  `agent_b` can never read whatever the request produced under their own
-  scope.
+  outright (`owner_id` is in no agent allowlist), and even so, `agent_b`
+  can never read whatever the request produced under their own scope.
   """
   new_form = await agent_a.client.get("/contacts/new")
   csrf_token = extract_csrf_token(new_form.text)
@@ -188,7 +182,7 @@ async def test_sec003_owner_id_in_the_create_body_never_changes_the_owner(
   del agent_b  # documents the property under test; no separate read needed for a rejected write
 
 
-async def test_sec003_owner_id_as_a_query_parameter_on_list_is_ignored_not_honoured(
+async def test_owner_id_as_a_query_parameter_on_list_is_ignored_not_honoured(
   agent_a: LoggedInPrincipal, agent_b: LoggedInPrincipal
 ) -> None:
   """`owner_id` is not an allowlisted query key — passing it changes nothing about the scope."""
@@ -198,18 +192,18 @@ async def test_sec003_owner_id_as_a_query_parameter_on_list_is_ignored_not_honou
   assert "Not Reachable By Query Injection" not in response.text
 
 
-async def test_sec003_owner_id_is_not_an_allowed_sort_key(agent_a: LoggedInPrincipal) -> None:
+async def test_owner_id_is_not_an_allowed_sort_key(agent_a: LoggedInPrincipal) -> None:
   """`sort=owner_id` is outside the five allowed sort keys — `400`, not a silent no-op."""
   response = await agent_a.client.get("/contacts", params={"sort": "owner_id"})
   assert response.status_code == 400
 
 
 # ---------------------------------------------------------------------------
-# SEC-004 — a body larger than 64 KiB returns 413.
+# A body larger than 64 KiB returns 413.
 # ---------------------------------------------------------------------------
 
 
-async def test_sec004_a_body_over_64kib_on_contact_create_is_413(
+async def test_a_body_over_64kib_on_contact_create_is_413(
   agent_a: LoggedInPrincipal,
 ) -> None:
   """A grossly oversized `company` field trips the shared 64 KiB body-size limit."""
@@ -229,7 +223,7 @@ async def test_sec004_a_body_over_64kib_on_contact_create_is_413(
 
 
 # ---------------------------------------------------------------------------
-# SEC-005 — a stored and a reflected XSS corpus render inert, through create/update,
+# A stored and a reflected XSS corpus render inert, through create/update,
 # on both the list and the detail page.
 # ---------------------------------------------------------------------------
 
@@ -242,7 +236,7 @@ _XSS_CORPUS: tuple[str, ...] = (
 
 
 @pytest.mark.parametrize("payload", _XSS_CORPUS)
-async def test_sec005_xss_in_create_renders_inert_on_list_and_detail(
+async def test_xss_in_create_renders_inert_on_list_and_detail(
   agent_a: LoggedInPrincipal, payload: str
 ) -> None:
   """A hostile `name` survives create, then renders escaped everywhere it is displayed."""
@@ -255,7 +249,7 @@ async def test_sec005_xss_in_create_renders_inert_on_list_and_detail(
 
 
 @pytest.mark.parametrize("payload", _XSS_CORPUS)
-async def test_sec005_xss_in_update_renders_inert_on_list_and_detail(
+async def test_xss_in_update_renders_inert_on_list_and_detail(
   agent_a: LoggedInPrincipal, payload: str
 ) -> None:
   """A hostile value introduced through an *edit* (not just create) also renders inert."""
@@ -281,18 +275,18 @@ async def test_sec005_xss_in_update_renders_inert_on_list_and_detail(
 
 
 # ---------------------------------------------------------------------------
-# SEC-006 — user data never becomes an hx-* attribute value; HX-Trigger carries no user data.
+# User data never becomes an hx-* attribute value; HX-Trigger carries no user data.
 # ---------------------------------------------------------------------------
 
 
-async def test_sec006_a_hostile_contact_name_never_reaches_an_hx_attribute_value(
+async def test_a_hostile_contact_name_never_reaches_an_hx_attribute_value(
   agent_a: LoggedInPrincipal,
 ) -> None:
   """A value chosen to break out of an `hx-*` attribute never appears unescaped near one.
 
-  Contacted markup (``contracts/slice-b.md`` §2(e)) puts no user data inside
-  any `hx-*` attribute at all — every `hx-get`/`hx-target` value is a
-  code-authored path. This asserts the observable consequence over HTTP:
+  The contact markup puts no user data inside any `hx-*` attribute at all
+  — every `hx-get`/`hx-target` value is a code-authored path. This
+  asserts the observable consequence over HTTP:
   a name built to look like an attribute breakout never appears verbatim
   next to an `hx-` token in the rendered page.
   """
@@ -304,12 +298,12 @@ async def test_sec006_a_hostile_contact_name_never_reaches_an_hx_attribute_value
 
 
 # ---------------------------------------------------------------------------
-# SEC-076 — a repeated allowlisted query parameter, or any repeated form field,
-# is rejected with 400.
+# A repeated allowlisted query parameter, or any repeated form field, is
+# rejected with 400.
 # ---------------------------------------------------------------------------
 
 
-async def test_sec076_a_repeated_allowlisted_query_parameter_is_400(
+async def test_a_repeated_allowlisted_query_parameter_is_400(
   agent_a: LoggedInPrincipal,
 ) -> None:
   """`?sort=name&sort=email` is `400` — never first-wins or last-wins."""
@@ -319,17 +313,17 @@ async def test_sec076_a_repeated_allowlisted_query_parameter_is_400(
   assert response.status_code == 400
 
 
-async def test_sec076_an_unknown_repeated_query_parameter_is_still_ignored(
+async def test_an_unknown_repeated_query_parameter_is_still_ignored(
   agent_a: LoggedInPrincipal,
 ) -> None:
-  """An unknown parameter *name* is dropped before duplicates are even counted (H-08)."""
+  """An unknown parameter *name* is dropped before duplicates are even counted."""
   response = await agent_a.client.get(
     "/contacts", params=httpx.QueryParams([("unknown", "1"), ("unknown", "2")])
   )
   assert response.status_code == 200
 
 
-async def test_sec076_a_repeated_form_field_on_create_is_400(agent_a: LoggedInPrincipal) -> None:
+async def test_a_repeated_form_field_on_create_is_400(agent_a: LoggedInPrincipal) -> None:
   """A repeated `name` form field on `POST /contacts` is `400`, not first/last-wins."""
   new_form = await agent_a.client.get("/contacts/new")
   csrf_token = extract_csrf_token(new_form.text)
@@ -353,7 +347,7 @@ async def test_sec076_a_repeated_form_field_on_create_is_400(agent_a: LoggedInPr
 
 
 # ---------------------------------------------------------------------------
-# CSRF on every new POST (SEC-020's assertion, over every Slice B mutation route).
+# CSRF is required on every mutating route.
 # ---------------------------------------------------------------------------
 
 
@@ -367,17 +361,17 @@ async def test_sec076_a_repeated_form_field_on_create_is_400(agent_a: LoggedInPr
     ("/{id}/reassign", {"version": "1", "owner_id": "00000000-0000-4000-8000-000000000000"}),
   ],
 )
-async def test_csrf_required_on_every_slice_b_mutation_route(
+async def test_csrf_required_on_every_contact_mutation_route(
   agent_a: LoggedInPrincipal,
   admin: LoggedInPrincipal,
   path_suffix: str,
   extra_fields: dict[str, Any],
 ) -> None:
-  """Every one of the five new mutation routes is `403` with the CSRF field omitted entirely.
+  """Every one of the five contact mutation routes is `403` with the CSRF field omitted entirely.
 
-  Reassign is posted by the admin (`ACC-033` would otherwise mask the CSRF
-  question behind the role check for an agent); the other four are posted
-  by the object's own owner.
+  Reassign is posted by the admin (an agent's own role check would
+  otherwise mask the CSRF question); the other four are posted by the
+  object's own owner.
   """
   if path_suffix == "":
     path = "/contacts"

@@ -1,22 +1,17 @@
-"""Login throttle and rate budgets — SEC-030 through SEC-036, SEC-017, SEC-033.
+"""Login throttle and rate budgets: per-account trip, non-enumeration, and Argon2 timing parity.
 
-Authority: ``ACCESS_MATRIX.md`` §7; ``slice-a.md`` §1.1
-(``app/security/throttle.py``: ``LOGIN_FAILURES=5``, ``LOGIN_WINDOW=15min``,
-``LOGIN_LOCK=15min``), §2.4 (login failure handling); ruling **R52**
-(``contracts/slice-a.md`` §7.5 amendment).
+Throttle/budget *counting*, and the concurrent hash-queue depth, are
+wire-observable (drive real failed logins/requests through
+``live_server``); Argon2 parameter and timing-parity checks are in-process
+against ``PasswordService`` directly, with the **real**, pinned
+parameters — never the fast test profile, which is reserved for bulk
+fixture setup only.
 
-Throttle/budget *counting and window recovery*, and the concurrent
-hash-queue depth (SEC-034), are wire-observable (drive real failed
-logins/requests through ``live_server``); Argon2 parameter and
-timing-parity checks (SEC-017, SEC-033) are in-process against
-``PasswordService`` directly, with the **real**, pinned parameters — never
-the fast test profile, which §7.4 reserves for bulk fixture setup only.
-
-Isolation (R52)
------------------
+Isolation
+-----------
 The throttle and budget counters are deliberately **DB-shared, global
-state** (spec §6 S6) — that is not weakened here to make tests pass.
-Instead, every test in this module:
+state** — that is not weakened here to make tests pass. Instead, every
+test in this module:
 
 1. targets a **dedicated, uniquely-generated** ``example.test`` identifier
    (``conftest.unique_email`` / :func:`provision_agent`) — **never the
@@ -32,14 +27,12 @@ Instead, every test in this module:
    each test, so a global budget one test trips can never leak into the
    next.
 
-SEC-031a/SEC-031b moved (ruling R57)
---------------------------------------
 The global-budget trip-and-recovery pair used to live here, driven over
 ``live_server`` with a real burst of requests. Counting a threshold this
 way is sound, but *proving recovery* needs the budget window to actually
-roll over, and a wall-clock version of that is exactly what R57 flags:
-depending on where in the real minute the burst happens to land, it can
-straddle the ``:00`` window boundary and flake. Both are now in
+roll over, and a wall-clock version of that can straddle the ``:00``
+window boundary and flake depending on where in the real minute the burst
+happens to land. Both now live in
 ``tests/inprocess/test_throttle_and_budget_windows.py``, against the
 ``in_process_client``/``ManualClock`` fixtures: the whole burst is sent
 at one fixed instant (so it cannot straddle a boundary), and recovery is
@@ -75,28 +68,25 @@ LOGIN_FAILURE_THRESHOLD = 5
 def _reset_throttle_and_budget_between_tests(
   crm_test_schema: None, tmp_path: Path
 ) -> Iterator[None]:
-  """Clear ``login_throttle``/``rate_budget`` before **and** after every test here (R52).
+  """Clear ``login_throttle``/``rate_budget`` before **and** after every test here.
 
-  Deliberately **function-scoped** (pytest's default) despite R52's prose
-  calling it "module-scoped": a ``scope="module"`` fixture instantiates
-  **once** for the whole module and could not clear state *between*
-  individual tests, which is exactly what "after EVERY test" requires — so
-  "module-scoped" is read here as "scoped to this module's tests" (an
-  autouse fixture defined in this file, applying to every test it
-  collects), not as the literal pytest scope keyword. Naming
-  ``crm_test_schema`` explicitly is now belt-and-suspenders (it is
-  session-scoped **autouse** as of ruling R57, so it already ran before
-  this fixture regardless) but is kept as documentation of the real
-  dependency. ``test_sec034`` is a separate matter regardless of scope: it
-  drives 10 genuinely concurrent Argon2 hashes against a real, timed queue
-  depth. An earlier revision staged its 10 attempts as free-running
-  ``GET``-then-``POST`` pairs under one ``asyncio.gather`` and that shape
-  flaked roughly 1 run in 3, standalone or full-suite, independent of this
-  fixture; the test now fetches every CSRF token first and releases all
-  ten ``POST``s together through an ``asyncio.Barrier``, which removed the
-  flake across 6/6 standalone reruns and a full-suite run. See the test's
-  own docstring for the detail; this fixture's before/after clear is
-  unrelated to that timing and was never the cause.
+  Deliberately **function-scoped** (pytest's default): a ``scope="module"``
+  fixture instantiates **once** for the whole module and could not clear
+  state *between* individual tests, which is exactly what "after EVERY
+  test" requires. Naming ``crm_test_schema`` explicitly is
+  belt-and-suspenders (it is session-scoped **autouse**, so it already ran
+  before this fixture regardless) but is kept as documentation of the
+  real dependency. The concurrent hash-queue-depth test below is a
+  separate matter regardless of scope: it drives 10 genuinely concurrent
+  Argon2 hashes against a real, timed queue depth. An earlier revision
+  staged its 10 attempts as free-running ``GET``-then-``POST`` pairs under
+  one ``asyncio.gather`` and that shape flaked roughly 1 run in 3,
+  standalone or full-suite, independent of this fixture; the test now
+  fetches every CSRF token first and releases all ten ``POST``s together
+  through an ``asyncio.Barrier``, which removed the flake across 6/6
+  standalone reruns and a full-suite run. See the test's own docstring for
+  the detail; this fixture's before/after clear is unrelated to that
+  timing and was never the cause.
   """
   clear_throttle_and_budget_state(log_path=tmp_path / "clear-before.log")
   yield
@@ -110,12 +100,13 @@ def _reset_throttle_and_budget_between_tests(
 _CSRF_VALUE_PATTERN = re.compile(r'(name="csrf_token"[^>]*value=")[^"]*(")')
 
 #: Matches ``auth/login.html``'s echoed ``form.email`` value (``id=
-#: "login-email"`` disambiguates it from the hidden CSRF field). SEC-032 and
-#: SEC-036 deliberately submit two *different* email addresses (an
-#: unregistered one and a registered one, or two differently-keyed
-#: throttled ones) — the whole premise of "unknown vs known account" — so
-#: this field echoing the submitted value back is expected, not a leak, and
-#: must be normalized out the same way the CSRF token is.
+#: "login-email"`` disambiguates it from the hidden CSRF field). The two
+#: non-enumeration tests below deliberately submit two *different* email
+#: addresses (an unregistered one and a registered one, or two
+#: differently-keyed throttled ones) — the whole premise of "unknown vs
+#: known account" — so this field echoing the submitted value back is
+#: expected, not a leak, and must be normalized out the same way the CSRF
+#: token is.
 _EMAIL_VALUE_PATTERN = re.compile(r'(id="login-email"[\s\S]*?value=")[^"]*(")')
 
 
@@ -138,14 +129,14 @@ def _body_without_variable_fields(html: str) -> str:
   session's own token (``crm-csrf-v1:<session token>``), so it is, by
   design, different for every client/session — including two clients that
   hit ``/login`` at the same instant with the same email and password.
-  The email field simply echoes back whatever was submitted, per
-  ``CONTRACTS.md`` §8.2's ``form {email}`` context key. SEC-032/SEC-036
+  The email field simply echoes back whatever was submitted, per the
+  frozen ``form {email}`` context key. The two non-enumeration tests below
   assert the *rest* of the page (status, copy, structure) is identical
   regardless of whether the account exists or is locked; a raw ``==`` on
   the full body fails on these two expected, non-enumerating differences
-  and never actually tests the no-enumeration property the ID names.
-  Confirmed empirically (a line-level diff of two such bodies) that these
-  two fields are the *only* differences once both are blanked.
+  and never actually tests the non-enumeration property. Confirmed
+  empirically (a line-level diff of two such bodies) that these two
+  fields are the *only* differences once both are blanked.
   """
   without_csrf = _CSRF_VALUE_PATTERN.sub(r"\1REDACTED\2", html)
   return _EMAIL_VALUE_PATTERN.sub(r"\1REDACTED\2", without_csrf)
@@ -160,22 +151,21 @@ async def _failed_login(client: httpx.AsyncClient, *, email: str) -> httpx.Respo
   )
 
 
-async def test_sec030_five_failures_trip_a_temporary_backoff(
+async def test_five_failures_trip_a_temporary_backoff(
   http_client_factory: Any, provision_agent: Any
 ) -> None:
   """The 6th failed attempt within 15 minutes for one account is ``429``, not ``401``.
 
-  Renamed under ruling **R61** (2026-09-22): this test only drives the
-  *trip*, never the window rolling over, so its name no longer claims
-  ``...that_recovers``. Recovery is
+  This test only drives the *trip*, never the window rolling over.
+  Recovery is proved in
   ``tests/inprocess/test_throttle_and_budget_windows.py``'s
   ``test_login_lock_engages_at_the_6th_failure_and_lifts_after_login_lock_elapses``,
   which advances a ``ManualClock`` past the lock window rather than sleeping
   — this module's ``live_server`` runs the real, unswappable
   ``SystemClock``, so it cannot prove recovery without either sleeping or
-  risking the ``:00``-boundary flake ruling R57 exists to avoid.
+  risking a `:00`-boundary flake.
 
-  Targets a freshly provisioned, dedicated agent (R52) — never the shared
+  Targets a freshly provisioned, dedicated agent — never the shared
   session admin — so this test's own throttle trip cannot lock out
   ``bootstrap_admin`` for every other module that logs in as it later in
   the same session.
@@ -190,7 +180,7 @@ async def test_sec030_five_failures_trip_a_temporary_backoff(
   assert statuses[LOGIN_FAILURE_THRESHOLD] == 429
 
 
-async def test_sec032_unknown_user_and_wrong_password_are_indistinguishable(
+async def test_unknown_user_and_wrong_password_are_indistinguishable(
   http_client_factory: Any,
 ) -> None:
   """A nonexistent account and a real one with a wrong password get byte-identical bodies."""
@@ -206,19 +196,16 @@ async def test_sec032_unknown_user_and_wrong_password_are_indistinguishable(
   )
 
 
-async def test_sec035_the_per_account_mutation_budget_trips_and_recovers(
+async def test_the_per_account_mutation_budget_trips_and_recovers(
   http_client_factory: Any, provision_agent: Any
 ) -> None:
   """A burst of change-password ``GET`` requests (the account_query bucket) eventually 429s.
 
-  Coarse: asserts a 429 appears somewhere in a large burst, without pinning
-  the exact threshold (``DATA_CONTRACT.md`` §3.5's per-account limits are
-  not quoted in the documents this lane read; the exact number is left to
-  ``backend-security`` to confirm and this test tightened accordingly).
-  Logs in as a freshly provisioned, dedicated agent rather than
-  ``admin_session`` (R52) — 250 requests would otherwise burn a large
-  chunk of the shared session admin's own per-account budget for every
-  test that runs after this one in the same session.
+  Coarse: asserts a 429 appears somewhere in a large burst, without
+  pinning the exact threshold. Logs in as a freshly provisioned, dedicated
+  agent rather than ``admin_session`` — 250 requests would otherwise burn
+  a large chunk of the shared session admin's own per-account budget for
+  every test that runs after this one in the same session.
   """
   agent: ProvisionedUser = provision_agent()
   client: httpx.AsyncClient = http_client_factory()
@@ -230,7 +217,7 @@ async def test_sec035_the_per_account_mutation_budget_trips_and_recovers(
   assert 429 in statuses
 
 
-async def test_sec036_the_account_throttle_429_does_not_enumerate(
+async def test_the_account_throttle_429_does_not_enumerate(
   http_client_factory: Any,
 ) -> None:
   """A locked-account 429 and an unknown-account 429, both after 5 failures, share one body."""
@@ -252,12 +239,12 @@ async def test_sec036_the_account_throttle_429_does_not_enumerate(
 
 
 # ---------------------------------------------------------------------------
-# SEC-017, SEC-033, SEC-034 — Argon2, in-process, real (not fast) parameters.
+# Argon2, in-process, real (not fast) parameters.
 # ---------------------------------------------------------------------------
 
 
 def _real_password_hasher() -> PasswordHasher:
-  """The production Argon2 parameters (never the fast test profile — §7.4)."""
+  """The production Argon2 parameters (never the fast test profile)."""
   from argon2 import PasswordHasher, Type
 
   return PasswordHasher(
@@ -265,7 +252,7 @@ def _real_password_hasher() -> PasswordHasher:
   )
 
 
-async def test_sec017_encoded_hash_parses_to_the_pinned_parameters() -> None:
+async def test_encoded_hash_parses_to_the_pinned_parameters() -> None:
   """The encoded string parses to exactly ``argon2id``/``v=19``/``m=19456``/``t=2``/``p=1``."""
   from app.security.clock import SystemClock
   from app.security.passwords import PasswordService
@@ -273,11 +260,11 @@ async def test_sec017_encoded_hash_parses_to_the_pinned_parameters() -> None:
   service = PasswordService(
     _real_password_hasher(), blocklist=frozenset(), clock=SystemClock(), max_active=1, max_queued=8
   )
-  encoded = await service.hash("a fictional passphrase for SEC-017")
+  encoded = await service.hash("a fictional passphrase for the parameter check")
   assert encoded.startswith("$argon2id$v=19$m=19456,t=2,p=1$")
 
 
-async def test_sec017_two_hashes_of_the_same_password_have_independent_salts() -> None:
+async def test_two_hashes_of_the_same_password_have_independent_salts() -> None:
   """Hashing the same password twice yields two different encoded strings, both verifying."""
   from app.security.clock import SystemClock
   from app.security.passwords import PasswordService
@@ -285,7 +272,7 @@ async def test_sec017_two_hashes_of_the_same_password_have_independent_salts() -
   service = PasswordService(
     _real_password_hasher(), blocklist=frozenset(), clock=SystemClock(), max_active=1, max_queued=8
   )
-  password = "a fictional passphrase for SEC-017 salts"
+  password = "a fictional passphrase for the independent-salts check"
   first = await service.hash(password)
   second = await service.hash(password)
   assert first != second
@@ -293,7 +280,7 @@ async def test_sec017_two_hashes_of_the_same_password_have_independent_salts() -
   assert await service.verify(second, password) is True
 
 
-async def test_sec017_a_non_pinned_hash_authenticates_and_is_replaced_on_login() -> None:
+async def test_a_non_pinned_hash_authenticates_and_is_replaced_on_login() -> None:
   """``needs_rehash`` is true for a default-parameter hash, false for a pinned one."""
   from argon2 import PasswordHasher
 
@@ -303,7 +290,7 @@ async def test_sec017_a_non_pinned_hash_authenticates_and_is_replaced_on_login()
   service = PasswordService(
     _real_password_hasher(), blocklist=frozenset(), clock=SystemClock(), max_active=1, max_queued=8
   )
-  password = "a fictional passphrase for SEC-017 rehash"
+  password = "a fictional passphrase for the rehash check"
   pinned = await service.hash(password)
   assert service.needs_rehash(pinned) is False
 
@@ -312,7 +299,7 @@ async def test_sec017_a_non_pinned_hash_authenticates_and_is_replaced_on_login()
   assert service.needs_rehash(drifted) is True
 
 
-async def test_sec033_a_missing_account_runs_the_dummy_hash_not_a_short_circuit() -> None:
+async def test_a_missing_account_runs_the_dummy_hash_not_a_short_circuit() -> None:
   """``verify(None, password)`` still costs a real Argon2 hash (coarse timing parity)."""
   import time
 
@@ -338,15 +325,15 @@ async def test_sec033_a_missing_account_runs_the_dummy_hash_not_a_short_circuit(
   assert missing_account_elapsed >= wrong_password_elapsed / 3
 
 
-async def test_sec034_the_tenth_concurrent_login_gets_a_sanitized_429(
+async def test_the_tenth_concurrent_login_gets_a_sanitized_429(
   http_client_factory: Any,
 ) -> None:
   """One active plus eight queued Argon2 hashes; a 10th concurrent login is ``429``.
 
   Drives 10 concurrent ``POST /login`` attempts (each its own client, its
   own cookie jar) against distinct never-registered accounts, so the
-  per-account throttle (SEC-030) cannot itself explain a 429 here — only
-  the shared hash-queue depth can.
+  per-account throttle cannot itself explain a 429 here — only the shared
+  hash-queue depth can.
 
   Every client's pre-auth ``GET /login`` (CSRF token, TLS handshake) is
   driven to completion *before* any ``POST`` fires, and an
