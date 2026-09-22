@@ -1314,25 +1314,26 @@ def clear_throttle_and_budget_state(*, log_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Collection ordering.
 #
-# Four concerns, addressed in one hook because they interact (see each
+# Five concerns, addressed in one hook because they interact (see each
 # bucket's rationale below): the pytest-asyncio / pytest-playwright event
 # loop corruption (module docstring, "tests/e2e runs as its own separate
 # invocation"), the new in-process/ASGI transport's origin (Hazard, ruling
-# R54), and ``test_last_admin_race.py``'s independent schema reset (ruling
-# R57, this module's ``crm_test_schema`` docstring).
+# R54), ``test_last_admin_race.py``'s independent schema reset (ruling
+# R57, this module's ``crm_test_schema`` docstring), and
+# ``test_migration_journal.py``'s own full schema wipe (ruling R66, SQL-026).
 # ---------------------------------------------------------------------------
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-  """Order the session as ``[inprocess] -> [everything else] -> [e2e] -> [last_admin_race]``.
+  """Order: inprocess -> everything else -> e2e -> last_admin_race -> migration_journal.
 
-  Four buckets, in this order, each explained below. A test collected in
+  Five buckets, in this order, each explained below. A test collected in
   more than one bucket's predicate is placed by whichever bucket is
   checked first, in the order the buckets are built (inprocess, then
-  last-admin-race, then e2e): today no test matches two predicates at
-  once, since the three special directories/files are disjoint, but the
-  precedence is stated so a future addition cannot become ambiguous by
-  accident.
+  last-admin-race, then e2e, then migration-journal): today no test
+  matches two predicates at once, since the four special
+  directories/files are disjoint, but the precedence is stated so a
+  future addition cannot become ambiguous by accident.
 
   1. ``tests/inprocess`` **first.** Its own module-scoped fixture points
      ``crm_test``'s stored ``public_origin`` at ``https://crm.test``
@@ -1371,6 +1372,16 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
      sync test module with no Playwright fixtures of its own, so its
      position relative to bucket 3's event-loop concern is moot either
      way — it is placed last for the schema reason, not that one.
+  5. ``tests/concurrency/test_migration_journal.py`` **absolute last, after
+     even ``test_last_admin_race.py`` (ruling R66, SQL-026).** Its own
+     ``SQL-026`` test drops and recreates the whole ``public`` schema
+     directly (owner role) to prove a from-empty `migrate` — the same
+     class of wipe ``test_last_admin_race.py`` already earns bucket 4's
+     placement for, one step further out: nothing in this session runs
+     after it, so nothing needs the ``bootstrap_admin``/two-admin state
+     either module's own fixtures built. The *next* session's autouse
+     ``crm_test_schema`` reset absorbs whatever this module leaves behind,
+     exactly as bucket 4's own reasoning already establishes.
   """
 
   def _path_parts(item: pytest.Item) -> tuple[str, ...]:
@@ -1386,12 +1397,22 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
   def _is_e2e(item: pytest.Item) -> bool:
     return "e2e" in _path_parts(item)
 
+  def _is_migration_journal(item: pytest.Item) -> bool:
+    parts = _path_parts(item)
+    return bool(parts) and parts[-1] == "test_migration_journal.py"
+
   inprocess_items = [item for item in items if _is_inprocess(item)]
   last_admin_race_items = [item for item in items if _is_last_admin_race(item)]
   e2e_items = [item for item in items if _is_e2e(item)]
-  special = {id(item) for item in inprocess_items + last_admin_race_items + e2e_items}
+  migration_journal_items = [item for item in items if _is_migration_journal(item)]
+  special = {
+    id(item)
+    for item in inprocess_items + last_admin_race_items + e2e_items + migration_journal_items
+  }
   other_items = [item for item in items if id(item) not in special]
-  items[:] = inprocess_items + other_items + e2e_items + last_admin_race_items
+  items[:] = (
+    inprocess_items + other_items + e2e_items + last_admin_race_items + migration_journal_items
+  )
 
 
 # ---------------------------------------------------------------------------

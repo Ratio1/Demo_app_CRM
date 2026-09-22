@@ -83,6 +83,7 @@ test trips can never leak into another.
 
 ```
 [tests/inprocess]  ->  [everything else]  ->  [tests/e2e]  ->  [test_last_admin_race.py]
+  ->  [test_migration_journal.py]
 ```
 
 Four reasons, in that order:
@@ -103,6 +104,18 @@ Four reasons, in that order:
    state every other module's `live_server`/`db_connection` fixture depends on. Placing it last
    means nothing else in *this* session needs that state afterward; the *next* session's
    `crm_test_schema` (autouse, ruling R57) absorbs whatever it leaves behind.
+5. `tests/concurrency/test_migration_journal.py` (ruling R66) absolute last, after even
+   `test_last_admin_race.py`: its `SQL-026` test drops and recreates the whole `public` schema
+   directly to prove a from-empty `migrate`, one wipe further out than reason 4's. A
+   module-scoped, autouse fixture there also runs one more `migrate` at teardown as a second
+   line of defence, and the *next* session's `crm_test_schema` absorbs whatever is left either
+   way.
+
+## Deferred test coverage
+
+`SQL-013` (an ambiguous commit is never retried; it resolves through the receipt, never a
+second business row) is **deferred to Slice C**, alongside the retry work it depends on
+(`DECISIONS.md` §5/§10, ruling R66) — recorded here rather than silently dropped.
 
 ## `tests/e2e`
 
