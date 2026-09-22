@@ -418,4 +418,71 @@ async def test_sec037_a_forced_reset_session_reaches_only_password_and_logout(
   assert response.status_code == 200
   denied = await client.get("/")
   assert denied.status_code == 403
+
+
+async def test_r60_forced_reset_with_a_valid_next_still_lands_on_account_password(
+  live_server: LiveServer,
+  http_client_factory: Any,
+  tmp_path: Path,
+) -> None:
+  """R55 regression (ruling **R60**): a valid ``next`` never outranks the forced-reset destination.
+
+  ``app/routes/auth.py::login_submit`` pins ``destination = PASSWORD_URL if
+  result.must_change_password else (next_path or DASHBOARD_URL)`` (R55).
+  Before this test, only the no-``next`` case had coverage
+  (``test_sec037_a_forced_reset_session_reaches_only_password_and_logout``,
+  above) — the whole point of R55 is that a *valid*, same-origin ``next``
+  (``/dashboard``, not one of ``SEC-042``'s hostile values) must still lose
+  to the forced-reset destination for a ``must_change_password`` account, so
+  this drives exactly that case end to end over ``POST /login``.
+
+  Provisions its own agent through ``manage reset-password`` (sets
+  ``must_change_password``), never the shared admin (R58: bootstrap keeps
+  ``must_change_password = FALSE`` by design, so the admin cannot exercise
+  this path at all).
+  """
+  from conftest import extract_csrf_token, unique_email
+
+  email = unique_email("r60-forced-reset")
+  password = "a fictional r60 regression passphrase"
+  _run_manage_with_stdin(
+    "create-user",
+    "--email",
+    email,
+    "--name",
+    "R60 Forced Reset",
+    "--role",
+    "agent",
+    "--password-stdin",
+    password=password,
+    tmp_path=tmp_path,
+    name="pw-create",
+  )
+  _run_manage_with_stdin(
+    "reset-password",
+    "--email",
+    email,
+    "--password-stdin",
+    password=password,
+    tmp_path=tmp_path,
+    name="pw-reset",
+  )
+
+  client: httpx.AsyncClient = http_client_factory()
+  get_response = await client.get("/login")
+  csrf_token = extract_csrf_token(get_response.text)
+  response = await client.post(
+    "/login",
+    data={
+      "csrf_token": csrf_token,
+      "email": email,
+      "password": password,
+      "next": "/dashboard",
+    },
+  )
+  assert response.status_code == 303
+  assert response.headers.get("location") == "/account/password", (
+    "a valid, same-origin `next` must never outrank the forced-reset "
+    f"destination (R55); got Location: {response.headers.get('location')!r}"
+  )
   del live_server
