@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+#
+# run-local — run demo-crm-app:local against the shared PostgreSQL.
+#
+#   scripts/run-local          start the container on https://127.0.0.1:3002
+#   scripts/run-local stop     stop and remove it
+#
+# The flags are the contract, not preferences:
+#
+#   --cpus=0.5 --memory=1g --memory-swap=1g   spec §8's cap; equal memory and
+#                                             memory-swap means no swap, so a
+#                                             leak fails instead of crawling.
+#   --read-only                               nothing writes to the rootfs —
+#                                             `python -B` and the baked .pyc
+#                                             files are what make that hold.
+#   no -v / --mount anywhere                  the container holds no state;
+#                                             everything durable is in the
+#                                             database (spec §8).
+#   --stop-timeout 25                         uvicorn's own graceful window is
+#                                             20 s (scripts/start), and
+#                                             docker's default 10 s would
+#                                             SIGKILL through it.
+#   -p 127.0.0.1:3002:3000                    loopback only, on this app's
+#                                             assigned host port.
+#
+# .env.docker.local is written by `_tools/pgsql/pg env crm --server
+# host.docker.internal:5432 --write .env.docker.local`; it is git-ignored and
+# is never read by this script — docker reads it, and no value ever reaches a
+# command line or a log.
+
+set -Eeuo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+root_dir="$(cd -- "${script_dir}/.." && pwd)"
+cd -- "$root_dir"
+
+readonly IMAGE="demo-crm-app:local"
+readonly NAME="demo-crm-app"
+readonly ENV_FILE=".env.docker.local"
+readonly HOST_PORT=3002
+
+if [ "${1:-run}" = "stop" ]; then
+  docker stop "$NAME" >/dev/null 2>&1 || true
+  docker rm "$NAME" >/dev/null 2>&1 || true
+  printf 'run-local: %s stopped and removed\n' "$NAME" >&2
+  exit 0
+fi
+
+if [ ! -f "$ENV_FILE" ]; then
+  printf 'run-local: %s is missing; write it with _tools/pgsql/pg env crm\n' "$ENV_FILE" >&2
+  exit 2
+fi
+
+docker run -d \
+  --name "$NAME" \
+  --env-file "$ENV_FILE" \
+  -p "127.0.0.1:${HOST_PORT}:3000" \
+  --cpus=0.5 \
+  --memory=1g \
+  --memory-swap=1g \
+  --read-only \
+  --stop-timeout 25 \
+  "$IMAGE"
+
+printf 'run-local: %s serving on https://127.0.0.1:%s\n' "$NAME" "$HOST_PORT" >&2

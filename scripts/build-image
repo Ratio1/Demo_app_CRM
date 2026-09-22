@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+#
+# build-image — build demo-crm-app:local with the TLS material it needs.
+#
+#   scripts/build-image
+#
+# Three steps, in order, none of them optional:
+#
+#   1. Copy the shared PostgreSQL CA's PUBLIC certificate to
+#      app/certs/ca-bundle.pem. That file is the trust anchor
+#      `sslmode=verify-full` uses (app/config.py's CA_BUNDLE_PATH) and it is
+#      git-ignored, so a fresh clone has to build it. Only the .crt is ever
+#      read; the CA's private key is never touched by anything here.
+#   2. Generate a self-signed 127.0.0.1 certificate into app/certs/ if it is
+#      not already there — the pair scripts/start turns into uvicorn's
+#      --ssl-certfile/--ssl-keyfile. An existing pair is never regenerated:
+#      the browser warning the operator already accepted stays accepted.
+#   3. docker build --target runtime.
+#
+# The image serves HTTPS with a certificate no CA signed, so a browser warns
+# once per host and port (decision D-L). That is the acceptance surface.
+
+set -Eeuo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+root_dir="$(cd -- "${script_dir}/.." && pwd)"
+cd -- "$root_dir"
+
+readonly IMAGE="demo-crm-app:local"
+readonly CERT_DIR="app/certs"
+readonly BUNDLE="${CERT_DIR}/ca-bundle.pem"
+readonly CERT_FILE="${CERT_DIR}/dev-server.crt"
+readonly KEY_FILE="${CERT_DIR}/dev-server.key"
+readonly PG="../_tools/pgsql/pg"
+
+mkdir -p -- "$CERT_DIR"
+
+if [ ! -x "$PG" ]; then
+  printf 'build-image: %s is not executable; run from the meta-repo checkout\n' "$PG" >&2
+  exit 2
+fi
+
+ca_path="$("$PG" ca)"
+cp -- "$ca_path" "$BUNDLE"
+printf 'build-image: trust anchor written to %s\n' "$BUNDLE" >&2
+
+if [ ! -f "$CERT_FILE" ] || [ ! -f "$KEY_FILE" ]; then
+  printf 'build-image: generating a self-signed development certificate\n' >&2
+  openssl req -x509 -newkey rsa:2048 -nodes -days 30 \
+    -keyout "$KEY_FILE" \
+    -out "$CERT_FILE" \
+    -subj "/CN=127.0.0.1" \
+    -addext "subjectAltName=IP:127.0.0.1,DNS:localhost"
+  chmod 600 "$KEY_FILE"
+fi
+
+exec docker build -t "$IMAGE" --target runtime .
