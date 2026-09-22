@@ -262,29 +262,6 @@ def test_d1_connect_kwargs_is_exactly_the_twelve_key_set() -> None:
   }
 
 
-def test_connect_kwargs_is_exactly_nine_keys_today() -> None:
-  """Documents the pre-D1 state: today's ``connect_kwargs()`` ships nine keys, not twelve.
-
-  This test is expected to start failing the moment the Backend lane applies
-  D1 — at that point ``test_d1_connect_kwargs_is_exactly_the_twelve_key_set``
-  above should start passing and this one should be deleted in the same
-  change, not left behind as a second source of truth.
-  """
-  config = load_config(_env())
-  kwargs = config.connect_kwargs()
-  assert set(kwargs) == {
-    "host",
-    "port",
-    "user",
-    "password",
-    "dbname",
-    "sslmode",
-    "sslrootcert",
-    "connect_timeout",
-    "options",
-  }
-
-
 def test_config_is_frozen() -> None:
   """A ``Config`` cannot be mutated after construction (it crosses no trust boundary mutably)."""
   config = load_config(_env())

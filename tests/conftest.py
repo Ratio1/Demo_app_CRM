@@ -43,6 +43,34 @@ that *can* run today (``app.config`` and the migration journal already
 ship). Every such import is therefore deferred into the fixture or test body
 that actually needs it, so a missing module surfaces as one failing test,
 not a blank test session.
+
+Two ways a test reaches the database
+--------------------------------------
+1. **Over HTTP**, via ``live_server``/``admin_client``/``agent_client`` — for
+   anything genuinely observable only at the wire (cookie attributes,
+   status codes, response headers). The server subprocess builds its own
+   ``SystemClock`` (``create_app`` takes no clock parameter), so nothing
+   reachable only through HTTP can be driven by ``ManualClock``.
+2. **In process**, via ``db_connection``/``owner_db_connection`` — for
+   repository-level behaviour the contract itself drives by an explicit
+   ``now`` parameter (expiry, revocation, throttle/budget windows: §7.3
+   "every expiry test... advances the clock rather than sleeping"). These
+   fixtures call ``app.config.load_config()`` with no explicit mapping, so
+   they read ``os.environ`` directly — which means **the test process
+   itself** needs the runtime or owner credentials already in its
+   environment. Per slice-a.md §7.2 ("The suite itself runs under
+   ``.env.test.local`` as ``crm_test_app``"), the canonical way to run this
+   suite is therefore::
+
+     scripts/with-env .env.test.local -- .venv/bin/python -B -m pytest
+
+   A bare ``pytest`` invocation still collects and runs every test that
+   does not request ``db_connection``/``owner_db_connection`` (all of
+   ``tests/unit``, ``tests/arch``, and the subprocess-driven
+   ``tests/security/test_dep_hostile_env.py``, each of which reaches the
+   database only through its own ``with-env`` subprocess); a test that does
+   request one of those two fixtures fails with a plain, value-free
+   ``ConfigError`` under a bare invocation — an honest signal, not a leak.
 """
 
 from __future__ import annotations
@@ -52,7 +80,7 @@ import socket
 import subprocess
 import time
 import uuid
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -367,6 +395,140 @@ def crm_test_schema(tmp_path_factory: pytest.TempPathFactory) -> None:
 
 
 # ---------------------------------------------------------------------------
+# In-process database connections — for repository-level tests that drive
+# expiry/revocation by an explicit `now` rather than by talking HTTP to a
+# server whose own clock cannot be swapped (module docstring, point 2).
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def db_connection(crm_test_schema: None) -> AsyncIterator[object]:
+  """One ``psycopg.AsyncConnection`` to ``crm_test``, as the runtime role.
+
+  Reads credentials from ``os.environ`` via ``app.config.load_config()`` —
+  see the module docstring's "two ways a test reaches the database": this
+  fixture only works when the test *process itself* was launched under
+  ``scripts/with-env .env.test.local -- ...``.
+
+  Yields
+  ------
+  psycopg.AsyncConnection
+    Untyped as ``object`` at the signature level so this module needs no
+    top-level ``import psycopg`` failure mode beyond what already exists;
+    every caller imports the concrete type itself.
+
+  Raises
+  ------
+  app.config.ConfigError
+    Under a bare ``pytest`` invocation (no DB_* in the environment) — a
+    plain, value-free message, not a leak.
+  """
+  from psycopg import AsyncConnection
+
+  from app.config import load_config
+
+  kwargs = load_config().connect_kwargs()
+  connection = await AsyncConnection.connect(**kwargs)  # type: ignore[arg-type]
+  try:
+    yield connection
+  finally:
+    await connection.close()
+
+
+#: Raw SQL, deliberately independent of app.db.repositories.users (which may
+#: not exist yet, and whose INSERT is maintenance-only regardless — the
+#: runtime role's users grant is SELECT, UPDATE only, migration step 04).
+#: This is test-only seeding, not a claim about any repository's behaviour.
+_INSERT_TEST_USER_SNIPPET = """
+import asyncio
+from typing import Any, cast
+from psycopg import AsyncConnection
+from app.config import load_config
+
+async def main() -> None:
+  kwargs = cast('dict[str, Any]', load_config().connect_kwargs())
+  conn = await AsyncConnection.connect(**kwargs)
+  try:
+    await conn.execute(
+      "INSERT INTO users (id, email, email_norm, display_name, role, "
+      "password_hash, password_changed_at, must_change_password, "
+      "is_active, version, created_at, updated_at) "
+      "VALUES (%(id)s, %(email)s, %(email_norm)s, %(display_name)s, %(role)s, "
+      "%(password_hash)s, %(now)s, %(must_change_password)s, "
+      "%(is_active)s, 1, %(now)s, %(now)s)",
+      {params},
+    )
+    await conn.commit()
+  finally:
+    await conn.close()
+
+asyncio.run(main())
+"""
+
+
+def insert_test_user_row(
+  *,
+  user_id: str,
+  email: str,
+  display_name: str,
+  role: str,
+  password_hash: str,
+  must_change_password: bool,
+  now: str,
+  log_path: Path,
+) -> None:
+  """Seed one ``users`` row directly, as the owner role, in its own subprocess.
+
+  For repository-level session/throttle tests that need a real user to join
+  against but must not depend on ``scripts/manage create-user`` (Backend
+  lane, not shipped) or on any repository's own ``insert_user`` (also not
+  shipped, and maintenance-only regardless of shipping state).
+
+  Parameters
+  ----------
+  user_id : str
+    A ``str(uuid.uuid4())`` — bound as text, per the repository boundary
+    rule that ids cross as ``str``, never ``uuid.UUID`` (slice-a.md §10(b)).
+  email, display_name, role : str
+    Fictional values only (``AGENTS.md``).
+  password_hash : str
+    A pre-encoded Argon2 hash string; never a plaintext password.
+  must_change_password : bool
+  now : str
+    An ISO 8601 timestamp string (from a :class:`ManualClock`, typically),
+    used for both ``password_changed_at`` and ``created_at``.
+  log_path : Path
+    Where the subprocess's combined output is saved; never printed.
+
+  Raises
+  ------
+  SubprocessFailed
+  """
+  params: dict[str, str | bool] = {
+    "id": user_id,
+    "email": email,
+    "email_norm": email.strip().lower(),
+    "display_name": display_name,
+    "role": role,
+    "is_active": True,
+    "must_change_password": must_change_password,
+    "password_hash": password_hash,
+    "now": now,
+  }
+  # `repr`, not JSON: this is substituted directly into Python source, and
+  # JSON's `true`/`false`/`null` are not valid Python literals.
+  script = _INSERT_TEST_USER_SNIPPET.replace("{params}", repr(params))
+  run_with_env(
+    OWNER_ENV_FILE,
+    str(VENV_PYTHON),
+    "-B",
+    "-c",
+    script,
+    log_path=log_path,
+  )
+
+
+# ---------------------------------------------------------------------------
 # CLI provisioning (slice-a.md §7.1) — needs scripts/manage (Backend lane).
 # ---------------------------------------------------------------------------
 
@@ -654,12 +816,17 @@ def _wait_until_serving(base_url: str, *, timeout: float) -> None:
   raise TimeoutError(f"server at {base_url} never answered /health/live: {last_error!r}")
 
 
-@pytest_asyncio.fixture
-async def live_server(
+@pytest.fixture
+def live_server(
   tmp_path: Path,
   bootstrap_admin: ProvisionedUser,
-) -> AsyncIterator[LiveServer]:
+) -> Iterator[LiveServer]:
   """Start one uvicorn instance over TLS, on its own ephemeral port.
+
+  Plain sync generator fixture: nothing in its body ``await``s (subprocess
+  management, socket binding and the polling wait are all synchronous), so
+  there is no reason to add async-fixture/event-loop-scope friction under
+  ``asyncio_mode = strict`` for a fixture that does no I/O through asyncio.
 
   Order, per slice-a.md §7.5: generate a throwaway certificate into
   ``tmp_path``; bind and listen on ``127.0.0.1:0`` ourselves; hand the
