@@ -578,13 +578,23 @@ async def no_session_handler(request: Request, exc: Exception) -> Response:
   Response
     A fragment request gets ``401`` plus ``HX-Redirect`` (**R26**); a
     private ``GET`` gets ``303`` to the login page, carrying a validated
-    ``next`` and — only when a cookie was actually presented — the
-    ``session_ended`` notice, so a first-time visitor never reads "Your
-    session ended"; an unsafe method gets the step-0 ``403``.
+    ``next``; an unsafe method gets the step-0 ``403``.
+
+  Notes
+  -----
+  **R65**: the ``?notice=session_ended`` suffix is gated on a **presented
+  cookie** on *both* branches, not only on the ``303`` — a first-time
+  visitor is never told a session ended (``CP-07``), whichever shape they
+  asked for (``ACC-037``). The cookie is evidence that this client once
+  had a session and no more: its value is never parsed here, so a
+  fabricated one only buys the sentence a genuine expiry would have
+  earned.
   """
   del exc
+  presented_cookie = bool(request.cookies.get(COOKIE_NAME))
   if is_fragment(request):
-    return region_error(request, status=401, redirect=f"{LOGIN_URL}?notice=session_ended")
+    login_target = f"{LOGIN_URL}?notice=session_ended" if presented_cookie else LOGIN_URL
+    return region_error(request, status=401, redirect=login_target)
   if request.method not in SAFE_METHODS:
     return await forbidden(request)
 
@@ -592,7 +602,7 @@ async def no_session_handler(request: Request, exc: Exception) -> Response:
   target = request.url.path
   if is_safe_relative(target) and target != LOGIN_URL:
     parameters.append(("next", target))
-  if request.cookies.get(COOKIE_NAME):
+  if presented_cookie:
     parameters.append(("notice", "session_ended"))
   location = f"{LOGIN_URL}?{urlencode(parameters)}" if parameters else LOGIN_URL
   return apply_security_headers(RedirectResponse(location, status_code=303), path=request.url.path)
