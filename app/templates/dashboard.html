@@ -1,22 +1,23 @@
-{#-  dashboard.html — CONTRACTS.md §8.2: `totals {visible_contacts,
+{#-  dashboard.html — context: `totals {visible_contacts,
   open_count, open_amount, won_count, won_amount}`, `recent_activities
   [{id, contact_id, contact_name, contact_owner_name, kind, occurred_on,
-  summary, author_name | None}]`, `is_empty: bool` — "three tiles and the
-  recent-activities list, no fourth tile (R16)".
+  summary, author_name | None}]`, `is_empty: bool` — three tiles and
+  the recent-activities list, no fourth tile.
 
-  No chart, no sparkline, no canvas (§7, and there is no JavaScript lane at
-  all). A tile is a number, its label and — for the two deal tiles — the €
-  total beside it, rendered through the `eur` filter from a Decimal the
-  engine summed. `scope_label` (CP-30/CP-31) is what tells an admin these
-  numbers cover every record and an agent that they cover their own.
+  No chart, no sparkline, no canvas — the app has no client-side
+  script. A tile is a number, its label and — for the two deal tiles —
+  the € total beside it, rendered through the `eur` filter from a
+  Decimal the engine summed. `scope_label` is what tells an admin
+  these numbers cover every record and an agent that they cover their
+  own.
 
-  The recent list links each row to its contact's workspace: an activity has
-  no page of its own (ACCESS_MATRIX.md §1.6), so the contact IS the record
-  link. The owner column renders for an admin only — an agent's rows are all
+  The recent list links each row to its contact's workspace: an
+  activity has no page of its own, so the contact IS the record link.
+  The owner column renders for an admin only — an agent's rows are all
   their own.
 
-  Illustrations follow R18: the empty state carries one, the populated page
-  carries none. Both SVGs already ship (ARTWORK_INVENTORY.md §3).
+  The empty state carries an illustration; the populated page carries
+  none.
 -#}
 {% extends "base.html" %}
 {% block main %}

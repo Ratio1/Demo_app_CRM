@@ -1,28 +1,26 @@
-{#-  auth/login.html — CONTRACTS.md §8.2 context (beyond base): `form {email}`,
+{#-  auth/login.html — context (beyond base): `form {email}`,
   `errors {field: [str]}`, `next | None`, `signed_out: bool`,
   `session_ended: bool`, `retry_after_seconds | None`.
 
-  UX_FLOWS.md §4.1: centred card, public shell, no Primary navigation.
-  Regions, in DOM order: text wordmark (base.html's public-brand, no image
-  — §1.3.1) -> <h1>Sign in</h1> -> alert region -> form. This screen does
-  NOT use the shared error-summary/field-error pattern: §3.1 is explicit
-  that login failure is a single, non-field message (CP-01) so no
-  enumeration oracle exists across email/password/disabled-account. A
-  non-empty `errors` dict therefore always renders the fixed CP-01 text,
-  regardless of its contents; this is the frontend lane's reading of the
-  frozen `errors` key for this one screen and is flagged in the session
-  report for backend-security to confirm.
+  Centred card, public shell, no Primary navigation. Regions, in DOM
+  order: text wordmark (base.html's public-brand, no image) ->
+  <h1>Sign in</h1> -> alert region -> form. This screen does NOT use
+  the shared error-summary/field-error pattern: login failure is
+  always a single, non-field message, so no enumeration oracle exists
+  across email/password/disabled-account. A non-empty `errors` dict
+  therefore always renders the same fixed text, regardless of its
+  contents.
 
-  Focus (R28): `autofocus` on email on a fresh load; withheld only on an
+  Focus: `autofocus` on email on a fresh load; withheld only on an
   actual failed attempt (`errors` or `retry_after_seconds` set) — not
   withheld for the informational `session_ended`/`signed_out` notices,
-  which are not "failures" in R28's sense.
+  which are not failures.
 -#}
 {% extends "base.html" %}
-{# The wordmark lives inside the centred card (UX_FLOWS.md §4.1's region
-   order: wordmark -> h1 -> alert -> form), not as a page-top banner like
-   every other public-shell page, so base.html's default public-brand
-   block is suppressed here and rendered once, below, inside .auth-card. #}
+{# The wordmark lives inside the centred card (region order: wordmark
+   -> h1 -> alert -> form), not as a page-top banner like every other
+   public-shell page, so base.html's default public-brand block is
+   suppressed here and rendered once, below, inside .auth-card. #}
 {% block public_brand %}{% endblock %}
 {% block main %}
 <div class="auth-shell">
@@ -36,9 +34,9 @@
       <span>We could not sign you in. Check the email address and password, then try again.</span>
     </p>
     {% elif retry_after_seconds is not none %}
-    {# CP-02 substitutes only {n}; "minutes" is fixed copy, never pluralized
-       by the template (R14 — UX_FLOWS.md §6 is the sole source of wording).
-       Minimum "a minute" per UX_FLOWS.md §3.2. #}
+    {# Only {n} is substituted; "minutes" is fixed copy, never
+       pluralized by the template. The minimum is always at least one
+       minute. #}
     {% set _minutes = ((retry_after_seconds + 59) // 60) if retry_after_seconds > 0 else 1 %}
     <p class="alert alert-warn" role="alert">
       <svg class="icon" aria-hidden="true"><use href="/static/img/icons.svg#icon-warning"></use></svg>

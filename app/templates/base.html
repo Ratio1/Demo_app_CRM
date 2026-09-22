@@ -1,23 +1,23 @@
 {#-  base.html — the shared shell for every screen.
 
-  Frozen base context (CONTRACTS.md §8.1 / slice-a.md §3): app_name,
-  page_title, principal (None | {id, display_name, role, is_admin,
-  must_change_password}), csrf_token, private, nav_active, announce,
-  scope_label, notice.
+  Base context: app_name, page_title, principal (None | {id,
+  display_name, role, is_admin, must_change_password}), csrf_token,
+  private, nav_active, announce, scope_label, notice.
 
-  Shell selection (UX_FLOWS.md §3 "shell rule", UI_SPEC.md §3):
+  Shell selection:
     - principal is None            -> PUBLIC shell: no nav, plain-text brand.
     - principal.must_change_password -> FORCED-RESET shell: reduced nav
       (identity + change password + sign out, no destination links).
     - principal present, not forced  -> FULL PRIVATE shell: sidebar/top-bar
       nav with the three destinations.
   The 500/503 handlers and the step-0 403 always pass principal=None
-  regardless of the real session state (R32 / ACC-010 / SEC-040) so this
-  selection alone is sufficient — no separate "shell" context key exists.
+  regardless of the real session state, so this selection alone is
+  sufficient — no separate "shell" context key exists.
 
-  htmx-config meta tag copied character-for-character from
-  contracts/slice-a.md §3 (mergeMetaConfig is a shallow merge, so the
-  responseHandling array must be restated in full).
+  The htmx-config meta tag's `responseHandling` array must be restated
+  in full whenever it changes: htmx's `mergeMetaConfig` is a shallow
+  merge, so a partial override would drop the rest of the array rather
+  than extend it.
 -#}
 <!doctype html>
 <html lang="en">
@@ -35,9 +35,9 @@
     {% include "partials/nav.html" %}
   {% else %}
     {# <header>, direct child of <body>, gets the implicit "banner" landmark
-       role — a bare <div> here left the public-shell brand text outside
-       every landmark (axe-core "region" rule, moderate; found by this
-       session's screenshot/axe pass, not by the render/grep checks). #}
+       role — a bare <div> here would leave the public-shell brand text
+       outside every landmark region, which an accessibility audit
+       (e.g. axe-core's "region" rule) flags. #}
     {% block public_brand %}<header class="public-brand">{{ app_name }}</header>{% endblock %}
   {% endif %}
   <main id="main" tabindex="-1">
