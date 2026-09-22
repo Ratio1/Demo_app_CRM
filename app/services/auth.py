@@ -283,15 +283,31 @@ async def login(
 
   # A disabled account verifies against the dummy hash exactly as a
   # missing one does, so "disabled" costs the same and says the same.
-  usable = user is not None and user.is_active
-  verified = await passwords.verify(user.password_hash if usable else None, password)
-
-  if not usable or not verified:
+  # Written as an explicit ``user is None`` branch rather than a ``usable``
+  # flag because a flag carries no type information: ``mypy --strict``
+  # cannot narrow ``UserAuthRow | None`` through it, and every attribute
+  # read below was an error. The dummy hash still runs in the same gate
+  # slot, with the same parameters, for a missing and for a disabled
+  # account alike (``T-03``/``SEC-033``), and all three outcomes are still
+  # the single :data:`OUTCOME_INVALID` (``SEC-032``).
+  if user is None or not user.is_active:
+    await passwords.verify(None, password)
     await _count_failure(
       pool,
       throttle,
       key=key,
-      user_id=user.id if user is not None else None,
+      user_id=None if user is None else user.id,
+      correlation_id=correlation_id,
+      now=now,
+    )
+    return LoginResult(outcome=OUTCOME_INVALID)
+
+  if not await passwords.verify(user.password_hash, password):
+    await _count_failure(
+      pool,
+      throttle,
+      key=key,
+      user_id=user.id,
       correlation_id=correlation_id,
       now=now,
     )
