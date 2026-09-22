@@ -1,24 +1,15 @@
 """Contacts Playwright journey — create/view/edit/stale-recovery/archive/restore, keyboard, axe.
 
-Authority: ``ACCESS_MATRIX.md`` §7 (`PRD-001`, `PRD-010`); ``UX_FLOWS.md``
-§4.4 (S4 contact list), §4.5 (S5 contact editor), §4.6 (S6 contact
-workspace), §3.9 (stale-edit recovery), §7 (acceptance checklist);
-``contracts/slice-b.md`` §2(c)/(e) (route table, `#contact-results`
-attribute set, R24 focus rule).
-
-**Locator note, read before touching this file again.** No template under
-``app/templates/contacts/**`` exists yet (Slice B is design-only as of the
-contract this suite was written against). Every locator below is chosen
-from ``UX_FLOWS.md``'s own frozen copy ids — "Full name" (`CP-127`),
-"Save contact" (`CP-115`), "Keep my changes"/"Discard mine and reload"
-(`CP-124`), "Archive contact"/"Archive this contact…" (`CP-21a`), "Edit
-contact"/"Restore contact" (`CP-116`), the radio labels "Lead"/"Customer"
-(`CP-128`), "Apply"/"Clear filters" (`CP-123`/`CP-133`), the pagination
-pair's literal "Next"/"Previous" text (`UX_FLOWS.md` §4 markup) — so a
-locator failure here is either a real regression or a frozen-copy drift,
-never a guess with no basis. It is still a guess about *markup structure*
-(which element carries the accessible name), and the first thing to check
-when this file fails once real templates ship is exactly that.
+**Locator note.** Every locator below is read off the shipped templates'
+own visible copy — "Full name", "Save contact", "Keep my
+changes"/"Discard mine and reload", "Archive contact"/"Archive this
+contact…", "Edit contact"/"Restore contact", the radio labels
+"Lead"/"Customer", "Apply"/"Clear filters", the pagination pair's literal
+"Next"/"Previous" text — so a locator failure here is either a real
+regression or the copy moved since this was written, never a guess with
+no basis. It is still a guess about *markup structure* (which element
+carries the accessible name), and that is the first thing to check when
+this file fails.
 """
 
 from __future__ import annotations
@@ -113,7 +104,7 @@ def _sign_in_and_complete_forced_reset(page: Page, base_url: str, email: str, pa
 
 
 @pytest.mark.parametrize("viewport", VIEWPORTS)
-def test_prd010_create_view_edit_stale_recovery_archive_restore(
+def test_create_view_edit_stale_recovery_archive_restore(
   page: Page,
   context: BrowserContext,
   live_server: LiveServer,
@@ -122,9 +113,9 @@ def test_prd010_create_view_edit_stale_recovery_archive_restore(
 ) -> None:
   """The full contact lifecycle journey, including two-tab stale-edit recovery, at one viewport.
 
-  ``PRD-010``: archive and restore, including the confirmation step and the
-  hidden-children behaviour (no deals exist in Slice B, so "children" here
-  is just the contact's own visibility in the default list).
+  Covers archive and restore, including the confirmation step and the
+  hidden-children behaviour: "children" here is the contact's own
+  visibility in the default list.
   """
   page.set_viewport_size(viewport)  # type: ignore[arg-type]
   email, first_password = ready_agent
@@ -168,7 +159,7 @@ def test_prd010_create_view_edit_stale_recovery_archive_restore(
   stale_heading = tab_two.get_by_role("heading", name="This record changed while you were editing")
   expect(stale_heading).to_be_visible()
   # errors/409.html's `stale` context is a read-only diff (`fields
-  # [{label, submitted, current, differs}]`, CONTRACTS.md §8.4) plus a
+  # [{label, submitted, current, differs}]`) plus a
   # `keep_form` of HIDDEN inputs — there is no editable, labelled
   # "Company" field on this recovery screen to hold a value; the
   # submitted value is shown as text in the "Your changes" column.
@@ -203,12 +194,12 @@ def test_prd010_create_view_edit_stale_recovery_archive_restore(
 def test_keyboard_only_through_the_list_filter_and_pagination_region(
   page: Page, live_server: LiveServer, ready_agent: tuple[str, str]
 ) -> None:
-  """Tab through search, Type, Show, Apply, Clear and the pager — no mouse, R24 focus checked.
+  """Tab through search, Type, Show, Apply and Clear, plus the pager — no mouse, focus checked.
 
-  ``UX_FLOWS.md`` §4.4's keyboard row: "skip -> Primary nav -> Add contact
-  -> search -> Type -> Show -> Apply -> Clear -> each column header -> each
-  row link -> Previous -> Next." This drives the filter/pagination half of
-  that row and asserts R24: once the "Next" link is replaced by the
+  The keyboard tab order is: skip -> Primary nav -> Add contact -> search
+  -> Type -> Show -> Apply -> Clear -> each column header -> each row
+  link -> Previous -> Next. This drives the filter/pagination half of
+  that order and asserts: once the "Next" link is replaced by the
   disabled span (last page), the `#contact-results` container itself
   receives focus rather than focus being lost to `<body>`.
   """
@@ -228,9 +219,9 @@ def test_keyboard_only_through_the_list_filter_and_pagination_region(
   # closed toggle — its "Search" field is not interactable until the
   # <summary> opens it. At >=1024px (this test's default, unset
   # viewport) `app.css`'s `@media (min-width: 1024px)` block hides the
-  # <summary> and force-unwraps the content via `::details-content`
-  # (UI_SPEC §4.11 / R23's boundary), so the field is already visible
-  # and clicking the hidden toggle would hang. Handle both without
+  # <summary> and force-unwraps the content via `::details-content`,
+  # so the field is already visible and clicking the hidden toggle
+  # would hang. Handle both without
   # hard-coding a viewport assumption.
   search_toggle = page.get_by_text("Search and filters", exact=False)
   if search_toggle.is_visible():
@@ -242,8 +233,8 @@ def test_keyboard_only_through_the_list_filter_and_pagination_region(
   # `partials/contact_results.html` renders "No contacts match this
   # search" three times over (the region's own `<h2>`, its body `<p>`,
   # and the OOB `#announce` live region carrying the same string for
-  # screen readers, `CONTRACTS.md` §8.3) -- an unscoped text locator is
-  # ambiguous (Playwright strict mode). The heading is the one the R24
+  # screen readers) -- an unscoped text locator is
+  # ambiguous (Playwright strict mode). The heading is the one the
   # focus-move region itself carries, so it is the unambiguous target.
   expect(page.get_by_role("heading", name="No contacts match this search")).to_be_visible()
 
@@ -255,7 +246,7 @@ def test_keyboard_only_through_the_list_filter_and_pagination_region(
   page.locator("#contact-results").get_by_role("link", name="Clear filters").click()
   expect(page).to_have_url(f"{live_server.base_url}/contacts")
 
-  # R24: on a result set with no further page, the "Next" control does not
+  # On a result set with no further page, the "Next" control does not
   # exist as a link at all (the frozen disabled-span form carries no id,
   # no href, is never focusable) — so tabbing to the end of the pager
   # lands on the region container itself only after an actual navigation

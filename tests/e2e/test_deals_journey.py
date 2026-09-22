@@ -1,18 +1,14 @@
 """Deals Playwright journey — contact -> new deal -> edit -> move -> Won -> pipeline, keyboard, axe.
 
-Authority: ``ACCESS_MATRIX.md`` §7 (`PRD-001`); ``UX_FLOWS.md`` §4.7 (S7
-deal list / S8 pipeline / S9 deal editor / S10 deal detail), §4.8 (the
-accessible, non-drag stage-change control, R22), §7 (acceptance
-checklist); ``contracts/slice-c.md`` §2(c) (route table), §2(d) (the
-stage control's exact fields), §2(e) (the contact detail's `#deals`
-region is a full-page render, never enhanced).
+The contact detail's `#deals` region is a full-page render, never
+htmx-enhanced.
 
 **Locator note**, same posture as ``test_contacts_journey.py``'s own:
 every locator below is read off the **shipped** templates
 (``app/templates/deals/*.html``, ``app/templates/partials/stage_control.html``,
 ``app/templates/partials/confirm.html``, ``app/templates/partials/pipeline.html``,
 ``app/templates/contacts/detail.html``'s `#deals` region) rather than
-guessed from copy ids alone, since those templates now exist. A locator
+guessed from copy alone, since those templates now exist. A locator
 failure here is either a real regression or the markup moved since this
 was written — check the named template first.
 """
@@ -126,7 +122,7 @@ def _create_contact(page: Page, base_url: str, *, name: str) -> str:
 
 
 @pytest.mark.parametrize("viewport", VIEWPORTS)
-def test_prd001_contact_to_deal_edit_move_won_and_pipeline_journey(
+def test_contact_to_deal_edit_move_won_and_pipeline_journey(
   page: Page,
   live_server: LiveServer,
   ready_agent: tuple[str, str],
@@ -197,8 +193,7 @@ def test_prd001_contact_to_deal_edit_move_won_and_pipeline_journey(
   expect(won_column.get_by_text("Northwind platform expansion (renamed)")).to_be_visible()
 
   # --- Activity: log one from the contact workspace's frozen form --------
-  # (plan §4 task 6, "extend the existing e2e journey to activity -> won ->
-  # dashboard"). Continues the SAME journey and the SAME fresh, isolated
+  # Continues the SAME journey and the SAME fresh, isolated
   # agent, so the dashboard totals asserted below are exact: this agent
   # owns exactly the one contact and the one (now Won) deal this test
   # itself created, nothing left over from another test.
@@ -234,7 +229,7 @@ def test_keyboard_only_stage_change_no_drag(
 ) -> None:
   """A stage move is driven entirely by Tab/Arrow/Enter on the real `<select>` + button — no drag.
 
-  R22: the stage control is a real, semantic form (a `<select>` of the
+  The stage control is a real, semantic form (a `<select>` of the
   LATERAL targets and a submit button), never a drag-and-drop board —
   this test proves it is operable that way, not merely that a mouse click
   on it happens to work.
@@ -274,7 +269,7 @@ def test_keyboard_only_stage_change_no_drag(
 def test_contact_detail_deals_region_lists_the_contacts_own_deals(
   page: Page, live_server: LiveServer, ready_agent: tuple[str, str]
 ) -> None:
-  """The contact detail `#deals` region (PIN C7) lists its deals, plus an "Add deal" action."""
+  """The contact detail `#deals` region lists its deals, plus an "Add deal" action."""
   email, first_password = ready_agent
   password = _sign_in_and_complete_forced_reset(page, live_server.base_url, email, first_password)
   del password
@@ -292,8 +287,7 @@ def test_contact_detail_deals_region_lists_the_contacts_own_deals(
   deals_region = page.locator("section.workspace-deals")
   expect(deals_region.get_by_role("link", name="Region-visible deal", exact=True)).to_be_visible()
   expect(deals_region.get_by_role("link", name="Add deal")).to_be_visible()
-  # PIN C7 / slice-c.md §2(e): the region is a FULL PAGE RENDER ONLY —
-  # never an htmx-enhanced fragment.
+  # The region is a FULL PAGE RENDER ONLY — never an htmx-enhanced fragment.
   assert deals_region.get_attribute("hx-get") is None
   assert deals_region.get_attribute("hx-target") is None
 
