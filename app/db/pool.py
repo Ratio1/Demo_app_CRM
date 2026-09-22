@@ -35,6 +35,7 @@ if TYPE_CHECKING:
   from app.config import Config
 
 __all__ = [
+  "IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS",
   "POOL_ACQUIRE_TIMEOUT_S",
   "POOL_MAX_IDLE_S",
   "POOL_MAX_LIFETIME_S",
@@ -60,6 +61,14 @@ POOL_MAX_LIFETIME_S: float = 1800.0
 POOL_MAX_IDLE_S: float = 300.0
 POOL_RECONNECT_TIMEOUT_S: float = 30.0
 STATEMENT_TIMEOUT_MS: int = 10_000
+
+#: ``CONTRACTS.md`` §6 D3 / ruling **R4**. A transaction left open with no
+#: statement running holds its row locks and, at ``SERIALIZABLE``, its
+#: predicate locks against every concurrent writer. Fifteen seconds is well
+#: above ``STATEMENT_TIMEOUT_MS`` — a slow statement is never mistaken for an
+#: abandoned transaction — and well below anything a human would wait for.
+IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS: int = 15_000
+
 POOL_NAME: str = "demo-crm"
 
 type PoolConnection = AsyncConnection[TupleRow]
@@ -79,6 +88,13 @@ async def configure_connection(conn: PoolConnection) -> None:
   ``SET`` takes no bind parameters, so the value is composed with
   :class:`psycopg.sql.Literal` rather than passed as a query parameter.
 
+  Two bounds are set, not one. ``statement_timeout`` bounds a *statement*;
+  ``idle_in_transaction_session_timeout`` bounds a transaction that is open
+  with nothing running — the state a cancelled request or a stalled client
+  leaves behind, and the one that keeps holding locks (``R4``). Neither is a
+  variable: both are code constants, and libpq ``options`` stays the empty
+  string.
+
   The ``COMMIT`` is not optional. psycopg's pool inspects the transaction
   status after this hook and discards any connection left outside ``IDLE``;
   it also rolls a returned connection back, which would undo an uncommitted
@@ -87,6 +103,11 @@ async def configure_connection(conn: PoolConnection) -> None:
   """
   await conn.execute(
     sql.SQL("SET statement_timeout = {}").format(sql.Literal(STATEMENT_TIMEOUT_MS))
+  )
+  await conn.execute(
+    sql.SQL("SET idle_in_transaction_session_timeout = {}").format(
+      sql.Literal(IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS)
+    )
   )
   await conn.commit()
 

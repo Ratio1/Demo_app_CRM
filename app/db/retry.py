@@ -44,14 +44,24 @@ __all__ = [
   "BACKOFF_BASE_S",
   "BACKOFF_CAP_S",
   "MAX_ATTEMPTS",
+  "RC_MAX_ATTEMPTS",
   "RETRYABLE_SQLSTATES",
   "AmbiguousCommit",
+  "run_read_committed",
   "run_serializable",
 ]
 
 MAX_ATTEMPTS: int = 5
 BACKOFF_BASE_S: float = 0.025
 BACKOFF_CAP_S: float = 1.0
+
+#: Attempt ceiling for the short ``READ COMMITTED`` transactions — session
+#: reads, counter increments, the origin lookup. Lower than
+#: :data:`MAX_ATTEMPTS` because none of them re-reads a business row under a
+#: version guard: a serialization failure here is the portability hedge of
+#: ``DATA_CONTRACT.md`` §6.1 (a Cockroach-wire target may promote
+#: ``READ COMMITTED``), not the expected outcome it is for a business write.
+RC_MAX_ATTEMPTS: int = 3
 
 #: ``40001`` serialization_failure and ``40P01`` deadlock_detected. Both are
 #: reported by the server, which means the transaction is confirmed aborted and
@@ -68,6 +78,7 @@ AMBIGUOUS_SQLSTATE_CLASSES: frozenset[str] = frozenset({"08"})
 AMBIGUOUS_SQLSTATES: frozenset[str] = frozenset({"57P01", "57P02", "57P05"})
 
 _SET_SERIALIZABLE = sql.SQL("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+_SET_READ_COMMITTED = sql.SQL("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
 
 
 class AmbiguousCommit(Exception):
@@ -207,6 +218,87 @@ async def run_serializable[T](
       async with pool.connection() as conn:
         async with conn.transaction():
           await conn.execute(_SET_SERIALIZABLE)
+          result = await fn(conn)
+          committing = True
+        committing = False
+      return result
+    except psycopg.Error as error:
+      sqlstate = error.sqlstate
+      if committing and _commit_outcome_unknown(sqlstate):
+        raise AmbiguousCommit(
+          f"commit outcome unknown for op={op} on attempt {attempt} of {attempts}"
+        ) from error
+      if sqlstate not in RETRYABLE_SQLSTATES or attempt >= attempts:
+        raise
+      await asyncio.sleep(_backoff_delay(attempt))
+
+  raise RuntimeError("unreachable: the retry loop always returns or raises")
+
+
+async def run_read_committed[T](
+  pool: Pool,
+  fn: Callable[[PoolConnection], Awaitable[T]],
+  *,
+  op: str,
+  attempts: int = RC_MAX_ATTEMPTS,
+) -> T:
+  """Run ``fn`` inside a short ``READ COMMITTED`` transaction of its own.
+
+  Parameters
+  ----------
+  pool : Pool
+    The process pool. A connection is acquired per attempt.
+  fn : Callable[[PoolConnection], Awaitable[T]]
+    The transaction body. It receives a connection already inside an open
+    ``READ COMMITTED`` transaction. It may run up to ``attempts`` times and
+    must have no effect outside the database.
+  op : str
+    Operation name for the correlation record. It never influences control
+    flow.
+  attempts : int, optional
+    Maximum number of attempts, at least one. Defaults to
+    :data:`RC_MAX_ATTEMPTS`.
+
+  Returns
+  -------
+  T
+    Whatever ``fn`` returned on the attempt that committed.
+
+  Raises
+  ------
+  ValueError
+    If ``attempts`` is below one.
+  AmbiguousCommit
+    If an attempt failed with ``COMMIT`` in flight and an unknown outcome.
+  psycopg.Error
+    The last retryable error, once ``attempts`` have been spent; or any
+    non-retryable database error, immediately and unwrapped.
+
+  Notes
+  -----
+  ``slice-a.md`` §10(c): the same body as :func:`run_serializable` with
+  ``SET TRANSACTION ISOLATION LEVEL READ COMMITTED`` as the transaction's
+  first statement. The level is set explicitly although it is PostgreSQL's
+  default, because a CockroachDB-style target's default is not, and the
+  ``40001``/``40P01`` wrapping is kept for the same reason: such an engine
+  may promote this level and hand back a serialization failure the caller
+  never asked for (``DATA_CONTRACT.md`` §6.1, §9.3 item 2).
+
+  This is the wrapper the counter transactions use. ``register_failure`` and
+  ``charge`` run here on their **own** acquisition so that the count survives
+  the rollback of the auth path that provoked it (``SQL-027``) — which is a
+  property of *where the caller opens this*, not of anything in this
+  function.
+  """
+  if attempts < 1:
+    raise ValueError("attempts must be at least 1")
+
+  for attempt in range(1, attempts + 1):
+    committing = False
+    try:
+      async with pool.connection() as conn:
+        async with conn.transaction():
+          await conn.execute(_SET_READ_COMMITTED)
           result = await fn(conn)
           committing = True
         committing = False

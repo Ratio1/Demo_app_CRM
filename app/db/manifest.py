@@ -60,12 +60,22 @@ SELECT EXISTS (
 #: that creates it reports "not provisioned" instead of raising. Every query
 #: returns one boolean column.
 #:
-#: **Provisional.** ``app_settings`` and ``users`` are created in slice A and
-#: their exact column spellings are pinned by that slice's contract step; this
-#: tuple is the one place to reconcile them. Spec §4 requires exactly these two
-#: conditions: an administrator and the configured public HTTPS origin, both
-#: written by ``scripts/manage bootstrap``.
+#: **Reconciled at the Slice A contract step** (``slice-a.md`` §10(d)). Both
+#: shipped probes were correct against ``DATA_CONTRACT.md`` §3.2/§3.7 —
+#: ``app_settings`` is key/value with ``public_origin`` as the key, ``users``
+#: carries ``role`` and ``is_active`` — but a third condition was missing: with
+#: an active admin and an origin row but **no** ``provisioning_state`` row,
+#: readiness answered yes, while ``PLAN.md`` §5, ``DATA_CONTRACT.md`` §3.7 and
+#: ``slice-a.md`` §2.5 all require ``provisioning_state = 'complete'``. It is
+#: the **first** entry so the cheapest condition — the single row ``bootstrap``
+#: writes last, in the same transaction as the other two — fails first.
 _PROVISIONING_PROBES: Final[tuple[tuple[str, str, LiteralString], ...]] = (
+  (
+    "not-provisioned",
+    "app_settings",
+    "SELECT EXISTS (SELECT 1 FROM public.app_settings"
+    " WHERE key = 'provisioning_state' AND value = 'complete')",
+  ),
   (
     "origin-not-set",
     "app_settings",
