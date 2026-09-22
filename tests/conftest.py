@@ -77,24 +77,38 @@ Two ways a test reaches the database
    connection, because a single test process can only ever hold the one
    role it was launched under.
 
-``tests/e2e`` runs as its own separate invocation
------------------------------------------------------
-Confirmed empirically: collecting ``tests/e2e`` (pytest-playwright's *sync*
-``page`` fixture) in the **same** session as any ``pytest.mark.asyncio``
-test, in either order, makes ``pytest-asyncio``'s strict-mode
-``asyncio.Runner`` intermittently fail later async tests with
-``RuntimeError: Runner.run() cannot be called from a running event loop``
-or leave a coroutine that pytest reports on without it ever having run (a
-``RuntimeWarning: coroutine '...' was never awaited``). This reproduces
-with nothing more than both directories being **collected** together — no
-e2e test needs to actually execute, let alone open a browser. It is a known
-category of interaction between the two plugins' event-loop management,
-not a bug in any test here. The reliable, verified split::
+``tests/e2e`` and the pytest-asyncio / pytest-playwright interaction
+-----------------------------------------------------------------------
+Earlier revisions of this docstring claimed the corruption below reproduced
+from **collection** alone, in either order. Isolating it further (this
+revision) shows that claim was wrong: the trigger is *fixture setup*, not
+collection, and order matters. When at least one ``tests/e2e`` item's
+fixture chain (pytest-playwright's session-scoped ``playwright``/``browser``
+fixtures, reached even by a test that then errors on something else, such
+as a missing ``scripts/manage``) is set up **before** a
+``pytest.mark.asyncio`` test runs in the same session, every later
+``pytest-asyncio`` strict-mode ``asyncio.Runner.run()`` call can fail with
+``RuntimeError: Runner.run() cannot be called from a running event loop``,
+or silently leave a coroutine that pytest reports on without it ever having
+run (``RuntimeWarning: coroutine '...' was never awaited``) — corrupting
+the result of tests that have nothing to do with ``tests/e2e`` and never
+request a browser. It is a known category of interaction between the two
+plugins' event-loop management, not a bug in any test here.
+
+This module's ``pytest_collection_modifyitems`` hook (bottom of this file)
+now reorders every ``tests/e2e`` item to run **after** everything else in
+the same session, which removes the corruption for a single, literal
+``pytest tests`` invocation (verified: zero ``Runner.run()`` errors and
+zero "never awaited" warnings across the whole suite with the hook in
+place, where the same run showed both before it existed). The reliable
+split remains available and is still how a browser-less run is done::
 
   scripts/with-env .env.test.local -- .venv/bin/python -B -m pytest tests/ --ignore=tests/e2e
   .venv/bin/python -B -m pytest tests/e2e   # separate invocation; no with-env needed today
 
-Every count this suite's commit messages report was measured this way.
+Every count this suite's commit messages report from before this revision
+was measured with that split; counts reported afterwards use either form
+interchangeably, since both are now corruption-free.
 """
 
 from __future__ import annotations
@@ -1075,3 +1089,32 @@ async def admin_session(
     "every test depending on admin_session assumes this succeeds"
   )
   return admin_client
+
+
+# ---------------------------------------------------------------------------
+# Collection ordering — the pytest-asyncio / pytest-playwright interaction
+# (module docstring, "tests/e2e runs as its own separate invocation").
+# ---------------------------------------------------------------------------
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+  """Collect ``tests/e2e`` last when it shares a session with async tests.
+
+  See the module docstring, "``tests/e2e`` and the pytest-asyncio /
+  pytest-playwright interaction", for what this works around and how it was
+  verified. Running ``tests/e2e`` last means nothing collected after it can
+  be corrupted by its fixture setup; everything ordered ahead of it is
+  unaffected either way. This does not replace the documented, still-valid
+  fallback of running ``tests/e2e`` as its own separate invocation (for
+  example to keep a browser-less leg); it only makes the single literal
+  invocation (``pytest tests``) safe as well.
+  """
+
+  def _is_e2e(item: pytest.Item) -> bool:
+    return "e2e" in Path(item.nodeid.split("::", 1)[0]).parts
+
+  e2e_items = [item for item in items if _is_e2e(item)]
+  if not e2e_items:
+    return
+  other_items = [item for item in items if not _is_e2e(item)]
+  items[:] = other_items + e2e_items
