@@ -21,4 +21,58 @@ Formatting/typing commands (per `pyproject.toml`):
 .venv/bin/ruff check .
 .venv/bin/ruff format --check .
 .venv/bin/mypy
-``` 
+```
+
+## Frontend assets (Slice B)
+
+- `app/templates/contacts/list.html`, `partials/contact_results.html` —
+  the contacts list, search/filter and the `#contact-results` fragment
+  (`HX-Request` swap target).
+- `app/templates/contacts/form.html` — the contact editor (new and edit).
+- `app/templates/contacts/detail.html` — the contact workspace (S6):
+  details, activity/timeline, deals, record and owner panels.
+- `app/templates/errors/409.html` — the four conflict contexts (`stale`,
+  `archived_parent`, `duplicate`, `stage_terminal`).
+- `app/templates/partials/{badges,announce,pagination,field_errors,
+  confirm}.html` — shared macros/fragments the pages above compose.
+
+## Running the tests
+
+Canonical invocation (`CONTRACTS.md` §5.1, R52) — runs the suite as the
+runtime role against the scratch database `crm_test`, resetting and
+migrating it first (session-scoped, autouse):
+
+```
+scripts/with-env .env.test.local -- .venv/bin/python -B -m pytest tests -p no:cacheprovider -q
+```
+
+A bare `pytest` is not a supported invocation and its result is not
+evidence — credentials only ever reach the process through
+`scripts/with-env`, never a shell variable or a command-line argument.
+
+## Running locally
+
+```
+_tools/pgsql/pg ensure
+_tools/pgsql/pg env crm --write Demo_app_CRM/.env
+_tools/pgsql/pg env crm --role owner --write Demo_app_CRM/.env.owner.local
+```
+
+One-time, so the app's stored public origin matches the dev server
+(`scripts/dev-run.sh`'s own header comment):
+
+```
+scripts/with-env .env.owner.local -- python -B scripts/manage \
+  set-origin --origin https://127.0.0.1:3002
+```
+
+Then, from `Demo_app_CRM/`:
+
+```
+scripts/dev-run.sh
+```
+
+Serves `https://127.0.0.1:3002` over TLS with a self-signed development
+certificate generated on first run (git-ignored). Port `3002` is this
+app's dev assignment; the container entrypoint (`scripts/start`) is a
+separate script and is not used here.
