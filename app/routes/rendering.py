@@ -121,9 +121,9 @@ def _environment() -> jinja2.Environment:
 
 TEMPLATES: Final = Jinja2Templates(env=_environment())
 
-#: Slice A's three codes (``slice-a.md`` §2.7), Slice B's five and Slice
-#: C's five (``CONTRACTS.md`` §8.5, ``UX_FLOWS.md`` §6.6). Later slices
-#: extend this table additively; nothing else may render a banner.
+#: Slice A's three codes (``slice-a.md`` §2.7), Slice B's five, Slice C's
+#: five and Slice D's one (``CONTRACTS.md`` §8.5, ``UX_FLOWS.md`` §6.6).
+#: Extended additively; nothing else may render a banner.
 NOTICE_CODES: Final[dict[str, dict[str, str]]] = {
   "signed_out": {"kind": "success", "text": "You are signed out."},
   "session_ended": {"kind": "info", "text": "Your session ended. Sign in to continue."},
@@ -141,6 +141,9 @@ NOTICE_CODES: Final[dict[str, dict[str, str]]] = {
   "deal_won": {"kind": "success", "text": "Deal marked won."},
   "deal_lost": {"kind": "success", "text": "Deal marked lost."},
   "deal_moved": {"kind": "success", "text": "Deal moved to {stage}."},
+  # Slice D, additive: UX_FLOWS.md §6.6 `CP-52`. The fourteenth code, and the
+  # last one §6.6 defines — the table is now the whole of it.
+  "activity_logged": {"kind": "success", "text": "Activity logged."},
 }
 
 #: The one substitution shape a notice string may carry. ``CP-57``'s

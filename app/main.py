@@ -62,6 +62,7 @@ from app.db.pool import close_pool, create_pool, open_pool
 from app.db.retry import AmbiguousCommit, RetryExhausted, TransactionRunner
 from app.logging import configure_logging, log_request, log_unhandled, new_correlation_id
 from app.logging import set_correlation_id as bind_correlation_id
+from app.routes import activities as activity_routes
 from app.routes import auth as auth_routes
 from app.routes import contacts as contact_routes
 from app.routes import deals as deal_routes
@@ -495,6 +496,10 @@ def create_app(
   # and the other way round the literal path would be read as a
   # non-canonical deal id and answered 404 (slice-c.md §2(c)).
   application.include_router(deal_routes.router)
+  # After the contact table, because `GET /contacts/{contact_id}/timeline` is
+  # a contact-scoped region and its sibling paths are declared there; the two
+  # tables hold no overlapping path (slice-c.md §2(c)'s registration rule).
+  application.include_router(activity_routes.router)
 
   handlers: dict[Any, Any] = {
     StarletteHTTPException: http_exception_handler,

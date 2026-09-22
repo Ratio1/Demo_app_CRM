@@ -41,6 +41,7 @@ if TYPE_CHECKING:
 
 __all__ = [
   "ACTION_ACCESS_DENIED",
+  "ACTION_ACTIVITY_CREATED",
   "ACTION_BUDGET_DENIED",
   "ACTION_CONTACT_ARCHIVED",
   "ACTION_CONTACT_CREATED",
@@ -50,6 +51,8 @@ __all__ = [
   "ACTION_DEAL_CREATED",
   "ACTION_DEAL_STAGE_CHANGED",
   "ACTION_DEAL_UPDATED",
+  "ACTION_DEMO_RESET",
+  "ACTION_DEMO_SEEDED",
   "ACTION_FORCED_RESET_BLOCKED",
   "ACTION_INPUT_REJECTED",
   "ACTION_LOGIN_FAILED",
@@ -63,6 +66,7 @@ __all__ = [
   "ACTION_THROTTLE_LOCKED",
   "ACTION_USER_CREATED",
   "ACTION_USER_DISABLED",
+  "OBJECT_ACTIVITY",
   "OBJECT_CONTACT",
   "OBJECT_DEAL",
   "OUTCOME_DENIED",
@@ -115,9 +119,23 @@ ACTION_DEAL_CREATED: Final = "deal_created"
 ACTION_DEAL_UPDATED: Final = "deal_updated"
 ACTION_DEAL_STAGE_CHANGED: Final = "deal_stage_changed"
 
+#: Slice D. ``activity_created`` rides the ``SERIALIZABLE`` transaction of the
+#: append it describes and carries ``object_type='activity'``; there is no
+#: ``activity_updated`` and no ``activity_deleted`` in the vocabulary, because
+#: the runtime role holds neither privilege on the table.
+#:
+#: ``demo_seeded`` and ``demo_reset`` are written by the **maintenance** role
+#: from ``scripts/manage``, with ``actor_id`` NULL and ``object_type='system'``
+#: — the same shape ``provisioned`` uses, for the same reason: a CLI run has
+#: no session behind it.
+ACTION_ACTIVITY_CREATED: Final = "activity_created"
+ACTION_DEMO_SEEDED: Final = "demo_seeded"
+ACTION_DEMO_RESET: Final = "demo_reset"
+
 OBJECT_USER: Final = "user"
 OBJECT_CONTACT: Final = "contact"
 OBJECT_DEAL: Final = "deal"
+OBJECT_ACTIVITY: Final = "activity"
 OBJECT_SESSION: Final = "session"
 OBJECT_SETTINGS: Final = "settings"
 OBJECT_SYSTEM: Final = "system"

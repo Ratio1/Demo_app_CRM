@@ -75,6 +75,14 @@ from app.security.context import context_of
 from app.security.failures import ContactNotFound
 from app.security.idempotency import mint_key, parse_canonical
 from app.security.principal import scope_of
+from app.services.activities import (
+  DEFAULT_PER_PAGE as ACTIVITY_PER_PAGE,
+)
+from app.services.activities import (
+  SUMMARY_MAX,
+  TimelineView,
+  timeline_for_contact,
+)
 from app.services.contacts import (
   CP_25_BAD_TARGET,
   DEFAULT_PER_PAGE,
@@ -105,7 +113,7 @@ if TYPE_CHECKING:
 
   from app.security.principal import Principal
 
-__all__ = ["router"]
+__all__ = ["detail_page_context", "router"]
 
 router = APIRouter()
 
@@ -436,28 +444,52 @@ def _contact_context(view: ContactView) -> dict[str, Any]:
   }
 
 
-def _empty_timeline() -> View:
-  """Return the placeholder ``timeline`` Slice C fills in.
+def _timeline_url(request: Request, contact_id: UUID, *, page: int) -> str:
+  """Return the ``/contacts/{id}/timeline`` URL for one page of the region.
 
   Notes
   -----
-  ``contacts/detail.html`` is frozen under ``StrictUndefined`` (**D11**), so
-  a missing key is a sanitized 500 — and this whole page is re-rendered by
-  the reassign bad-target 400. An entry point that 404s would be worse than
-  one that is absent, so ``can.add_deal``/``can.add_activity`` are
-  ``False`` and these structures are empty (§2(i)).
+  Built from the route name and the **validated** page number, never from
+  the raw query string, and page 1 carries no parameter at all — one page,
+  one URL, which is what ``hx-push-url="true"`` puts in the history.
+  """
+  base = str(request.app.url_path_for("contact_timeline", contact_id=str(contact_id)))
+  return base if page <= 1 else f"{base}?page={page}"
+
+
+def _timeline(request: Request, contact_id: UUID, view: TimelineView) -> View:
+  """Build ``CONTRACTS.md`` §8.3's frozen ``timeline`` sub-context.
+
+  Notes
+  -----
+  ``prev_url``/``next_url`` are ``None`` **exactly** when the matching
+  ``has_*`` is false — the template's instruction to render **R24**'s inert
+  ``<span aria-disabled="true">`` with the same visible label, not to omit
+  the control. The rule, the macro and the markup are the list region's;
+  only the URL builder differs.
   """
   return View(
-    items=[],
-    total=0,
-    page=1,
-    pages=1,
-    has_prev=False,
-    has_next=False,
-    prev_url=None,
-    next_url=None,
-    range_start=0,
-    range_end=0,
+    items=[
+      {
+        "id": str(item.id),
+        "kind": item.kind,
+        "kind_label": item.kind_label,
+        "occurred_on": item.occurred_on,
+        "summary": item.summary,
+        "author_name": item.author_name,
+      }
+      for item in view.items
+    ],
+    total=view.total,
+    page=view.page,
+    pages=view.pages,
+    per_page=view.per_page,
+    range_start=view.range_start,
+    range_end=view.range_end,
+    has_prev=view.has_prev,
+    has_next=view.has_next,
+    prev_url=_timeline_url(request, contact_id, page=view.page - 1) if view.has_prev else None,
+    next_url=_timeline_url(request, contact_id, page=view.page + 1) if view.has_next else None,
   )
 
 
@@ -467,6 +499,9 @@ async def _detail_context(
   view: ContactView,
   *,
   reassign_errors: dict[str, list[str]] | None = None,
+  activity_errors: dict[str, list[str]] | None = None,
+  activity_values: dict[str, str] | None = None,
+  timeline_page: int = 1,
 ) -> dict[str, Any]:
   """Build the whole frozen context of ``contacts/detail.html`` (§8.2).
 
@@ -475,6 +510,15 @@ async def _detail_context(
   reassign_errors : dict[str, list[str]] | None, optional
     ``{"owner_id": [CP-25]}`` when re-rendering after a bad reassign
     target, which is a ``400`` on this page and never a 409 (``ACC-032``).
+  activity_errors : dict[str, list[str]] | None, optional
+    Field errors from a refused ``POST /activities``; the form is on this
+    page, so its ``400`` re-renders this page (``ACCESS_MATRIX.md`` §1.6).
+  activity_values : dict[str, str] | None, optional
+    What was submitted, echoed back so a rejected 1000-character summary is
+    not lost (``UX_FLOWS.md`` §2 step 5, "with the text preserved").
+  timeline_page : int, optional
+    Which page of the ``#timeline`` region to render; 1 on every render but
+    the paging one.
 
   Notes
   -----
@@ -525,6 +569,13 @@ async def _detail_context(
     scope_label=scope_label_for(principal),
     notice=notice_for(request, substitutions={"name": view.owner_name}),
   )
+  timeline = await timeline_for_contact(
+    context.runner,
+    scope,
+    contact_id=view.id,
+    page=timeline_page,
+    per_page=ACTIVITY_PER_PAGE,
+  )
   page.update(
     contact=_contact_context(view),
     can={
@@ -533,7 +584,10 @@ async def _detail_context(
       "restore": view.is_archived,
       "reassign": can_reassign,
       "add_deal": not view.is_archived,
-      "add_activity": False,
+      # UI hiding only, and false for exactly the reason `add_deal` is: an
+      # archived contact accepts no new history (ACC-409). A crafted POST
+      # still meets 409 `archived_parent`, decided inside the transaction.
+      "add_activity": not view.is_archived,
     },
     deals=[deal_card_context(request, card) for card in deals],
     deal_forms={
@@ -542,16 +596,21 @@ async def _detail_context(
       )
       for card in deals
     },
-    timeline=_empty_timeline(),
+    timeline=_timeline(request, view.id, timeline),
     activity_form=View(
-      values={
+      # The submitted values on a re-render, the defaults otherwise: `note`
+      # pre-selected so an untouched radio quad still submits one (R64's
+      # rule, applied to the second radio group on the page), and today's
+      # UTC date, which is the clock of record (UX_FLOWS.md §4.6).
+      values=activity_values
+      or {
         "kind": "note",
         "occurred_on": context.clock.now().date().isoformat(),
         "summary": "",
       },
-      errors={},
+      errors=activity_errors or {},
       idempotency_key=str(mint_key()),
-      limit=1000,
+      limit=SUMMARY_MAX,
     ),
     archive_form={"idempotency_key": str(mint_key()), "version": view.version},
     restore_form={"idempotency_key": str(mint_key()), "version": view.version},
@@ -934,14 +993,61 @@ async def contact_create(request: Request) -> Response:
   return _applied_redirect(request, result)
 
 
+async def detail_page_context(
+  request: Request,
+  principal: Principal,
+  *,
+  contact_id: UUID,
+  activity_errors: dict[str, list[str]] | None = None,
+  activity_values: dict[str, str] | None = None,
+  timeline_page: int = 1,
+) -> dict[str, Any]:
+  """Read one contact under the scope predicate and build its whole context.
+
+  Parameters
+  ----------
+  contact_id : UUID
+    An already-canonical id.
+
+  Returns
+  -------
+  dict[str, Any]
+    The frozen ``contacts/detail.html`` context — which is also the
+    ``partials/timeline.html`` context, because the partial's keys are a
+    subset of the page's (``CONTRACTS.md`` §8 rule 3: one route, two
+    renderings, from one context).
+
+  Raises
+  ------
+  app.security.failures.ContactNotFound
+    For a foreign contact and for a missing one alike.
+
+  Notes
+  -----
+  The one entry point ``app/routes/activities.py`` uses for both of its
+  renders. Putting it here rather than there is what keeps the workspace's
+  context built in exactly one place: the scoped read happens **first**, so
+  neither a rejected activity body nor a crafted ``?page=`` can be answered
+  before the scope predicate has decided.
+  """
+  context = context_of(request)
+  view = await get_for_detail(context.runner, scope_of(principal), contact_id=contact_id)
+  return await _detail_context(
+    request,
+    principal,
+    view,
+    activity_errors=activity_errors,
+    activity_values=activity_values,
+    timeline_page=timeline_page,
+  )
+
+
 @router.get("/contacts/{contact_id}", name="contact_detail")
 async def contact_detail(request: Request, contact_id: str) -> Response:
   """Render one contact's workspace (``ACC-001``-``ACC-006``)."""
   principal = await start_read(request)
   identifier = _contact_id(contact_id)
-  context = context_of(request)
-  view = await get_for_detail(context.runner, scope_of(principal), contact_id=identifier)
-  page = await _detail_context(request, principal, view)
+  page = await detail_page_context(request, principal, contact_id=identifier)
   return render(request, "contacts/detail.html", page)
 
 

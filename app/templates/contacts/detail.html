@@ -113,29 +113,14 @@
     </form>
     {% endif %}
 
-    <div id="timeline" tabindex="-1" aria-label="Activity timeline">
-      {% if timeline.items %}
-      <ol class="timeline-list">
-        {% for item in timeline.items %}
-        <li class="timeline-item">
-          <span class="timeline-icon" aria-hidden="true"><svg class="icon" aria-hidden="true"><use href="/static/img/icons.svg#icon-activity-{{ item.kind }}"></use></svg></span>
-          <div class="timeline-body">
-            <p class="timeline-meta"><span class="timeline-kind-label">{{ item.kind_label }}</span> ·
-              <time datetime="{{ item.occurred_on }}">{{ item.occurred_on }}</time> ·
-              {% if item.author_name %}by {{ item.author_name }}{% else %}by removed user{% endif %}</p>
-            <p class="timeline-summary">{{ item.summary }}</p>
-          </div>
-        </li>
-        {% endfor %}
-      </ol>
-      {% else %}
-      <div class="state-panel state-panel-region">
-        <img src="/static/img/empty-activities.svg" alt="" width="200" height="160">
-        <h3 tabindex="-1">No activity yet</h3>
-        <p>No activity yet. Log a call, meeting, email or note to build the history.</p>
-      </div>
-      {% endif %}
-    </div>
+    {#- The region's markup moved verbatim into partials/timeline.html when
+       Slice D gave it a route (CONTRACTS.md §8.3 names that partial as the
+       `#timeline` swap target): one implementation now serves this full
+       render and the fragment `GET /contacts/{id}/timeline`, exactly as
+       `partials/contact_results.html` serves `#contact-results`. The two
+       differences the route brought with it are inside the partial — real
+       pagination and `21 Sep 2026` in place of the ISO day. #}
+    {% include "partials/timeline.html" %}
   </section>
 
   <section class="workspace-deals" aria-labelledby="h-deals">
