@@ -29,8 +29,9 @@ import pytest
 pytestmark = pytest.mark.asyncio
 
 #: `DATA_CONTRACT.md` §5.2, restricted to the tables that exist in `crm_test`
-#: as of Slice C (`activities` is Slice D and is asserted absent below,
-#: never compared against a grant set it does not yet have). `deals`'s
+#: as of Slice D. `activities` ships with `migrations/0005_activities`
+#: step 03 and holds **SELECT and INSERT only**: immutability is the absence
+#: of `UPDATE` and `DELETE` on the runtime role, not a missing route. `deals`'s
 #: three privileges and no `DELETE` are `migrations/0004_deals` step 04's
 #: exact grant (`SQL-019`'s extension, `contracts/slice-c.md` §1(f)) — "a
 #: deal is never deleted by the application" is what makes the *absence*
@@ -46,12 +47,13 @@ _EXPECTED_TABLE_GRANTS: dict[str, frozenset[str]] = {
   "mutation_receipts": frozenset({"SELECT", "INSERT"}),
   "contacts": frozenset({"SELECT", "INSERT", "UPDATE"}),
   "deals": frozenset({"SELECT", "INSERT", "UPDATE"}),
+  "activities": frozenset({"SELECT", "INSERT"}),
 }
 
-#: Slice D tables — must not exist yet in `crm_test` (`DATA_CONTRACT.md`
-#: §5.2 rows for them are a forward-looking contract, not a live grant to
-#: compare against a table this migration chain has not created).
-_NOT_YET_SHIPPED_TABLES: frozenset[str] = frozenset({"activities"})
+#: Tables `DATA_CONTRACT.md` §5.2 describes that this migration chain has not
+#: created. Empty as of Slice D: every table in the contract now exists, so
+#: there is nothing left to assert absent.
+_NOT_YET_SHIPPED_TABLES: frozenset[str] = frozenset()
 
 
 async def _live_table_grants(db_connection: Any) -> dict[str, frozenset[str]]:

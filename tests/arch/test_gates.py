@@ -185,6 +185,7 @@ _SERVICE_MUTATION_NAMES: Final[frozenset[str]] = frozenset(
     "create_for_contact",
     "update_deal",
     "change_stage",
+    "log_activity",
   }
 )
 
@@ -476,7 +477,7 @@ _REPOSITORIES_DIR: Final = APP_DIR / "db" / "repositories"
 #: audit layer, all of which take explicit ids rather than a `Scope`
 #: because they hold no owner column and answer no scoped question.
 _SCOPE_EXEMPT_REPOSITORY_MODULES: Final[frozenset[str]] = frozenset(
-  {"sessions", "users", "throttle", "settings", "audit", "receipts"}
+  {"sessions", "users", "throttle", "settings", "audit", "receipts", "maintenance"}
 )
 
 
@@ -495,7 +496,14 @@ def _public_top_level_functions(
 #: repository with no identity-keyed exception" — joins `contacts` on the
 #: ARC-001 allowlist's business side. Updated here rather than left to trip
 #: (`slice-b.md` §1(b) B2's own instruction, extended by the same logic).
-_BUSINESS_REPOSITORY_MODULES: Final[frozenset[str]] = frozenset({"contacts", "deals"})
+#:
+#: Slice D adds `activities.py` on the same terms — `conn` first, `scope`
+#: second, ownership through the join to `contacts` — and `maintenance.py`
+#: to the EXEMPT set above, which is the opposite case and the reason it is
+#: written out here: its statements are unscoped by design because they run
+#: as the owner role from `scripts/manage` (seed-demo / reset-demo), never
+#: from a request, and the runtime role holds no DELETE to execute them with.
+_BUSINESS_REPOSITORY_MODULES: Final[frozenset[str]] = frozenset({"contacts", "deals", "activities"})
 
 
 def test_arc001_sql032_business_repositories_are_exactly_contacts_and_deals() -> None:
