@@ -17,9 +17,7 @@ import ast
 import hashlib
 import re
 from pathlib import Path
-
-import pytest
-from fastapi.testclient import TestClient
+from typing import Final
 
 APP_ROOT = Path(__file__).resolve().parent.parent.parent
 APP_DIR = APP_ROOT / "app"
@@ -223,14 +221,37 @@ def test_arc003_no_get_or_head_handler_directly_calls_a_services_import() -> Non
 # SEC-063 — /docs, /redoc and /openapi.json all 404.
 # ---------------------------------------------------------------------------
 
+_DISABLED_DOC_PATHS: Final = frozenset({"/docs", "/redoc", "/openapi.json"})
 
-@pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
-def test_sec063_docs_routes_are_404_in_the_shipped_configuration(path: str) -> None:
-  """The auto-docs routes are disabled at construction time (slice-a.md §1.1)."""
-  # Deferred import: app/main.py is contracted (slice-a.md §1.1) but not
-  # shipped yet. No DB is contacted: create_app() only builds the ASGI app.
-  from app.main import create_app  # type: ignore[import-not-found]
 
-  client = TestClient(create_app())
-  response = client.get(path)
-  assert response.status_code == 404
+def test_sec063_docs_routes_are_404_in_the_shipped_configuration() -> None:
+  """The auto-docs routes are disabled at construction time (slice-a.md §1.1).
+
+  Asserts directly on the constructed ``FastAPI`` object rather than making
+  a live HTTP request through ``TestClient``: ``app.main.OriginHostMiddleware``
+  (slice-a.md §2.1 step 0a) runs before routing on every non-health path and
+  answers ``503`` — never ``404`` — whenever ``app.state.context`` is unset,
+  which is exactly the state of an app built by ``create_app()`` and never
+  given a running lifespan (no live server, no database, as this test's own
+  original comment already required). A previous revision of this test drove
+  a bare ``TestClient(create_app())`` (lifespan never entered) through that
+  middleware expecting ``404`` and got ``503`` instead — not a backend
+  defect, but this test asking a question the shipped, documented,
+  fail-closed architecture cannot answer without a live database. The
+  contract's own wording (slice-a.md §1.1, line 32) is exactly
+  ``FastAPI(docs_url=None, redoc_url=None, openapi_url=None)``, which this
+  now checks precisely, plus that no route answers any of the three paths
+  either.
+  """
+  # Deferred import: keeps a missing module a single failing test rather
+  # than a blank collection. No DB is contacted: create_app() only builds
+  # the ASGI app. Shipped now, so no `type: ignore` is needed any more.
+  from app.main import create_app
+
+  app = create_app()
+  assert app.docs_url is None
+  assert app.redoc_url is None
+  assert app.openapi_url is None
+
+  routed_paths = {getattr(route, "path", None) for route in app.routes}
+  assert not (routed_paths & _DISABLED_DOC_PATHS)
