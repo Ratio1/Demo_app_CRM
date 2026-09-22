@@ -10,9 +10,11 @@ against a contract stub.
 from __future__ import annotations
 
 import dataclasses
+from pathlib import Path
 
 import pytest
 
+import app.config as config_module
 from app.config import (
   CA_BUNDLE_PATH,
   CONNECT_TIMEOUT_S,
@@ -272,3 +274,37 @@ def test_config_dataclass_fields_match_the_contracted_shape() -> None:
   assert isinstance(config, Config)
   field_names = {field.name for field in dataclasses.fields(config)}
   assert field_names == {"host", "port", "user", "password", "dbname"}
+
+
+# ---------------------------------------------------------------------------
+# sslrootcert is resolved from the package, not the working directory
+# (delta D2 / ruling R3). Plan §4 task 6 asks for one unit test pinning this;
+# the two tests above already assert the *value* equals `CA_BUNDLE_PATH`
+# (`test_connect_kwargs_carries_the_explicit_tls_and_timeout_parameters`,
+# `test_d1_connect_kwargs_is_exactly_the_twelve_key_set`) — these two are
+# additive and check what those do not: that the value is package-relative
+# and absolute, and that it does not move when the process's cwd does.
+# ---------------------------------------------------------------------------
+
+
+def test_sslrootcert_is_the_package_relative_ca_bundle_path() -> None:
+  """``sslrootcert`` is an absolute path inside ``app/certs/``, resolved from this package."""
+  config = load_config(_env())
+  sslrootcert = config.connect_kwargs()["sslrootcert"]
+  assert isinstance(sslrootcert, str)
+  path = Path(sslrootcert)
+  assert path.is_absolute()
+  assert path.name == "ca-bundle.pem"
+  assert path.parent.name == "certs"
+  expected = Path(config_module.__file__).resolve().parent / "certs" / "ca-bundle.pem"
+  assert path == expected
+
+
+def test_sslrootcert_is_unaffected_by_the_process_working_directory(
+  monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+  """``sslrootcert`` is unaffected by a ``cwd`` change (the defect R3/D2 fixed)."""
+  before = load_config(_env()).connect_kwargs()["sslrootcert"]
+  monkeypatch.chdir(tmp_path)
+  after = load_config(_env()).connect_kwargs()["sslrootcert"]
+  assert before == after
