@@ -119,12 +119,20 @@ _VISIBLE_SEARCH: Final = sql.SQL(
 )
 
 #: ``status`` selects a fragment; the submitted string never reaches SQL.
-#: ``all`` is deliberately absent — it contributes **no** conjunct, which is
-#: why ``active`` being the default makes ``PIN 4``'s "archived hidden by
-#: default" the absence of an input rather than a branch a caller can forget.
-_ARCHIVE_FRAGMENTS: Final[dict[StatusFilter, sql.SQL]] = {
+#: ``all`` maps to ``None`` — **no** conjunct — which is why ``active`` being
+#: the default makes ``PIN 4``'s "archived hidden by default" the absence of an
+#: input rather than a branch a caller can forget.
+#:
+#: The three keys are spelled out and the lookup is indexed rather than
+#: ``.get``-ed, so that a value outside the enum raises ``KeyError`` — a
+#: programming error, exactly as an out-of-allowlist sort key is — instead of
+#: silently reading as ``all`` and widening the result to archived rows. The
+#: service has already answered 400 for such a value (``ACC-109``); this is the
+#: failure mode of the one filter that could otherwise fail *open*.
+_ARCHIVE_FRAGMENTS: Final[dict[StatusFilter, sql.SQL | None]] = {
   "active": sql.SQL("c.archived_at IS NULL"),
   "archived": sql.SQL("c.archived_at IS NOT NULL"),
+  "all": None,
 }
 
 #: The ten allowed orderings, each a module-level literal with a deterministic
@@ -497,6 +505,13 @@ def _visible_where(scope: Scope, query: ContactQuery) -> tuple[sql.Composed, dic
     The fragment — including the ``WHERE`` keyword, or **empty** when no
     conjunct applies — and the parameters the fragment binds.
 
+  Raises
+  ------
+  KeyError
+    If ``query.status`` is outside the enum — a programming error, the same
+    answer an out-of-allowlist sort key gets, and deliberately not a silent
+    widening to ``all``.
+
   Notes
   -----
   This is the single place a contact predicate is built, which is what makes
@@ -518,7 +533,7 @@ def _visible_where(scope: Scope, query: ContactQuery) -> tuple[sql.Composed, dic
     conjuncts.append(_VISIBLE_OWNED)
     params["actor_id"] = str(scope.actor_id)
 
-  archive = _ARCHIVE_FRAGMENTS.get(query.status)
+  archive = _ARCHIVE_FRAGMENTS[query.status]
   if archive is not None:
     conjuncts.append(archive)
 
