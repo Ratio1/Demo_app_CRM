@@ -1,27 +1,18 @@
-"""Slice C concurrency — SQL-012 (retry cap/backoff), SQL-013 (ambiguous commit), SQL-029.
-
-Authority: ``ACCESS_MATRIX.md`` §7 (``SQL-012``, ``SQL-013``, ``SQL-010``,
-``SQL-011``, ``SQL-028``, ``SQL-029``, ``ACC-219``, ``ACC-220``);
-``contracts/slice-c.md`` §1(c) (**PIN C4**/**PIN C5**, the
-``TransactionRunner`` seams), §1(e) (the canonical mutation, statement by
-statement), §2(g) hooks 2-4 (the exact barrier ordering, the synthetic
-cap/backoff harness, the commit-raising pool).
+"""Deal-stage-change concurrency: retry cap/backoff, an ambiguous commit, an archived-parent race.
 
 In-process, at the **service** layer, not through ``live_server``: forcing
 an engine-raised ``40001`` with an attempt-aware barrier, or a commit that
 raises after ``COMMIT`` may have been sent, needs code inside this same
 process wrapping the real connection pool — a separate uvicorn subprocess
 cannot give us that seam (``tests/concurrency/test_audit_atomicity.py``'s
-module docstring makes the identical argument for ``SQL-016``). This
-module therefore builds its own pool (``app.db.pool``, shipped) and its
-own seed data (``app.db.repositories.contacts``/``deals``, shipped), then
-drives ``app.services.deals.change_stage``/``update_deal`` (shipped) —
-the real production code path minus the HTTP layer, which
-``app/routes/deals.py`` has not shipped yet.
+module docstring makes the identical argument for its own forced-failure
+test). This module therefore builds its own pool (``app.db.pool``) and its
+own seed data (``app.db.repositories.contacts``/``deals``), then drives
+``app.services.deals.change_stage``/``update_deal`` — the real production
+code path minus the HTTP layer.
 
 Every ``app.*`` import is deferred into the fixture or test body that
-needs it (this repo's running convention while a lane is still landing
-code), even though most of what this module needs has now shipped.
+needs it, for collection robustness.
 """
 
 from __future__ import annotations
@@ -162,36 +153,34 @@ async def _count_receipts(pool: Pool, *, user_id: UUID, operation: str, deal_id:
 
 
 # ---------------------------------------------------------------------------
-# SQL-012 part 1 — an engine-raised 40001 on the SAME deal row, attempt-aware
-# barrier, retried to a commit within five attempts (§2(g) hook 2).
+# An engine-raised 40001 on the SAME deal row, attempt-aware barrier,
+# retried to a commit within five attempts.
 # ---------------------------------------------------------------------------
 
 
-async def test_sql012_part1_engine_raised_40001_is_retried_to_a_commit(tmp_path: Any) -> None:
+async def test_part1_engine_raised_40001_is_retried_to_a_commit(tmp_path: Any) -> None:
   """Two concurrent transactions racing on one row: the loser gets `40001`, retries, commits.
 
-  This proves the **retry mechanism** (`SQL-012`), deliberately at the
-  same level as `contracts/slice-c.md` §1(g) probe 8 rather than through
-  `app.services.deals.change_stage`'s own business layer: probe 8's own
-  harness re-reads the row's *current* version on every attempt before
-  writing, and so does the `fn` below — each attempt calls
-  `deals_repo.get_deal` then `deals_repo.change_stage_versioned` with
-  **that attempt's own fresh read**, not a version fixed once outside the
-  retry loop. That distinction is load-bearing: `change_stage`'s real
-  `expected_version` is *the version the user's browser last saw*, fixed
-  for the whole call — and after this exact race, T2's original
-  submission genuinely **is** stale (proven separately by
-  `test_sql010_stale_stage_change_returns_stale_not_a_silent_overwrite`
-  above, which is `SQL-010`'s test, not this one). `SQL-012` is a
+  This proves the **retry mechanism**, deliberately at the level of a raw
+  two-connection race rather than through
+  `app.services.deals.change_stage`'s own business layer: each attempt
+  calls `deals_repo.get_deal` then `deals_repo.change_stage_versioned`
+  with **that attempt's own fresh read**, not a version fixed once
+  outside the retry loop. That distinction is load-bearing:
+  `change_stage`'s real `expected_version` is *the version the user's
+  browser last saw*, fixed for the whole call — and after this exact
+  race, T2's original submission genuinely **is** stale (proven
+  separately by `test_stale_stage_change_returns_stale_not_a_silent_overwrite`
+  below, a different test from this one). The retry mechanism is a
   narrower claim: that an engine-raised `40001` inside a transaction
   whose *own* body would otherwise succeed on retry is retried
   correctly, without ever applying twice or silently losing a write —
-  which is exactly what probe 8 measured and what this test reproduces
-  as a real, unmocked two-connection race.
+  which is what this test reproduces as a real, unmocked two-connection
+  race.
 
-  Ordering (§2(g) hook 2, §1(g) probe 3): T1's scope-read SELECT, T2's
-  scope-read SELECT, **barrier**, T1's UPDATE + COMMIT, **barrier**, T2's
-  UPDATE — raised as `40001` because Postgres detects, under
+  Ordering: T1's scope-read SELECT, T2's scope-read SELECT, **barrier**,
+  T1's UPDATE + COMMIT, **barrier**, T2's UPDATE — raised as `40001`
+  because Postgres detects, under
   `SERIALIZABLE`, that the row T2 read has since been changed by a
   transaction that has already committed (this holds regardless of
   whether T2's own `WHERE version = …` would still textually match; at
@@ -276,10 +265,10 @@ async def test_sql012_part1_engine_raised_40001_is_retried_to_a_commit(tmp_path:
       return _work
 
     t1_task = asyncio.create_task(
-      t1_runner.serializable(_blind_mover(to_stage="qualified"), op="test-sql-012-t1")
+      t1_runner.serializable(_blind_mover(to_stage="qualified"), op="stage-retry-race-t1")
     )
     t2_task = asyncio.create_task(
-      t2_runner.serializable(_blind_mover(to_stage="proposal"), op="test-sql-012-t2")
+      t2_runner.serializable(_blind_mover(to_stage="proposal"), op="stage-retry-race-t2")
     )
     t1_row, t2_row = await asyncio.gather(t1_task, t2_task)
 
@@ -299,14 +288,14 @@ async def test_sql012_part1_engine_raised_40001_is_retried_to_a_commit(tmp_path:
 
 
 # ---------------------------------------------------------------------------
-# SQL-012 parts 2-3 — the cap (five attempts, then the sanitized error) and
-# the exact backoff schedule, through a SYNTHETIC failure and the injected
-# sleep/jitter hooks. No database race: a race cannot be made to fail
-# exactly five times (§2(g) hook 3).
+# The cap (five attempts, then the sanitized error) and the exact backoff
+# schedule, through a SYNTHETIC failure and the injected sleep/jitter
+# hooks. No database race: a race cannot be made to fail exactly five
+# times.
 # ---------------------------------------------------------------------------
 
 
-async def test_sql012_part2_the_cap_is_five_attempts_then_retryexhausted() -> None:
+async def test_part2_the_cap_is_five_attempts_then_retryexhausted() -> None:
   """A body that raises `40001` every time exhausts the budget at exactly five attempts."""
   import psycopg
 
@@ -330,21 +319,20 @@ async def test_sql012_part2_the_cap_is_five_attempts_then_retryexhausted() -> No
   )
 
   with pytest.raises(RetryExhausted) as excinfo:
-    await runner.serializable(_always_fails, op="test-sql-012-cap")
+    await runner.serializable(_always_fails, op="stage-retry-cap")
 
   assert attempts_run == 5, f"exactly five bodies should have run, got {attempts_run}"
   assert excinfo.value.attempts == 5
-  assert excinfo.value.op == "test-sql-012-cap"
+  assert excinfo.value.op == "stage-retry-cap"
   assert excinfo.value.sqlstate == "40001"
 
 
-async def test_sql012_part3_the_backoff_schedule_through_injected_hooks() -> None:
+async def test_part3_the_backoff_schedule_through_injected_hooks() -> None:
   """With `jitter = lambda ceiling: ceiling`, the four recorded delays are exactly the ceilings.
 
   `0.025, 0.05, 0.1, 0.2` over four sleeps of a five-attempt budget — the
-  `1.0` s cap is never reached at this attempt count (`contracts/slice-c.md`
-  §1(c)). No wall-clock wait anywhere: `sleep` records the delay and
-  returns immediately.
+  `1.0` s cap is never reached at this attempt count. No wall-clock wait
+  anywhere: `sleep` records the delay and returns immediately.
   """
   import psycopg
 
@@ -364,12 +352,12 @@ async def test_sql012_part3_the_backoff_schedule_through_injected_hooks() -> Non
   )
 
   with pytest.raises(RetryExhausted):
-    await runner.serializable(_always_fails, op="test-sql-012-backoff")
+    await runner.serializable(_always_fails, op="stage-retry-backoff")
 
   assert delays == pytest.approx([0.025, 0.05, 0.1, 0.2]), delays
 
 
-async def test_sql012_part3_default_jitter_stays_within_the_ceiling() -> None:
+async def test_part3_default_jitter_stays_within_the_ceiling() -> None:
   """With the DEFAULT (production) jitter, every recorded delay is inside `[0, ceiling]`."""
   import psycopg
 
@@ -387,7 +375,7 @@ async def test_sql012_part3_default_jitter_stays_within_the_ceiling() -> None:
   runner = TransactionRunner(pool=cast("Pool", _UnusedPool()), sleep=_recording_sleep)
 
   with pytest.raises(RetryExhausted):
-    await runner.serializable(_always_fails, op="test-sql-012-backoff-default")
+    await runner.serializable(_always_fails, op="stage-retry-backoff-default")
 
   ceilings = [0.025, 0.05, 0.1, 0.2]
   assert len(delays) == 4
@@ -449,12 +437,12 @@ class _FakeTransaction:
 
 
 # ---------------------------------------------------------------------------
-# SQL-013 — an ambiguous commit is never retried; it resolves through the
-# receipt (§2(g) hook 4, PIN C5's two variants).
+# An ambiguous commit is never retried; it resolves through the receipt,
+# whether the row landed or not.
 # ---------------------------------------------------------------------------
 
 
-async def test_sql013_landed_ambiguous_commit_replays_instead_of_writing_twice(
+async def test_landed_ambiguous_commit_replays_instead_of_writing_twice(
   tmp_path: Any,
 ) -> None:
   """The row DID land; the fresh re-read finds the receipt and `change_stage` replays."""
@@ -497,7 +485,7 @@ async def test_sql013_landed_ambiguous_commit_replays_instead_of_writing_twice(
     await close_pool(pool)
 
 
-async def test_sql013_not_landed_ambiguous_commit_answers_a_re_raised_ambiguouscommit(
+async def test_not_landed_ambiguous_commit_answers_a_re_raised_ambiguouscommit(
   tmp_path: Any,
 ) -> None:
   """The row did NOT land; the fresh re-read finds no receipt, so the original error re-raises.
@@ -572,12 +560,12 @@ async def change_stage_or_fail(
 
 
 # ---------------------------------------------------------------------------
-# SQL-010 / ACC-219 / ACC-220 — stale edit, same-stage 400, terminal 409 —
-# driven directly at the service layer (no HTTP needed).
+# Stale edit, same-stage 400, terminal 409 — driven directly at the
+# service layer (no HTTP needed).
 # ---------------------------------------------------------------------------
 
 
-async def test_sql010_stale_stage_change_returns_stale_not_a_silent_overwrite(
+async def test_stale_stage_change_returns_stale_not_a_silent_overwrite(
   tmp_path: Any,
 ) -> None:
   """Two sessions read version 1; the second's `change_stage` sees `Stale`, never overwrites."""
@@ -626,7 +614,7 @@ async def test_sql010_stale_stage_change_returns_stale_not_a_silent_overwrite(
     await close_pool(pool)
 
 
-async def test_acc219_same_stage_move_returns_samestage_not_stage_terminal(
+async def test_same_stage_move_returns_samestage_not_stage_terminal(
   tmp_path: Any,
 ) -> None:
   """Posting the CURRENT stage as `to_stage` is `SameStage` (400), never `StageTerminal`."""
@@ -657,7 +645,7 @@ async def test_acc219_same_stage_move_returns_samestage_not_stage_terminal(
     await close_pool(pool)
 
 
-async def test_acc220_moving_out_of_a_terminal_stage_is_stageterminal(tmp_path: Any) -> None:
+async def test_moving_out_of_a_terminal_stage_is_stageterminal(tmp_path: Any) -> None:
   """Once a deal is `won`, every further `change_stage` call answers `StageTerminal`."""
   from app.config import load_config
   from app.db.pool import close_pool, create_pool, open_pool
@@ -700,12 +688,12 @@ async def test_acc220_moving_out_of_a_terminal_stage_is_stageterminal(tmp_path: 
 
 
 # ---------------------------------------------------------------------------
-# SQL-029 — archived-parent race: the contact is archived between the form
-# render and the submit.
+# Archived-parent race: the contact is archived between the form render
+# and the submit.
 # ---------------------------------------------------------------------------
 
 
-async def test_sql029_archived_parent_race_answers_blocked_not_a_silent_write(
+async def test_archived_parent_race_answers_blocked_not_a_silent_write(
   tmp_path: Any,
 ) -> None:
   """A `change_stage` submitted after the parent was archived answers `Blocked`, never `Applied`."""
