@@ -190,12 +190,23 @@ def test_sql014_two_concurrent_disable_user_races_leave_exactly_one_active_admin
   admin", slice-a.md §1.2) — never both succeeding (would leave 0 active
   admins) and never both failing (would falsely block a legitimate
   disablement).
+
+  Iteration 0 races ``admin_a`` against ``admin_b`` — the fixture's own
+  pair — rather than against a freshly created third admin: with three
+  admins simultaneously active (``admin_a``, ``admin_b`` and a fresh one),
+  disabling any two concurrently is legal and both exit ``0``, since a
+  third stays active; the guard is then never exercised. Every later
+  iteration races the previous survivor against one freshly created admin,
+  so exactly two admins are active immediately before each race, matching
+  the invariant this docstring states.
   """
   import asyncio
 
   admin_a, admin_b = isolated_two_admins
   survivor_email = admin_a.email
-  del admin_b  # only used to seed the isolated fixture's initial pair
+  #: Iteration 0's opponent is the fixture's own second admin; every later
+  #: iteration creates a fresh one instead (set back to ``None`` below).
+  next_opponent_email: str | None = admin_b.email
 
   async def _race(email_a: str, email_b: str, iteration: int) -> tuple[int, int]:
     log_a = tmp_path / f"disable-{iteration}-a.log"
@@ -208,25 +219,29 @@ def test_sql014_two_concurrent_disable_user_races_leave_exactly_one_active_admin
     return result_a, result_b
 
   for iteration in range(RACE_REPEAT_COUNT):
-    fresh_email = unique_email(f"admin-race-{iteration}")
-    fresh_password = f"a fictional admin passphrase {iteration}"
-    password_file = write_password_fixture(tmp_path, fresh_password, name=f"pw-{iteration}")
-    try:
-      with password_file.open("rb") as stdin_file:
-        _run_manage(
-          "create-user",
-          "--email",
-          fresh_email,
-          "--name",
-          f"Admin Race {iteration}",
-          "--role",
-          "admin",
-          "--password-stdin",
-          stdin=stdin_file,
-          log_path=tmp_path / f"create-{iteration}.log",
-        )
-    finally:
-      password_file.unlink(missing_ok=True)
+    if next_opponent_email is not None:
+      fresh_email = next_opponent_email
+      next_opponent_email = None
+    else:
+      fresh_email = unique_email(f"admin-race-{iteration}")
+      fresh_password = f"a fictional admin passphrase {iteration}"
+      password_file = write_password_fixture(tmp_path, fresh_password, name=f"pw-{iteration}")
+      try:
+        with password_file.open("rb") as stdin_file:
+          _run_manage(
+            "create-user",
+            "--email",
+            fresh_email,
+            "--name",
+            f"Admin Race {iteration}",
+            "--role",
+            "admin",
+            "--password-stdin",
+            stdin=stdin_file,
+            log_path=tmp_path / f"create-{iteration}.log",
+          )
+      finally:
+        password_file.unlink(missing_ok=True)
 
     # Two commands, each targeting a *different* one of the two currently
     # active admins, run concurrently — "each removing the other admin"
