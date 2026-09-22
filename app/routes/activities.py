@@ -107,7 +107,7 @@ async def _blocked_response(request: Request, result: Blocked) -> Response:
         # Logging against an archived contact is always "restore it first",
         # never "that has already been done" — the same two keys the deal
         # routes pass.
-        "body": "cp_13",
+        "body": "restore_first",
         "state": "archived",
       }
     },

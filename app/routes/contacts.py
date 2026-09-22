@@ -813,7 +813,7 @@ def _archived_block(view: ContactView) -> Blocked:
   return Blocked(
     contact_id=view.id,
     contact_name=view.full_name,
-    body="cp_13",
+    body="restore_first",
     state="archived",
     restore_form=RestoreForm(idempotency_key=mint_key(), version=view.version),
   )

@@ -672,7 +672,7 @@ async def _blocked_response(request: Request, result: Blocked) -> Response:
         # The same two keys the contact routes pass. A deal write under an
         # archived parent is always "restore it first", never "that has
         # already been done".
-        "body": "cp_13",
+        "body": "restore_first",
         "state": "archived",
       }
     },

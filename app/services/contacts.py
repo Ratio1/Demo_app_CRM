@@ -357,10 +357,10 @@ class Blocked:
     The record.
   contact_name : str
     Its ``full_name``, for the heading.
-  body : {"cp_13", "cp_23"}
-    ``cp_13`` — "restore it first", for a write under an archived contact
-    and for a reassign, which is refused while archived. ``cp_23`` — "that
-    has already been done".
+  body : {"restore_first", "already_done"}
+    ``restore_first`` — "restore it first", for a write under an archived
+    contact and for a reassign, which is refused while archived.
+    ``already_done`` — "that has already been done".
   state : {"archived", "active"}
     The substitution that sentence takes.
   restore_form : RestoreForm | None
@@ -370,7 +370,7 @@ class Blocked:
 
   contact_id: UUID
   contact_name: str
-  body: Literal["cp_13", "cp_23"]
+  body: Literal["restore_first", "already_done"]
   state: Literal["archived", "active"]
   restore_form: RestoreForm | None
 
@@ -624,7 +624,7 @@ async def _stale_after_race(
   )
 
 
-def _blocked(row: ContactRow, *, body: Literal["cp_13", "cp_23"]) -> Blocked:
+def _blocked(row: ContactRow, *, body: Literal["restore_first", "already_done"]) -> Blocked:
   """Build the 409 ``archived_parent`` payload for a row in the wrong state."""
   archived = row.archived_at is not None
   return Blocked(
@@ -980,7 +980,7 @@ async def update_contact(
     if row is None:
       raise ContactNotFound(contact_id)
     if row.archived_at is not None:
-      return _blocked(row, body="cp_13")
+      return _blocked(row, body="restore_first")
     if row.version != expected_version:
       return Stale(
         contact_id=contact_id,
@@ -1082,7 +1082,7 @@ async def archive_contact(
     if row is None:
       raise ContactNotFound(contact_id)
     if row.archived_at is not None:
-      return _blocked(row, body="cp_23")
+      return _blocked(row, body="already_done")
     if row.version != expected_version:
       return Stale(
         contact_id=contact_id,
@@ -1183,7 +1183,7 @@ async def restore_contact(
     if row is None:
       raise ContactNotFound(contact_id)
     if row.archived_at is None:
-      return _blocked(row, body="cp_23")
+      return _blocked(row, body="already_done")
     if row.version != expected_version:
       return Stale(
         contact_id=contact_id,
@@ -1307,7 +1307,7 @@ async def reassign_contact(
     if row is None:
       raise ContactNotFound(contact_id)
     if row.archived_at is not None:
-      return _blocked(row, body="cp_13")
+      return _blocked(row, body="restore_first")
     if row.version != expected_version:
       return Stale(
         contact_id=contact_id,

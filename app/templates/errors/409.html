@@ -75,7 +75,7 @@
 
   {% elif context == "archived_parent" %}
   <h1 tabindex="-1">This contact is archived</h1>
-  {% if archived_parent.get("body") == "cp_23" %}
+  {% if archived_parent.get("body") == "already_done" %}
   <p>That has already been done. The contact is {{ archived_parent.get("state", "archived") }} now.</p>
   {% else %}
   <p>This contact is archived. Restore it before adding or changing anything under it. Nothing was saved.</p>
