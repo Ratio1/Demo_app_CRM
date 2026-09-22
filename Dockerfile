@@ -1,4 +1,4 @@
-# Demo_App_CRM — one image, one process (PLAN.md §1 Deliverable).
+# Demo_App_CRM — one image, one process.
 #
 # Base image, resolved on this machine 2026-09-21 by `docker pull python:3.12-slim`:
 #
@@ -13,24 +13,23 @@
 # recorded above so a reader can check exactly which manifest this machine ran.
 #
 # Inherited VOLUME: none. `docker image inspect` reports `Config.Volumes = null`
-# and `docker history --no-trunc` contains zero VOLUME entries, which is the
-# local confirmation PLAN.md §5 requires before the digest is pinned at all.
-# This file declares no VOLUME of its own either (spec §8).
+# and `docker history --no-trunc` contains zero VOLUME entries, checked on this
+# machine before the digest was pinned. This file declares no VOLUME of its own
+# either: the container keeps no state outside the database.
 #
 # Three named stages on ONE linear chain. Nothing is copied between stages, so
 # `runtime` is byte-for-byte what a single-stage build would produce. `deps`
-# exists so the dependency install can be built and timed on its own —
-# PLAN.md §6: "Build resources are measured separately by timing the dependency
-# install from requirements.lock.txt inside the same capped container":
+# exists so the dependency install can be built and timed on its own, which is
+# how the build's resource figures in RESOURCE_TESTS.md were measured:
 #
 #   docker build --target deps -t demo-crm-app:p0 .
 #
-# No RUN imports the application (PLAN.md §5 "DB-free build proof"), no DB_*
-# variable is read at build time, and there is no HEALTHCHECK: `/health/live`
-# and `/health/ready` are the deployer's probes and are documented in DEPLOY.md,
-# and spec §8 is explicit that Dockerfile health settings are not evidence of
-# anything. Runtime configuration is only the five variables of CONTRACTS.md §2,
-# supplied by the deployer; none of them has a default here.
+# No RUN imports the application, so the image builds with no database
+# reachable; no DB_* variable is read at build time; and there is no
+# HEALTHCHECK, because `/health/live` and `/health/ready` are the deployer's
+# probes and are documented in DEPLOY.md. Runtime configuration is only the
+# five environment variables listed in .env.example, supplied by the deployer;
+# none of them has a default here.
 
 FROM python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 AS base
 
@@ -89,7 +88,7 @@ COPY --chown=10001:10001 app/certs/ ./app/certs/
 USER 10001:10001
 
 # Documentation only; the port is bound by scripts/start and published by the
-# deployer. The container listens on 0.0.0.0:3000 (spec §8).
+# deployer. The container listens on 0.0.0.0:3000.
 EXPOSE 3000
 
 # scripts/start is the single start command. Relative to WORKDIR, exec form, so

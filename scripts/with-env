@@ -7,7 +7,7 @@
 # This is the ONLY way a credential reaches a process in this repository.
 # Nothing else reads, prints, greps or sources an env file.
 #
-# Design rules (CONTRACTS.md §3), each of which is a security property:
+# Design rules, each of which is a security property:
 #
 #   * The file is parsed line by line. There is no `source`, no `eval` and no
 #     `export $(...)`: a value is never handed to the shell as code, so a
@@ -27,12 +27,11 @@
 #     would otherwise be reported as if it were a key name.
 #   * Callers must not wrap this in `set -x`, `bash -x` or a logging shim.
 #
-#   * Every PG* variable is unset before `exec` (delta D9, ruling R35). The
-#     app passes every libpq parameter explicitly, so a hostile PGSSLMODE,
-#     PGHOST or PGSSLROOTCERT cannot *override* one — that half was verified
-#     live (slice-a.md §8.3) and is what the deploy gate's hostile-environment
-#     probe asserts against a direct interpreter invocation. What explicit
-#     parameters do not close is PGSERVICE / PGSERVICEFILE naming a service
+#   * Every PG* variable is unset before `exec`. The app passes every libpq
+#     parameter explicitly, so a hostile PGSSLMODE, PGHOST or PGSSLROOTCERT
+#     cannot *override* one — that half is verified live by the test suite,
+#     which starts the app with those variables set to bad values. What
+#     explicit parameters do not close is PGSERVICE / PGSERVICEFILE naming a service
 #     that does not exist: libpq then fails the connection outright, which is
 #     an availability lever an unprivileged co-tenant of this process's
 #     environment could pull. Scrubbing is fail-closed and removes the lever.
@@ -108,7 +107,7 @@ done <"$env_file"
 # Nothing above this line exported anything: a malformed file leaves the
 # environment untouched and the command unrun.
 
-# D9 / R35: every PG* name goes, before the five allowed names are exported —
+# Every PG* name goes, before the five allowed names are exported —
 # the order matters only for readability, since no allowed key starts with PG.
 for pg_name in "${!PG@}"; do
   unset "$pg_name"

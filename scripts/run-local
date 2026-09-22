@@ -7,15 +7,16 @@
 #
 # The flags are the contract, not preferences:
 #
-#   --cpus=0.5 --memory=1g --memory-swap=1g   spec §8's cap; equal memory and
-#                                             memory-swap means no swap, so a
-#                                             leak fails instead of crawling.
+#   --cpus=0.5 --memory=1g --memory-swap=1g   the cap the app is sized for;
+#                                             equal memory and memory-swap
+#                                             means no swap, so a leak fails
+#                                             instead of crawling.
 #   --read-only                               nothing writes to the rootfs —
 #                                             `python -B` and the baked .pyc
 #                                             files are what make that hold.
 #   no -v / --mount anywhere                  the container holds no state;
 #                                             everything durable is in the
-#                                             database (spec §8).
+#                                             database.
 #   --stop-timeout 25                         uvicorn's own graceful window is
 #                                             20 s (scripts/start), and
 #                                             docker's default 10 s would
@@ -23,10 +24,11 @@
 #   -p 127.0.0.1:3002:3000                    loopback only, on this app's
 #                                             assigned host port.
 #
-# .env.docker.local is written by `_tools/pgsql/pg env crm --server
-# host.docker.internal:5432 --write .env.docker.local`; it is git-ignored and
-# is never read by this script — docker reads it, and no value ever reaches a
-# command line or a log.
+# .env.docker.local holds the same five variables as .env, but with the
+# database host the container can reach (host.docker.internal) rather than
+# 127.0.0.1; README.md's setup section says how to write it. It is git-ignored
+# and is never read by this script — docker reads it, and no value ever reaches
+# a command line or a log.
 
 set -Eeuo pipefail
 

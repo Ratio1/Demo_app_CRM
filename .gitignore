@@ -6,8 +6,8 @@
 # artefacts are listed by their exact paths below. Committed roots additionally
 # use the .crt extension as a second line of defence.
 
-# local env files — required by `_tools/pgsql/pg env --write`, which refuses to
-# write a file that git does not already ignore. Do not weaken these two lines.
+# local env files — these two lines are what keeps a credential out of a
+# commit, and `scripts/with-env` accepts no other name. Do not weaken them.
 .env
 .env*.local
 

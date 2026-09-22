@@ -18,7 +18,8 @@
 #   3. docker build --target runtime.
 #
 # The image serves HTTPS with a certificate no CA signed, so a browser warns
-# once per host and port (decision D-L). That is the acceptance surface.
+# once per host and port. Accepting that warning once is expected for a local
+# run; nothing else about the image is development-only.
 
 set -Eeuo pipefail
 

@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 #
-# start — the single command that serves Demo_App_CRM (PLAN.md §5), and the
-# Dockerfile CMD. It starts the server and does nothing else: it never migrates,
-# provisions, seeds or otherwise touches the database, and it reads no
-# environment variable of its own. The five database variables are read once, at
-# lifespan, by app/config.py (CONTRACTS.md §2) — this script only passes the
-# process the flags that bound it.
+# start — the single command that serves Demo_App_CRM, and the Dockerfile CMD.
+# It starts the server and does nothing else: it never migrates, provisions,
+# seeds or otherwise touches the database, and it reads no environment variable
+# of its own. The five database variables are read once, at lifespan, by
+# app/config.py — this script only passes the process the flags that bound it.
 #
 # Why each flag:
 #
-#   --host 0.0.0.0 --port 3000   the container contract (spec §8, PLAN.md §5).
+#   --host 0.0.0.0 --port 3000   what the container publishes; see DEPLOY.md.
 #   --workers 1                  one worker, so there is no worker manager and
 #                                no process supervisor; `exec` below then makes
 #                                uvicorn PID 1 and SIGTERM reaches it directly.
@@ -17,7 +16,7 @@
 #   --no-proxy-headers           X-Forwarded-Host/Proto/For must not influence
 #                                any decision or redirect target; the app
 #                                compares Origin and Host against the origin
-#                                stored in the database instead (PLAN.md §5).
+#                                stored in the database instead.
 #   --limit-concurrency 64       transport-level last resort only. The app's own
 #                                budgets are much tighter — the connection pool
 #                                admits 4 active plus 16 waiting and the hash
@@ -31,19 +30,21 @@
 #   --backlog 128                bounded accept queue.
 #   --timeout-graceful-shutdown 20
 #                                finish in-flight requests on SIGTERM, then stop.
-#                                NOTE for scripts/run-local (Slice E): this
-#                                exceeds Docker's default 10 s stop timeout, so
-#                                the reference `docker run` needs
+#                                NOTE for scripts/run-local: this exceeds
+#                                Docker's default 10 s stop timeout, so the
+#                                reference `docker run` needs
 #                                `--stop-timeout 25` or docker escalates to
 #                                SIGKILL before uvicorn's own window closes.
 #
 #   --no-access-log              uvicorn's own access line carries the full
-#                                request target, query string included, which
-#                                R1/SEC-061 forbids in a log. app/logging.py
-#                                emits one JSON record per request instead,
-#                                with `path` stripped of the query (delta D8).
+#                                request target, query string included, and a
+#                                query string can carry a search term or an
+#                                email address, which must never reach a log.
+#                                app/logging.py emits one JSON record per
+#                                request instead, with `path` stripped of the
+#                                query.
 #
-# Every PG* variable is scrubbed before exec (delta D9, ruling R35). Every
+# Every PG* variable is scrubbed before exec. Every
 # libpq parameter is passed explicitly by app/config.py, so a hostile PGSSLMODE
 # or PGHOST cannot override one — but a PGSERVICE naming a service that does
 # not exist is a hard connection failure, and that is an availability lever an
@@ -54,16 +55,15 @@
 #
 # uvicorn's --ssl-certfile/--ssl-keyfile are added below, conditional on BOTH
 # app/certs/dev-server.crt and app/certs/dev-server.key being present in the
-# image (PLAN.md §5 "Dev TLS, host and container", D-L). Without them the
-# container would serve plain HTTP, and then `__Host-` cookies (Secure) and the
-# exact stored HTTPS origin of step 0a could never match — so the pair is the
+# image. Without them the container would serve plain HTTP, and then `__Host-`
+# cookies (Secure) and the stored HTTPS origin could never match — so the pair is the
 # difference between a container that serves and one that refuses every
 # request. Nothing else is added: no http:// exception, no reloader, no second
 # process, and no environment variable selects TLS — the files decide.
 
 set -Eeuo pipefail
 
-# D9 / R35 — every PG* name, unconditionally, before the server starts.
+# Every PG* name, unconditionally, before the server starts.
 for pg_name in "${!PG@}"; do
   unset "$pg_name"
 done

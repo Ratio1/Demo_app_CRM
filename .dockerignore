@@ -1,4 +1,4 @@
-# Build context for `demo-crm-app:local` (PLAN.md §5).
+# Build context for `demo-crm-app:local`.
 #
 # What must NOT be listed here, and why:
 #   app/certs/ca-bundle.pem      built by scripts/build-ca-bundle immediately
@@ -7,7 +7,8 @@
 #                                  the dev HTTPS listener.
 # Only `app/certs/roots.dev/` is excluded, so the machine-local dev CA reaches
 # a local image through the built bundle and never as a loose directory. The
-# Deploy gate asserts the image contains no .env*, no roots.dev/ and no .git.
+# image is checked after every build for .env* files, roots.dev/ and .git; none
+# of them may be present.
 
 # credentials — never in an image, not even the example
 .env*

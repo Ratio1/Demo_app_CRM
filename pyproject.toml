@@ -41,7 +41,7 @@ dev = [
 package = false
 
 # --------------------------------------------------------------------------
-# Style — spec §3: type hints, NumPy docstrings, two-space indentation.
+# Style — type hints everywhere, NumPy docstrings, two-space indentation.
 # --------------------------------------------------------------------------
 [tool.ruff]
 line-length = 100
@@ -71,9 +71,9 @@ select = [
 ]
 
 ignore = [
-  # N818 wants every exception name to end in "Error". CONTRACTS.md §4 pins
-  # `class AmbiguousCommit(Exception)` for app/db/retry.py, and a lane may not
-  # rename a contracted symbol. Lift this only through a contract step.
+  # N818 wants every exception name to end in "Error". app/db/retry.py raises
+  # `AmbiguousCommit`, whose name says what happened rather than that it is an
+  # error; renaming it would ripple through every caller that handles it.
   "N818",
 ]
 
@@ -85,7 +85,7 @@ convention = "numpy"
 "scripts/**" = ["D"]
 
 # --------------------------------------------------------------------------
-# Typing — spec §3 / PLAN.md §5: mypy strict over app/.
+# Typing — mypy strict over app/.
 # --------------------------------------------------------------------------
 [tool.mypy]
 python_version = "3.12"
@@ -96,8 +96,7 @@ warn_unused_configs = true
 enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
 
 # --------------------------------------------------------------------------
-# Tests — owned by the Tests lane; the asyncio mode is pinned here because
-# pyproject.toml is a Backend-lane file.
+# Tests — pytest, with asyncio in strict mode so every async test is marked.
 # --------------------------------------------------------------------------
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
