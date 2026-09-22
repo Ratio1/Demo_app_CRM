@@ -50,9 +50,7 @@ async def test_r70_cookieless_hx_401_reads_sign_in_to_continue_only(
   No "Your session ended" sentence — that would tell a first-time,
   never-authenticated visitor their session "ended", which it never did.
   """
-  response = await in_process_client.get(
-    f"/deals/{_SOME_DEAL_ID}", headers={"HX-Request": "true"}
-  )
+  response = await in_process_client.get(f"/deals/{_SOME_DEAL_ID}", headers={"HX-Request": "true"})
   assert response.status_code == 401
   assert response.headers.get("hx-redirect") == "/login"
   assert "Sign in to continue." in response.text
@@ -72,9 +70,7 @@ async def test_r70_presented_but_dead_cookie_hx_401_keeps_cp07(
 
   clock.advance(IDLE_TTL + timedelta(seconds=1))
 
-  response = await in_process_client.get(
-    f"/deals/{_SOME_DEAL_ID}", headers={"HX-Request": "true"}
-  )
+  response = await in_process_client.get(f"/deals/{_SOME_DEAL_ID}", headers={"HX-Request": "true"})
   assert response.status_code == 401
   assert response.headers.get("hx-redirect") == "/login?notice=session_ended"
   assert "Your session ended. Sign in to continue." in response.text
