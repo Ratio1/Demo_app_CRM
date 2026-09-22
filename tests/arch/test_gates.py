@@ -1,8 +1,10 @@
-"""Static architecture gates for Slice A.
+"""Static architecture gates for Slice A and Slice B.
 
 Authority: ``ACCESS_MATRIX.md`` §7 — ``ARC-003``, ``ARC-006``, ``ARC-008``,
 ``ARC-009``, ``SEC-063``; ``slice-a.md`` §1.1 (middleware/module map),
-ruling **R43** (the vendored htmx SHA-256).
+ruling **R43** (the vendored htmx SHA-256); ``contracts/slice-b.md``
+§2(h) (``ARC-001``/``SQL-032``'s Slice B allowlist), ``DATA_CONTRACT.md``
+§9.1 (``SQL-031``'s server-clock ban and its one named exemption).
 
 Each gate below either runs for real against the code that already exists
 (``ARC-006``, ``ARC-009``, the htmx SRI check) or fails loudly, naming the
@@ -14,6 +16,9 @@ missing prerequisite, rather than passing vacuously on an empty glob
 ``users`` lives outside ``app/db/repositories/users.py``; (b) the
 functions that write ``role`` or ``is_active`` — ``insert_user`` and
 ``set_active`` — are referenced only from ``app/services/accounts.py``.
+
+``ARC-001``/``SQL-032`` and ``SQL-031`` (Slice B, ruling R66) are added at
+the very bottom.
 """
 
 from __future__ import annotations
@@ -436,4 +441,257 @@ def test_arc018b_role_and_active_writers_referenced_only_from_accounts_service()
   assert accounts_references == _ROLE_OR_ACTIVE_WRITERS, (
     f"expected {_ACCOUNTS_SERVICE} to reference both {sorted(_ROLE_OR_ACTIVE_WRITERS)}; "
     f"found {sorted(accounts_references)} — the gate's own matcher may have drifted"
+  )
+
+
+# ---------------------------------------------------------------------------
+# ARC-001 / SQL-032 (Slice B, ruling R66) — every public function of
+# app/db/repositories/contacts.py takes `scope` as its second positional
+# argument; the identity/infrastructure modules (sessions, users, throttle,
+# settings, audit, receipts) take none — contracts/slice-b.md §1(b) B2,
+# §2(h), ACCESS_MATRIX.md §7 ARC-001's allowlist.
+# ---------------------------------------------------------------------------
+
+_REPOSITORIES_DIR: Final = APP_DIR / "db" / "repositories"
+
+#: The identity/infrastructure modules ARC-001's allowlist names —
+#: `contracts/slice-b.md` §1(b) B2 (`receipts.py`, the two `users.py`
+#: additive reads) and `slice-a.md`'s shipped session/throttle/settings/
+#: audit layer, all of which take explicit ids rather than a `Scope`
+#: because they hold no owner column and answer no scoped question.
+_SCOPE_EXEMPT_REPOSITORY_MODULES: Final[frozenset[str]] = frozenset(
+  {"sessions", "users", "throttle", "settings", "audit", "receipts"}
+)
+
+
+def _public_top_level_functions(
+  tree: ast.Module,
+) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+  """Return every top-level, non-underscore-prefixed function/async function def."""
+  return [
+    node
+    for node in tree.body
+    if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and not node.name.startswith("_")
+  ]
+
+
+def test_arc001_sql032_business_repositories_are_exactly_contacts() -> None:
+  """The ARC-001 allowlist is exactly the identity/infrastructure modules; `contacts` is not on it.
+
+  Written as a frozenset in this test (not inferred from the allowlist a
+  gate happens to check), per `contracts/slice-b.md` §1(b) B2's own
+  instruction: "this must be stated in ARC-001/SQL-032's allowlist or the
+  ast gate trips on both".
+  """
+  assert _REPOSITORIES_DIR.is_dir(), f"{_REPOSITORIES_DIR} does not exist yet"
+  modules = {path.stem for path in _REPOSITORIES_DIR.glob("*.py") if path.stem != "__init__"}
+  assert modules, f"no repository modules found under {_REPOSITORIES_DIR}"
+  business_modules = modules - _SCOPE_EXEMPT_REPOSITORY_MODULES
+  assert business_modules == {"contacts"}, (
+    f"expected exactly one business repository module outside the ARC-001 allowlist "
+    f"({sorted(_SCOPE_EXEMPT_REPOSITORY_MODULES)}): 'contacts'. Got {sorted(business_modules)}"
+  )
+
+
+def test_arc001_sql032_contacts_repository_functions_take_scope_second() -> None:
+  """Every public function of `app/db/repositories/contacts.py` takes `scope` as its 2nd arg.
+
+  `contracts/slice-b.md` §1(b) B1: "`scope` is the second positional
+  argument, not the first" — `conn` stays first (the shipped Slice A
+  convention), `scope` is the first *business* argument, so the gate can
+  see it by position.
+  """
+  path = _REPOSITORIES_DIR / "contacts.py"
+  assert path.is_file(), f"{path} does not exist yet"
+  tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+  functions = _public_top_level_functions(tree)
+  assert functions, f"no public functions found in {path}"
+  offenders: list[str] = []
+  for function in functions:
+    args = function.args.args
+    if len(args) < 2 or args[1].arg != "scope":
+      offenders.append(f"{function.name} at line {function.lineno}")
+  assert offenders == [], (
+    f"public app/db/repositories/contacts.py function(s) missing `scope` as arg 2: {offenders}"
+  )
+
+
+def test_arc001_sql032_identity_infrastructure_modules_take_no_scope() -> None:
+  """None of the allowlisted identity/infrastructure modules' public functions take a `scope`.
+
+  The empirical half of the allowlist claim: every module named in
+  :data:`_SCOPE_EXEMPT_REPOSITORY_MODULES` genuinely holds no `Scope`
+  consumer, positional or keyword — it is not merely asserted, it is
+  checked against the shipped code.
+  """
+  offenders: list[str] = []
+  checked_modules: set[str] = set()
+  for name in sorted(_SCOPE_EXEMPT_REPOSITORY_MODULES):
+    path = _REPOSITORIES_DIR / f"{name}.py"
+    if not path.is_file():
+      continue
+    checked_modules.add(name)
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for function in _public_top_level_functions(tree):
+      arg_names = {arg.arg for arg in function.args.args} | {
+        arg.arg for arg in function.args.kwonlyargs
+      }
+      if "scope" in arg_names:
+        offenders.append(f"{name}.py::{function.name} at line {function.lineno}")
+  assert checked_modules == _SCOPE_EXEMPT_REPOSITORY_MODULES, (
+    f"expected every allowlisted module to exist on disk; missing "
+    f"{sorted(_SCOPE_EXEMPT_REPOSITORY_MODULES - checked_modules)}"
+  )
+  assert offenders == [], (
+    f"identity/infrastructure function(s) unexpectedly take `scope`: {offenders}"
+  )
+
+
+def test_sql032_contacts_repository_has_no_python_side_ownership_filter() -> None:
+  """`app/db/repositories/contacts.py` filters ownership in SQL only, never by post-filtering rows.
+
+  A cheap structural guard, not a proof (documented as such, like
+  `ARC-003` above): walks every `ast.Compare` node for an `==`/`!=`
+  comparison whose operand is literally named or attributed `owner_id` —
+  the shape a Python-side post-filter (``if row.owner_id ==
+  scope.actor_id``) would take. The real predicate lives in `sql.SQL`
+  string literals (`_visible_where`/`_read_scope`/`_write_scope`), which
+  this walk never flags because a string literal is not an `ast.Compare`.
+  """
+  path = _REPOSITORIES_DIR / "contacts.py"
+  assert path.is_file(), f"{path} does not exist yet"
+  tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+  offenders: list[str] = []
+  for node in ast.walk(tree):
+    if not isinstance(node, ast.Compare):
+      continue
+    if not any(isinstance(op, ast.Eq | ast.NotEq) for op in node.ops):
+      continue
+    for operand in (node.left, *node.comparators):
+      name = operand.attr if isinstance(operand, ast.Attribute) else getattr(operand, "id", None)
+      if name == "owner_id":
+        offenders.append(f"line {node.lineno}")
+  assert offenders == [], (
+    f"Python-side owner_id comparison found in {path} at line(s) {offenders} "
+    "(ownership must be a SQL predicate, never a post-filter)"
+  )
+
+
+# ---------------------------------------------------------------------------
+# SQL-031 (Slice B, ruling R66) — no server-clock function reaches
+# app/db/** or migrations/**, with the one named exemption
+# DATA_CONTRACT.md §9.1 records: app/db/journal.py's
+# _INSERT_JOURNAL_SQL/_MARK_VERIFIED_SQL, which stamp
+# schema_migrations.applied_at/verified_at with CURRENT_TIMESTAMP.
+# ---------------------------------------------------------------------------
+
+_DB_DIR: Final = APP_DIR / "db"
+_MIGRATIONS_DIR: Final = APP_ROOT / "migrations"
+_JOURNAL_PY: Final = _DB_DIR / "journal.py"
+
+#: DATA_CONTRACT.md §9.1's clock/window-arithmetic ban: every instant and
+#: window boundary is computed in Python and bound, never read from the
+#: server's own clock inside SQL.
+_SERVER_CLOCK_PATTERN: Final = re.compile(
+  r"\bnow\s*\(\)|\bcurrent_timestamp\b|\bclock_timestamp\s*\(\)|"
+  r"\btransaction_timestamp\s*\(\)|\bstatement_timestamp\s*\(\)|"
+  r"\bdate_trunc\s*\(|\bcurrent_date\b|\bcurrent_time\b|"
+  r"\blocaltimestamp\b|\blocaltime\b|\binterval\b",
+  re.IGNORECASE,
+)
+_SQL_LINE_COMMENT: Final = re.compile(r"--.*$", re.MULTILINE)
+#: The exact number of `CURRENT_TIMESTAMP` occurrences the two named
+#: journal constants carry today (`_INSERT_JOURNAL_SQL`'s two,
+#: `_MARK_VERIFIED_SQL`'s one) — bounded so a THIRD, unrelated use would
+#: not silently widen the exemption to "anything in journal.py".
+_JOURNAL_PY_EXEMPT_COUNT: Final = 3
+
+
+def _docstring_node_ids(tree: ast.Module) -> set[int]:
+  """Return ``id()`` of every docstring's `Constant` node (module/class/function).
+
+  A docstring is documentation, not code the application executes as SQL
+  — excluding it is what keeps this grep gate from false-positiving on
+  prose that *names* a banned construct while explaining its absence
+  (this very codebase's docstrings do exactly that, repeatedly: e.g.
+  "`ON CONFLICT` would be one statement and is banned").
+  """
+  ids: set[int] = set()
+
+  def _mark(body: list[ast.stmt]) -> None:
+    if (
+      body
+      and isinstance(body[0], ast.Expr)
+      and isinstance(body[0].value, ast.Constant)
+      and isinstance(body[0].value.value, str)
+    ):
+      ids.add(id(body[0].value))
+
+  _mark(tree.body)
+  for node in ast.walk(tree):
+    if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+      _mark(node.body)
+  return ids
+
+
+def _non_docstring_string_constants(path: Path) -> list[tuple[int, str]]:
+  """Return ``(lineno, value)`` for every non-docstring string literal in a ``.py`` file.
+
+  A type annotation (``UUID``, ``Scope``) is a name/attribute node, never
+  a string constant — even under ``from __future__ import annotations``,
+  which defers *evaluation*, not what :func:`ast.parse` itself produces —
+  so this walk never sees one. A ``#`` comment is not part of the AST at
+  all. What remains is exactly the text this application would actually
+  execute as SQL or emit: `sql.SQL(...)` literals and the like.
+  """
+  tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+  excluded = _docstring_node_ids(tree)
+  return [
+    (node.lineno, node.value)
+    for node in ast.walk(tree)
+    if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in excluded
+  ]
+
+
+def test_sql031_no_server_clock_function_outside_journals_documented_exemption() -> None:
+  """No server-clock function reaches `app/db/**` or `migrations/**` — one named exemption.
+
+  `DATA_CONTRACT.md` §9.1: every instant and window boundary is computed
+  in Python and bound as a parameter, never read from the database's own
+  clock inside SQL — with one named exemption, `app/db/journal.py`'s
+  `_INSERT_JOURNAL_SQL`/`_MARK_VERIFIED_SQL`, which stamp
+  `schema_migrations.applied_at`/`verified_at` with `CURRENT_TIMESTAMP`
+  and nothing else, anywhere.
+  """
+  offenders: list[str] = []
+  journal_hits = 0
+
+  py_files = _python_files_under(_DB_DIR)
+  assert py_files, f"{_DB_DIR} does not exist yet"
+  for path in py_files:
+    if "__pycache__" in path.parts:
+      continue
+    for lineno, value in _non_docstring_string_constants(path):
+      for match in _SERVER_CLOCK_PATTERN.finditer(value):
+        if path == _JOURNAL_PY:
+          journal_hits += 1
+          continue
+        offenders.append(f"{path.relative_to(APP_ROOT)}:{lineno}: {match.group(0)!r}")
+
+  assert _MIGRATIONS_DIR.is_dir(), f"{_MIGRATIONS_DIR} does not exist yet"
+  for path in sorted(_MIGRATIONS_DIR.rglob("*.sql")):
+    text = _SQL_LINE_COMMENT.sub("", path.read_text(encoding="utf-8"))
+    for match in _SERVER_CLOCK_PATTERN.finditer(text):
+      line_number = text.count("\n", 0, match.start()) + 1
+      offenders.append(f"{path.relative_to(APP_ROOT)}:{line_number}: {match.group(0)!r}")
+
+  assert offenders == [], "\n".join(offenders)
+  # Not vacuous, and bounded: journal.py must carry exactly the documented
+  # exemption's own count, not "any number" — a THIRD, unrelated use of
+  # CURRENT_TIMESTAMP would otherwise silently widen the exemption to the
+  # whole file.
+  assert journal_hits == _JOURNAL_PY_EXEMPT_COUNT, (
+    f"expected exactly {_JOURNAL_PY_EXEMPT_COUNT} server-clock use(s) in {_JOURNAL_PY} "
+    f"(the two documented, named statements); found {journal_hits} — the exemption's own "
+    "scope may have drifted"
   )
