@@ -1,0 +1,11 @@
+-- S7: the runtime cannot edit or delete audit rows. INSERT carries both the
+-- ordinary audit row — written inside the caller's transaction, which is what
+-- makes it atomic with the mutation it describes — and the best-effort
+-- deny-audit, which needs no additional privilege.
+--
+-- SELECT is granted for the named tests (SQL-005, SQL-011, SQL-015, SQL-016)
+-- and for NO serving path: there is no audit route in this application.
+-- §5.2 states the residual and writes out the one-step drop path the P4
+-- council can take. What S7 protects is that UPDATE, DELETE and TRUNCATE are
+-- absent, and they are.
+GRANT INSERT, SELECT ON TABLE public.audit_events TO {grant_to}
