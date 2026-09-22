@@ -432,11 +432,23 @@ async def test_acc021_owner_can_archive_own_active_contact(agent_a: LoggedInPrin
 async def test_acc022_agent_cannot_archive_foreign_contact(
   agent_a: LoggedInPrincipal, agent_b: LoggedInPrincipal
 ) -> None:
-  """`P_contact` — a foreign archive attempt is `404`."""
+  """`P_contact` — a foreign archive attempt is `404`.
+
+  The CSRF token must be real and bound to ``agent_b``'s own session:
+  order step 3 (`require_csrf`, `contracts/slice-b.md` §2(c)) runs before
+  the service call that decides the object-scope `404`, so a placeholder
+  value is rejected there with a `403` and this test would never reach
+  the ownership check it exists to prove. Any page ``agent_b`` can GET
+  regardless of ownership (``/contacts/new``) carries a token good for
+  any of its own POSTs, per `csrf.py`'s per-session (not per-resource)
+  derivation.
+  """
   contact = await create_contact(agent_a, **_CREATE_FIELDS)
+  new_form = await agent_b.client.get("/contacts/new")
+  csrf_token = extract_csrf_token(new_form.text)
   response = await agent_b.client.post(
     f"/contacts/{contact.id}/archive",
-    data={"csrf_token": "irrelevant", "idempotency_key": fresh_idempotency_key(), "version": "1"},
+    data={"csrf_token": csrf_token, "idempotency_key": fresh_idempotency_key(), "version": "1"},
   )
   assert response.status_code == 404
 
@@ -514,11 +526,17 @@ async def test_acc026_owner_can_restore_own_archived_contact(agent_a: LoggedInPr
 async def test_acc027_agent_cannot_restore_foreign_contact(
   agent_a: LoggedInPrincipal, agent_b: LoggedInPrincipal
 ) -> None:
-  """`P_contact` — a foreign restore attempt is `404`."""
+  """`P_contact` — a foreign restore attempt is `404`.
+
+  Same reasoning as `test_acc022` above: the token must be real, or the
+  request never gets past order step 3 to the ownership check.
+  """
   contact = await create_contact(agent_a, **_CREATE_FIELDS)
+  new_form = await agent_b.client.get("/contacts/new")
+  csrf_token = extract_csrf_token(new_form.text)
   response = await agent_b.client.post(
     f"/contacts/{contact.id}/restore",
-    data={"csrf_token": "irrelevant", "idempotency_key": fresh_idempotency_key(), "version": "1"},
+    data={"csrf_token": csrf_token, "idempotency_key": fresh_idempotency_key(), "version": "1"},
   )
   assert response.status_code == 404
 
@@ -713,11 +731,17 @@ async def test_identical_404_foreign_missing_and_noncanonical_are_byte_identical
   missing_path = f"/contacts/{_MISSING_ID}{suffix}"
   noncanonical_path = f"/contacts/{_NON_CANONICAL_ID}{suffix}"
 
-  post_kwargs: dict[str, Any] = (
-    {"data": {"csrf_token": "x", "idempotency_key": fresh_idempotency_key(), "version": "1"}}
-    if method == "POST"
-    else {}
-  )
+  # A real, session-bound token: order step 3 (`require_csrf`) runs before
+  # the service call that decides the `404`, so a placeholder value would
+  # be rejected there with `403` for every POST case, before the request
+  # ever reaches the identical-404 logic this test asserts on.
+  post_kwargs: dict[str, Any] = {}
+  if method == "POST":
+    new_form = await agent_a.client.get("/contacts/new")
+    csrf_token = extract_csrf_token(new_form.text)
+    post_kwargs = {
+      "data": {"csrf_token": csrf_token, "idempotency_key": fresh_idempotency_key(), "version": "1"}
+    }
   foreign_response = await agent_a.client.request(method, path, **post_kwargs)
   missing_response = await agent_a.client.request(method, missing_path, **post_kwargs)
   noncanonical_response = await agent_a.client.request(method, noncanonical_path, **post_kwargs)
