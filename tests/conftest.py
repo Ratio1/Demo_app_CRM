@@ -76,6 +76,25 @@ Two ways a test reaches the database
    :func:`insert_test_user_row` — never through an in-process owner
    connection, because a single test process can only ever hold the one
    role it was launched under.
+
+``tests/e2e`` runs as its own separate invocation
+-----------------------------------------------------
+Confirmed empirically: collecting ``tests/e2e`` (pytest-playwright's *sync*
+``page`` fixture) in the **same** session as any ``pytest.mark.asyncio``
+test, in either order, makes ``pytest-asyncio``'s strict-mode
+``asyncio.Runner`` intermittently fail later async tests with
+``RuntimeError: Runner.run() cannot be called from a running event loop``
+or leave a coroutine that pytest reports on without it ever having run (a
+``RuntimeWarning: coroutine '...' was never awaited``). This reproduces
+with nothing more than both directories being **collected** together — no
+e2e test needs to actually execute, let alone open a browser. It is a known
+category of interaction between the two plugins' event-loop management,
+not a bug in any test here. The reliable, verified split::
+
+  scripts/with-env .env.test.local -- .venv/bin/python -B -m pytest tests/ --ignore=tests/e2e
+  .venv/bin/python -B -m pytest tests/e2e   # separate invocation; no with-env needed today
+
+Every count this suite's commit messages report was measured this way.
 """
 
 from __future__ import annotations
