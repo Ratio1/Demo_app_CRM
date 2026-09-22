@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from _pool_wrappers import CommitFailingPool, GatedPool, statement_matches
@@ -247,8 +247,12 @@ async def test_sql012_part1_engine_raised_40001_is_retried_to_a_commit(tmp_path:
     t1_pool = GatedPool(pool, before_execute=t1_before_execute, on_committed=t1_on_committed)
     t2_pool = GatedPool(pool, before_execute=t2_before_execute)
 
-    t1_runner = TransactionRunner(t1_pool)
-    t2_runner = TransactionRunner(t2_pool)
+    # `GatedPool` duck-types a `Pool` (`connection()` proxying through to the
+    # real pool) but is not, and must not become, a subclass of
+    # `AsyncConnectionPool` — the cast opts `TransactionRunner`'s nominal
+    # parameter type out for this test-only substitute, exactly here.
+    t1_runner = TransactionRunner(cast("Pool", t1_pool))
+    t2_runner = TransactionRunner(cast("Pool", t2_pool))
 
     def _blind_mover(*, to_stage: str) -> Any:
       """Build a transaction body that re-reads the CURRENT row and moves it, every attempt."""
@@ -319,7 +323,11 @@ async def test_sql012_part2_the_cap_is_five_attempts_then_retryexhausted() -> No
   async def _no_sleep(delay: float) -> None:
     del delay
 
-  runner = TransactionRunner(pool=_UnusedPool(), sleep=_no_sleep, jitter=lambda ceiling: ceiling)
+  # `_UnusedPool` never opens a real connection (module docstring above);
+  # the cast opts its structural stand-in out of `Pool`'s nominal check.
+  runner = TransactionRunner(
+    pool=cast("Pool", _UnusedPool()), sleep=_no_sleep, jitter=lambda ceiling: ceiling
+  )
 
   with pytest.raises(RetryExhausted) as excinfo:
     await runner.serializable(_always_fails, op="test-sql-012-cap")
@@ -352,7 +360,7 @@ async def test_sql012_part3_the_backoff_schedule_through_injected_hooks() -> Non
     delays.append(delay)
 
   runner = TransactionRunner(
-    pool=_UnusedPool(), sleep=_recording_sleep, jitter=lambda ceiling: ceiling
+    pool=cast("Pool", _UnusedPool()), sleep=_recording_sleep, jitter=lambda ceiling: ceiling
   )
 
   with pytest.raises(RetryExhausted):
@@ -376,7 +384,7 @@ async def test_sql012_part3_default_jitter_stays_within_the_ceiling() -> None:
   async def _recording_sleep(delay: float) -> None:
     delays.append(delay)
 
-  runner = TransactionRunner(pool=_UnusedPool(), sleep=_recording_sleep)
+  runner = TransactionRunner(pool=cast("Pool", _UnusedPool()), sleep=_recording_sleep)
 
   with pytest.raises(RetryExhausted):
     await runner.serializable(_always_fails, op="test-sql-012-backoff-default")
@@ -464,7 +472,7 @@ async def test_sql013_landed_ambiguous_commit_replays_instead_of_writing_twice(
     deal_id = await _seed_deal(pool, scope, contact_id=contact_id, title="Landed ambiguous deal")
 
     commit_failing_pool = CommitFailingPool(pool, land=True)
-    runner = TransactionRunner(commit_failing_pool)
+    runner = TransactionRunner(cast("Pool", commit_failing_pool))
     clock = _fresh_clock()
     key = uuid.uuid4()
 
@@ -514,7 +522,7 @@ async def test_sql013_not_landed_ambiguous_commit_answers_a_re_raised_ambiguousc
     )
 
     commit_failing_pool = CommitFailingPool(pool, land=False)
-    runner = TransactionRunner(commit_failing_pool)
+    runner = TransactionRunner(cast("Pool", commit_failing_pool))
     clock = _fresh_clock()
     key = uuid.uuid4()
 

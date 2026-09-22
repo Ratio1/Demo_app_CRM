@@ -13,7 +13,7 @@ their *types* under ``TYPE_CHECKING``.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
   from collections.abc import Callable
@@ -69,7 +69,11 @@ class _GatedTransaction:
     return await self._real.__aenter__()
 
   async def __aexit__(self, exc_type: object, exc: object, tb: object) -> bool | None:
-    result = await self._real.__aexit__(exc_type, exc, tb)
+    # `self._real` is deliberately `Any` (it proxies whatever `conn.transaction()`
+    # returned); the explicit annotation below is what tells mypy the awaited
+    # result is trusted as `bool | None` rather than re-inferring `Any` (strict
+    # mode's `no-any-return`), without narrowing `self._real` itself.
+    result: bool | None = await self._real.__aexit__(exc_type, exc, tb)
     if exc_type is None and self._on_committed is not None:
       self._on_committed()
     return result
@@ -116,11 +120,20 @@ class _GatedConnection:
     if self._before_execute is not None:
       text = _statement_text(query, self._real)
       await self._before_execute(text)
-    return await self._real.execute(query, *args, **kwargs)
+    # `self._real` is a real `PoolConnection`, whose `execute` overloads are
+    # typed against concrete query/params shapes this forwarding shim
+    # deliberately erases (it accepts and forwards whatever the caller
+    # passed) — casting the bound method to `Any` here opts this one call
+    # out of overload resolution rather than widening the method's own
+    # declared, still-checked `object` signature.
+    real_execute = cast("Any", self._real.execute)
+    result: object = await real_execute(query, *args, **kwargs)
+    return result
 
   def transaction(self, *args: object, **kwargs: object) -> _GatedTransaction:
     """Wrap the real transaction context manager to observe a clean commit."""
-    real_cm = self._real.transaction(*args, **kwargs)
+    real_transaction = cast("Any", self._real.transaction)
+    real_cm = real_transaction(*args, **kwargs)
     return _GatedTransaction(real_cm, on_committed=self._on_committed)
 
 
@@ -145,7 +158,8 @@ class _GatedConnectionContext:
     )
 
   async def __aexit__(self, exc_type: object, exc: object, tb: object) -> bool | None:
-    return await self._real_cm.__aexit__(exc_type, exc, tb)
+    result: bool | None = await self._real_cm.__aexit__(exc_type, exc, tb)
+    return result
 
 
 class GatedPool:
@@ -182,7 +196,11 @@ class GatedPool:
 
   def connection(self, *args: object, **kwargs: object) -> _GatedConnectionContext:
     """Return a gated connection context, one per call — one per retry attempt."""
-    real_cm = self._pool.connection(*args, **kwargs)
+    # Same erase-then-forward shim as `_GatedConnection.execute` above: the
+    # real pool's `connection()` overloads are typed against concrete
+    # timeout/kwargs shapes this proxy deliberately forwards unchanged.
+    real_connection = cast("Any", self._pool.connection)
+    real_cm = real_connection(*args, **kwargs)
     return _GatedConnectionContext(
       real_cm, before_execute=self._before_execute, on_committed=self._on_committed
     )
@@ -236,9 +254,18 @@ class CommitFailingPool:
     self._only_once = only_once
     self._fired = False
 
-  def connection(self, *args: object, **kwargs: object) -> _GatedConnectionContext:
-    """Return a connection whose transaction commit is made to fail, once."""
-    real_cm = self._pool.connection(*args, **kwargs)
+  def connection(self, *args: object, **kwargs: object) -> object:
+    """Return a connection whose transaction commit is made to fail, once.
+
+    Typed ``object`` (not ``_GatedConnectionContext``) because the two
+    branches below return genuinely different wrapper types — the shared
+    fast path's ``_GatedConnectionContext`` and this method's own, freshly
+    defined ``_CommitFailingConnectionContext`` — and nothing outside this
+    module ever inspects the return value by name; every caller only ever
+    uses it as ``async with pool.connection() as conn:``.
+    """
+    real_connection = cast("Any", self._pool.connection)
+    real_cm = real_connection(*args, **kwargs)
     if self._fired and self._only_once:
       return _GatedConnectionContext(real_cm, before_execute=None, on_committed=None)
     self._fired = True
@@ -265,7 +292,8 @@ class CommitFailingPool:
         if exc_type is not None:
           # The transaction body itself raised — never fabricate an
           # ambiguous commit on top of a real, already-explained failure.
-          return await self._real.__aexit__(exc_type, exc, tb)
+          result: bool | None = await self._real.__aexit__(exc_type, exc, tb)
+          return result
         if land:
           # Let the real COMMIT run (the row lands), then raise as if the
           # ACK for that COMMIT was lost on the way back to the client.
@@ -297,7 +325,8 @@ class CommitFailingPool:
         return _CommitFailingConnection(real_conn)
 
       async def __aexit__(self, exc_type: object, exc: object, tb: object) -> bool | None:
-        return await self._real_connection_cm.__aexit__(exc_type, exc, tb)
+        result: bool | None = await self._real_connection_cm.__aexit__(exc_type, exc, tb)
+        return result
 
     return _CommitFailingConnectionContext(real_cm)
 
