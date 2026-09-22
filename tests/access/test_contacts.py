@@ -23,6 +23,7 @@ keep both cases in one test rather than splitting an atomic assertion.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import httpx
@@ -339,7 +340,15 @@ async def test_acc017_stale_version_edit_returns_409_preserving_submitted_values
 async def test_acc018_edit_an_archived_contact_is_409_archived_parent(
   agent_a: LoggedInPrincipal,
 ) -> None:
-  """Editing an archived contact is `409` with `context="archived_parent"` (`body="cp_13"`)."""
+  """Editing an archived contact is `409` with `context="archived_parent"` (`body="cp_13"`).
+
+  Tokens for the ``POST`` are read off the **detail** page, never the edit
+  form: since ruling **R63**, ``GET /contacts/{id}/edit`` on an archived
+  contact answers ``303`` -> the detail page (``test_r63_...`` above)
+  rather than rendering — the detail page stays readable for an archived
+  record (``ACC-006``) and carries its own valid ``csrf_token``/``version``
+  regardless.
+  """
   contact = await create_contact(agent_a, **_CREATE_FIELDS)
   detail = await agent_a.client.get(f"/contacts/{contact.id}")
   version = extract_hidden_field(detail.text, "version")
@@ -351,13 +360,14 @@ async def test_acc018_edit_an_archived_contact_is_409_archived_parent(
   )
   assert archived.status_code == 303
 
-  edit_csrf, edit_key, edit_version = await _edit_form_tokens(agent_a.client, contact.id)
+  post_archive_detail = await agent_a.client.get(f"/contacts/{contact.id}")
+  assert post_archive_detail.status_code == 200
   response = await agent_a.client.post(
     f"/contacts/{contact.id}",
     data={
-      "csrf_token": edit_csrf,
-      "idempotency_key": edit_key,
-      "version": edit_version,
+      "csrf_token": extract_csrf_token(post_archive_detail.text),
+      "idempotency_key": fresh_idempotency_key(),
+      "version": extract_hidden_field(post_archive_detail.text, "version"),
       **_CREATE_FIELDS,
     },
   )
@@ -401,6 +411,107 @@ async def test_acc020_editing_an_archived_foreign_contact_is_404_not_409(
 
   response = await agent_b.client.get(f"/contacts/{contact.id}/edit")
   assert response.status_code == 404
+
+
+async def test_r63_get_edit_on_an_archived_contact_redirects_to_the_detail_page(
+  agent_a: LoggedInPrincipal,
+) -> None:
+  """Ruling R63: `GET /contacts/{id}/edit` on an ARCHIVED contact is `303` -> `/contacts/{id}`.
+
+  The detail view offers restore only (`ACC-006`); the edit **form** must
+  never render for an archived record — only the ``POST`` stays `409`.
+  """
+  contact = await create_contact(agent_a, **_CREATE_FIELDS)
+  csrf_token, idempotency_key, version = await _archive_form_tokens(agent_a.client, contact.id)
+  archived = await agent_a.client.post(
+    f"/contacts/{contact.id}/archive",
+    data={"csrf_token": csrf_token, "idempotency_key": idempotency_key, "version": version},
+  )
+  assert archived.status_code == 303
+
+  response = await agent_a.client.get(f"/contacts/{contact.id}/edit")
+  assert response.status_code == 303, (
+    "R63: GET /contacts/{id}/edit on an archived contact must redirect, never render the "
+    f"edit form; got {response.status_code}"
+  )
+  assert response.headers.get("location") == f"/contacts/{contact.id}"
+
+
+async def test_r64_new_contact_form_preselects_lead_so_an_untouched_submit_never_400s(
+  agent_a: LoggedInPrincipal,
+) -> None:
+  """Ruling R64: `GET /contacts/new` pre-selects `kind=lead`; an untouched radio never 400s."""
+  new_form = await agent_a.client.get("/contacts/new")
+  assert new_form.status_code == 200
+
+  lead_input = re.search(r'<input[^>]*id="contact-kind-lead"[^>]*>', new_form.text)
+  assert lead_input is not None, "no id=contact-kind-lead radio input found in the rendered form"
+  assert "checked" in lead_input.group(0), (
+    "R64: the lead radio must be pre-selected by default (R31, UX_FLOWS.md §4.5, "
+    "slice-b.md §2(f)) so a client that never touches the radio pair still submits "
+    "a valid kind"
+  )
+  customer_input = re.search(r'<input[^>]*id="contact-kind-customer"[^>]*>', new_form.text)
+  assert customer_input is not None, "no id=contact-kind-customer radio input found"
+  assert "checked" not in customer_input.group(0), "exactly one radio in the pair is pre-checked"
+
+  # The value an unmodified <form> actually submits for an untouched,
+  # pre-selected radio group — never a deliberately-chosen value.
+  csrf_token = extract_csrf_token(new_form.text)
+  idempotency_key = extract_hidden_field(new_form.text, "idempotency_key")
+  response = await agent_a.client.post(
+    "/contacts",
+    data={
+      "csrf_token": csrf_token,
+      "idempotency_key": idempotency_key,
+      "name": "R64 Untouched Radio Contact",
+      "company": "Acme Corp",
+      "email": "r64-untouched@example.test",
+      "phone": "",
+      "kind": "lead",
+    },
+  )
+  assert response.status_code == 303, (
+    "R64: posting the form's own pre-selected default kind must never answer 400; "
+    f"got {response.status_code}"
+  )
+
+
+async def test_acc035_stage_change_has_no_route_on_a_contact(agent_a: LoggedInPrincipal) -> None:
+  """`stage change` is n/a for O1 (a deal-only action, Slice C) — `404`, no such path.
+
+  Reaches the router's own 404 (never step 0's 403): the client already
+  carries a valid `Host` and, being an unsafe method through
+  ``http_client_factory``, a stamped same-origin `Origin` — no session and
+  no CSRF token are needed for a path no handler is registered against.
+  """
+  contact = await create_contact(agent_a, **_CREATE_FIELDS)
+  response = await agent_a.client.post(
+    f"/contacts/{contact.id}/stage",
+    data={"csrf_token": "irrelevant", "idempotency_key": fresh_idempotency_key(), "version": "1"},
+  )
+  assert response.status_code == 404
+
+
+async def test_acc036_safe_get_with_no_origin_header_is_served_normally(
+  agent_a: LoggedInPrincipal,
+) -> None:
+  """A safe `GET` on a contacts route carrying NO `Origin` header at all is served normally.
+
+  The must-not-reject half of step 0a: browsers send no `Origin` on a
+  same-origin navigation or on an htmx XHR fragment `GET`, so refusing one
+  here would 403 every page load. ``agent_a.client`` never stamps `Origin`
+  on a safe method (the stamping hook is scoped to unsafe methods only —
+  ``conftest._default_origin_on_unsafe_methods``), so this is already the
+  ordinary shape of every `GET` in this suite; this test names it
+  explicitly as `ACC-036`.
+  """
+  contact = await create_contact(agent_a, **_CREATE_FIELDS)
+  response = await agent_a.client.get(f"/contacts/{contact.id}")
+  assert "origin" not in {key.lower() for key in response.request.headers}, (
+    "this test must genuinely exercise the no-Origin case"
+  )
+  assert response.status_code == 200
 
 
 # ---------------------------------------------------------------------------
@@ -772,18 +883,63 @@ async def test_acc101_agent_list_shows_only_own_rows(
   del own
 
 
+#: `partials/pagination.html`'s exact literal text, en dash and all.
+_PAGINATION_SUMMARY_PATTERN = re.compile(r"Showing (\d+)\u2013(\d+) of (\d+)")
+#: One `<a href="...">` per data row — `partials/contact_results.html`'s
+#: name-cell link to `/contacts/{id}` — never a pagination or sort-header
+#: link, which carry no id segment.
+_CONTACT_DETAIL_LINK_PATTERN = re.compile(
+  r'href="/contacts/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"'
+)
+
+
+def _pagination_total(html: str) -> int:
+  """Return the "Showing X-Y of Z" total from a rendered contact list page."""
+  match = _PAGINATION_SUMMARY_PATTERN.search(html)
+  assert match is not None, "no 'Showing X-Y of Z' pagination summary found in the response"
+  return int(match.group(3))
+
+
+def _detail_link_count(html: str) -> int:
+  """Return how many contact-detail row links a rendered list page carries."""
+  return len(_CONTACT_DETAIL_LINK_PATTERN.findall(html))
+
+
 async def test_acc102_count_and_pagination_total_are_scoped(
   agent_a: LoggedInPrincipal, agent_b: LoggedInPrincipal
 ) -> None:
-  """The `COUNT(*)` carries the same predicate — a foreign row never changes the total."""
-  await create_contact(agent_a, **_CREATE_FIELDS)
-  before = await agent_a.client.get("/contacts")
-  await create_contact(agent_b, **_CREATE_FIELDS)
-  after = await agent_a.client.get("/contacts")
-  assert before.status_code == after.status_code == 200
-  assert before.text.count("</tr>") == after.text.count("</tr>") or (
-    "total" in before.text and "total" in after.text
-  ), "the visible row/total count must be unaffected by a contact created by another agent"
+  """The `COUNT(*)` carries the same predicate as the list — a foreign row never changes it.
+
+  Asserts two exact facts, never an inert `or`: the rendered "Showing
+  X-Y of Z" total, and the scoped row count (one detail-link per own
+  contact) — both unaffected by a contact ``agent_b`` creates in between.
+  ``?per_page=100`` keeps both fixtures on a single page.
+  """
+  await create_contact(agent_a, **{**_CREATE_FIELDS, "name": "ACC-102 Own One"})
+  await create_contact(agent_a, **{**_CREATE_FIELDS, "name": "ACC-102 Own Two"})
+  before = await agent_a.client.get("/contacts", params={"per_page": "100"})
+  assert before.status_code == 200
+  before_total = _pagination_total(before.text)
+  before_rows = _detail_link_count(before.text)
+  assert before_rows == before_total, (
+    "the rendered row count must equal the pagination total when everything fits on one page "
+    f"(rows={before_rows}, total={before_total})"
+  )
+
+  await create_contact(agent_b, **{**_CREATE_FIELDS, "name": "ACC-102 Foreign"})
+  after = await agent_a.client.get("/contacts", params={"per_page": "100"})
+  assert after.status_code == 200
+  after_total = _pagination_total(after.text)
+  after_rows = _detail_link_count(after.text)
+
+  assert after_total == before_total, (
+    f"a contact created by another agent must never change agent_a's scoped total: "
+    f"before={before_total} after={after_total}"
+  )
+  assert after_rows == before_rows, (
+    f"a contact created by another agent must never change agent_a's scoped row count: "
+    f"before={before_rows} after={after_rows}"
+  )
 
 
 async def test_acc103_search_is_prefix_only_not_containment(agent_a: LoggedInPrincipal) -> None:
