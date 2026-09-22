@@ -14,7 +14,7 @@ read and check CSRF on an unsafe method, charge the budget, apply the
 forced-reset gate, check the role where there is one, then do the work. A
 refusal is **raised**, never rendered here — :mod:`app.routes.errors` owns
 every status page — with one deliberate exception: the ``400`` of a
-crafted request is returned from :func:`_reject_input`, because it also
+crafted request is returned from :func:`~app.routes.pipeline.reject_input`, because it also
 writes ``ACCESS_MATRIX.md`` §4.5 row 6 and that row belongs beside the
 decision that produced it.
 
@@ -52,25 +52,19 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from app.logging import current_correlation_id
-from app.routes.errors import CONTACTS_URL, bad_request, conflict, redirect
+from app.routes.errors import CONTACTS_URL, conflict, redirect
+from app.routes.pipeline import (
+  is_fragment_request,
+  positive_int,
+  query_value,
+  reject_input,
+  stale_body,
+  start_mutation,
+  start_read,
+)
 from app.routes.rendering import View, base_context, csrf_token_for_request, notice_for, render
-from app.security.audit import (
-  ACTION_INPUT_REJECTED,
-  ACTION_ROLE_DENIED,
-  OBJECT_CONTACT,
-  record_denial,
-)
-from app.security.authz import (
-  charge_account_budget,
-  deny_forced_reset,
-  form_content_type_ok,
-  read_form,
-  require_admin,
-  require_csrf,
-  require_session,
-)
 from app.security.context import context_of
-from app.security.failures import ContactNotFound, RoleRequired
+from app.security.failures import ContactNotFound
 from app.security.idempotency import mint_key, parse_canonical
 from app.security.principal import scope_of
 from app.services.contacts import (
@@ -99,8 +93,6 @@ from app.services.contacts import (
 
 if TYPE_CHECKING:
   from uuid import UUID
-
-  from starlette.datastructures import FormData
 
   from app.security.principal import Principal
 
@@ -177,22 +169,6 @@ _CP_43_EMPTY: Final = (
 #: active user, which a 409-stale reassign panel can legitimately hold.
 _CP_38_UNKNOWN_USER: Final = "removed user"
 
-#: **R63** — the body of a 409-stale panel that has **no fields to
-#: compare**. ``UX_FLOWS.md`` §3.9's own orientation sentence promises two
-#: panels ("Your version is on the left, the saved version on the right"),
-#: which an archive or a restore cannot fill: their form carries a version
-#: and nothing else (``ACCESS_MATRIX.md`` §5.1, §1(b) note 5 — *"no
-#: fields; version only"*). That screen keeps the ``CP-85`` heading — the
-#: heading of the screen ``CP-12`` sits on, which is how R63's *"CP-12's
-#: heading"* reads, ``CP-12`` itself being 409-stale **secondary** copy
-#: rather than a heading — and carries this sentence as its body instead.
-#: The ruling supplies the text verbatim and records the **CP id as owed**
-#: to the copy authority; this constant is its only spelling in the code,
-#: so the id lands in one place when it is issued.
-_CP_OWED_ZERO_FIELD_STALE: Final = (
-  "This record changed since you opened it. Review it and try again."
-)
-
 #: **R64** (**R31**, ``UX_FLOWS.md`` §4.5 *"Type (radio pair, ``lead``
 #: default)"*, §2(f)). The create form renders this value pre-selected, so
 #: the pair a user never touches still submits one — which is what makes
@@ -232,65 +208,6 @@ class _ListQuery:
   per_page: int
 
 
-def _field(form: FormData, name: str) -> str | None:
-  """Return one form field as text, or ``None`` when it is absent."""
-  value = form.get(name)
-  return value if isinstance(value, str) else None
-
-
-def _is_fragment(request: Request) -> bool:
-  """Return whether this ``GET`` must answer with the partial (§2(e), **PIN 5**).
-
-  Parameters
-  ----------
-  request : Request
-    The inbound request.
-
-  Returns
-  -------
-  bool
-    ``True`` only for a genuine htmx fragment request. A Back-button
-    history restore carries ``HX-Request: true`` **and**
-    ``HX-History-Restore-Request: true`` — htmx 2.0.10 defaults
-    ``historyRestoreAsHxRequest`` to ``true``, and with the pinned
-    ``historyCacheSize: 0`` every restore is a cache miss, so this is the
-    normal path rather than an edge case. htmx swaps that response into
-    the history element with ``innerHTML``, so answering it with a
-    fragment would put a fragment on screen as the whole document.
-  """
-  if request.headers.get("hx-request", "").casefold() != "true":
-    return False
-  return request.headers.get("hx-history-restore-request", "").casefold() != "true"
-
-
-def _query_value(request: Request, key: str) -> tuple[bool, str | None]:
-  """Return ``(ok, value)`` for one allowlisted query key.
-
-  Parameters
-  ----------
-  request : Request
-    The inbound request.
-  key : str
-    An allowlisted key.
-
-  Returns
-  -------
-  tuple[bool, str | None]
-    ``ok`` is ``False`` when the key was supplied more than once
-    (``SEC-076``), which is a ``400``; the rule applies to allowlisted keys
-    only, because an unknown key is already gone by the time duplicates are
-    counted (H-08). ``value`` is ``None`` when the key was absent **or
-    empty**: a ``<select>`` always submits something, so an empty value is
-    the absence of a choice.
-  """
-  values = request.query_params.getlist(key)
-  if len(values) > 1:
-    return False, None
-  if not values or not values[0]:
-    return True, None
-  return True, values[0]
-
-
 def _parse_list_query(request: Request) -> _ListQuery | None:
   """Validate the contact list's query string (**PIN 6**, ``ACC-109``-``ACC-112``).
 
@@ -306,7 +223,7 @@ def _parse_list_query(request: Request) -> _ListQuery | None:
   """
   raw: dict[str, str | None] = {}
   for key in _LIST_KEYS:
-    ok, value = _query_value(request, key)
+    ok, value = query_value(request, key)
     if not ok:
       return None
     raw[key] = value
@@ -328,10 +245,10 @@ def _parse_list_query(request: Request) -> _ListQuery | None:
   if direction not in _DIRECTIONS:
     return None
 
-  page = _positive_int(raw["page"], default=1)
+  page = positive_int(raw["page"], default=1)
   if page is None:
     return None
-  per_page = _positive_int(raw["per_page"], default=DEFAULT_PER_PAGE)
+  per_page = positive_int(raw["per_page"], default=DEFAULT_PER_PAGE)
   if per_page is None:
     return None
 
@@ -344,110 +261,6 @@ def _parse_list_query(request: Request) -> _ListQuery | None:
     page=page,
     per_page=min(per_page, MAX_PER_PAGE),
   )
-
-
-def _positive_int(value: str | None, *, default: int) -> int | None:
-  """Return ``value`` as a positive integer, ``default`` when absent, else ``None``.
-
-  Notes
-  -----
-  Matched against ``[0-9]+`` rather than parsed with :meth:`str.isdigit`,
-  which is ``True`` for non-ASCII digits :func:`int` also accepts — one
-  more spelling of the same number is one more thing a test cannot
-  enumerate.
-  """
-  if value is None:
-    return default
-  if _DIGITS.match(value) is None:
-    return None
-  parsed = int(value)
-  return parsed if parsed >= 1 else None
-
-
-def _read_body(form: FormData, allowed: frozenset[str]) -> dict[str, str] | None:
-  """Return the submitted body when it is exactly within ``allowed``.
-
-  Parameters
-  ----------
-  form : FormData
-    The parsed body.
-  allowed : frozenset[str]
-    That form's exact accepted set (§2(f)).
-
-  Returns
-  -------
-  dict[str, str] | None
-    Every allowed name, with ``""`` for one the body omitted — which is
-    how an unselected radio group reaches ``CP-66`` rather than a crafted
-    400. ``None`` means the body carried a name outside the set, a
-    **repeated** name, or a non-textual part: all three are crafted
-    requests, rejected and never ignored, because silence makes mass
-    assignment untestable (``ACCESS_MATRIX.md`` §5.1).
-  """
-  counts: dict[str, int] = {}
-  for key, value in form.multi_items():
-    if key not in allowed or not isinstance(value, str):
-      return None
-    counts[key] = counts.get(key, 0) + 1
-  if any(count != 1 for count in counts.values()):
-    return None
-  body: dict[str, str] = {}
-  for key in allowed:
-    submitted = form.get(key)
-    body[key] = submitted if isinstance(submitted, str) else ""
-  return body
-
-
-async def _reject_input(request: Request, principal: Principal) -> Response:
-  """Answer a crafted query or body with ``400`` and §4.5 **row 6**.
-
-  Notes
-  -----
-  ``object_id`` is ``NULL``: the row records *that* an allowlist refused
-  this actor's request, never which value it refused, so no submitted free
-  text reaches a 90-day table the runtime role can read (§4.5 rule 1).
-  The generic ``errors/400.html`` names no field and echoes no value
-  (``CP-80``/``CP-15``), which is what keeps it a different screen from the
-  inline field errors of ``UX_FLOWS.md`` §3.13.
-  """
-  context = context_of(request)
-  await record_denial(
-    context.pool,
-    actor_id=principal.id,
-    object_type=OBJECT_CONTACT,
-    object_id=None,
-    action=ACTION_INPUT_REJECTED,
-    correlation_id=current_correlation_id(),
-    at=context.clock.now(),
-  )
-  return await bad_request(request)
-
-
-async def _require_admin(request: Request, principal: Principal, raw_id: str) -> None:
-  """Step 3: the role check, with §4.5 **row 4** written on refusal.
-
-  Notes
-  -----
-  Runs **before** the path id is parsed, so an agent posting to
-  ``/contacts/<garbage>/reassign`` meets ``403`` and not ``404``: the role
-  check is constant over objects and leaks nothing about the target
-  (``ACC-033``). ``object_id`` is the path id **iff** it is canonical,
-  ``NULL`` otherwise.
-  """
-  try:
-    require_admin(principal)
-  except RoleRequired:
-    context = context_of(request)
-    await record_denial(
-      context.pool,
-      actor_id=principal.id,
-      object_type=OBJECT_CONTACT,
-      object_id=parse_canonical(raw_id),
-      action=ACTION_ROLE_DENIED,
-      correlation_id=current_correlation_id(),
-      at=context.clock.now(),
-    )
-    raise
 
 
 def _contact_id(raw: str) -> UUID:
@@ -860,8 +673,8 @@ async def _stale_response(
   ``body`` is **R63**'s zero-field copy, and is always present so the
   template can read it under ``StrictUndefined``: ``None`` on a panel that
   has fields to compare (the screen keeps ``UX_FLOWS.md`` §3.9's own
-  orientation sentence), and :data:`_CP_OWED_ZERO_FIELD_STALE` on one that
-  has none.
+  orientation sentence), and :data:`~app.routes.pipeline.CP_OWED_ZERO_FIELD_STALE`
+  on one in which **nothing** differs (**R69**).
   """
   fields = _stale_fields(result, owner_names)
   return await conflict(
@@ -872,7 +685,7 @@ async def _stale_response(
         "object_label": result.current.full_name,
         "updated_at": result.current.updated_at,
         "fields": fields,
-        "body": None if fields else _CP_OWED_ZERO_FIELD_STALE,
+        "body": stale_body(fields),
         "keep_form": View(
           action_url=action_url,
           values=dict(result.submitted),
@@ -948,68 +761,6 @@ async def _duplicate_response(request: Request, result: Duplicate) -> Response:
   )
 
 
-async def _start_mutation(
-  request: Request, form_fields: frozenset[str], *, admin_for: str | None = None
-) -> tuple[Principal, dict[str, str]] | Response:
-  """Run the unsafe-method pipeline up to the body allowlist (§2(c)).
-
-  Parameters
-  ----------
-  request : Request
-    The inbound request.
-  form_fields : frozenset[str]
-    That form's exact accepted set (§2(f)).
-  admin_for : str | None, optional
-    The raw path id, on the one admin-only route. Passing it runs step 3
-    **before** the body allowlist, which is the contracted order: the role
-    check is constant over objects, so it must not sit behind a check that
-    a crafted body could answer first.
-
-  Returns
-  -------
-  tuple[Principal, dict[str, str]] | Response
-    The principal and the validated body, or the response that refuses the
-    request. The order is fixed and shared so nine routes cannot drift:
-    session, body, CSRF, content type, budget, forced-reset gate, role,
-    body allowlist. CSRF is checked **before** the content type, so a
-    cross-site post carrying no token at all meets the same ``403`` as one
-    carrying a stale token; the budget is charged **after** CSRF, so an
-    unauthenticated cross-site request cannot burn an authenticated user's
-    budget.
-  """
-  principal = await require_session(request)
-  form = await read_form(request)
-  await require_csrf(request, _field(form, "csrf_token"))
-  if not form_content_type_ok(request):
-    return await bad_request(request)
-  await charge_account_budget(request, principal, safe=False)
-  if principal.must_change_password:
-    await deny_forced_reset(request, principal)
-  if admin_for is not None:
-    await _require_admin(request, principal, admin_for)
-  body = _read_body(form, form_fields)
-  if body is None:
-    return await _reject_input(request, principal)
-  return principal, body
-
-
-async def _start_read(request: Request) -> Principal:
-  """Run the safe-method pipeline: session, budget, forced-reset gate.
-
-  Notes
-  -----
-  The gate refuses through :func:`~app.security.authz.deny_forced_reset`,
-  so the block writes ``ACCESS_MATRIX.md`` §4.5 row 5 (**R67**). The same
-  helper is called from the three other raise sites, and
-  ``app/routes/deals.py`` inherits it by using these two starters.
-  """
-  principal = await require_session(request)
-  await charge_account_budget(request, principal, safe=True)
-  if principal.must_change_password:
-    await deny_forced_reset(request, principal)
-  return principal
-
-
 @router.get("/contacts", name="contacts")
 async def contacts_page(request: Request) -> Response:
   """List, filter and search contacts — one route, two renderings (**PIN 5**).
@@ -1022,10 +773,10 @@ async def contacts_page(request: Request) -> Response:
     route, two renderings, no second route table (``CONTRACTS.md`` §8 rule
     3).
   """
-  principal = await _start_read(request)
+  principal = await start_read(request)
   parsed = _parse_list_query(request)
   if parsed is None:
-    return await _reject_input(request, principal)
+    return await reject_input(request, principal)
 
   context = context_of(request)
   view = await list_contacts(
@@ -1042,7 +793,7 @@ async def contacts_page(request: Request) -> Response:
     ),
   )
   results = _results(request, view, parsed)
-  fragment = _is_fragment(request)
+  fragment = is_fragment_request(request)
   # R24's focus rule: the container takes focus only when the control that
   # triggered the request has disappeared. `HX-Trigger` is client-supplied,
   # so it is matched against exactly the two pager ids, never echoed, and
@@ -1101,7 +852,7 @@ async def contact_new(request: Request) -> Response:
   submitted, so ``CP-66`` still reaches anyone who cleared the pair by
   hand.
   """
-  principal = await _start_read(request)
+  principal = await start_read(request)
   return render(
     request,
     "contacts/form.html",
@@ -1122,13 +873,13 @@ async def contact_new(request: Request) -> Response:
 @router.post("/contacts", name="contact_create")
 async def contact_create(request: Request) -> Response:
   """Create one contact owned by the actor (``ACC-007``)."""
-  started = await _start_mutation(request, _CREATE_FIELDS)
+  started = await start_mutation(request, _CREATE_FIELDS)
   if isinstance(started, Response):
     return started
   principal, body = started
   key = parse_canonical(body["idempotency_key"])
   if key is None:
-    return await _reject_input(request, principal)
+    return await reject_input(request, principal)
 
   context = context_of(request)
   result = await create_contact(
@@ -1164,7 +915,7 @@ async def contact_create(request: Request) -> Response:
 @router.get("/contacts/{contact_id}", name="contact_detail")
 async def contact_detail(request: Request, contact_id: str) -> Response:
   """Render one contact's workspace (``ACC-001``-``ACC-006``)."""
-  principal = await _start_read(request)
+  principal = await start_read(request)
   identifier = _contact_id(contact_id)
   context = context_of(request)
   view = await get_for_detail(context.runner, scope_of(principal), contact_id=identifier)
@@ -1191,7 +942,7 @@ async def contact_edit(request: Request, contact_id: str) -> Response:
   (``ACC-020``). It carries no ``?notice=`` — nothing happened, and a code
   outside the allowlist would be copy invented here (**R20**).
   """
-  principal = await _start_read(request)
+  principal = await start_read(request)
   identifier = _contact_id(contact_id)
   context = context_of(request)
   view = await get_for_detail(context.runner, scope_of(principal), contact_id=identifier)
@@ -1226,15 +977,15 @@ async def contact_edit(request: Request, contact_id: str) -> Response:
 @router.post("/contacts/{contact_id}", name="contact_update")
 async def contact_update(request: Request, contact_id: str) -> Response:
   """Edit one contact's five writable fields (``ACC-014``-``ACC-020``)."""
-  started = await _start_mutation(request, _EDIT_FIELDS)
+  started = await start_mutation(request, _EDIT_FIELDS)
   if isinstance(started, Response):
     return started
   principal, body = started
   identifier = _contact_id(contact_id)
-  version = _positive_int(body["version"] or None, default=0)
+  version = positive_int(body["version"] or None, default=0)
   key = parse_canonical(body["idempotency_key"])
   if version is None or version < 1 or key is None:
-    return await _reject_input(request, principal)
+    return await reject_input(request, principal)
 
   context = context_of(request)
   result = await update_contact(
@@ -1283,15 +1034,15 @@ async def contact_update(request: Request, contact_id: str) -> Response:
 @router.post("/contacts/{contact_id}/archive", name="contact_archive")
 async def contact_archive(request: Request, contact_id: str) -> Response:
   """Archive one active contact (``ACC-021``-``ACC-025``)."""
-  started = await _start_mutation(request, _VERSION_ONLY_FIELDS)
+  started = await start_mutation(request, _VERSION_ONLY_FIELDS)
   if isinstance(started, Response):
     return started
   principal, body = started
   identifier = _contact_id(contact_id)
-  version = _positive_int(body["version"] or None, default=0)
+  version = positive_int(body["version"] or None, default=0)
   key = parse_canonical(body["idempotency_key"])
   if version is None or version < 1 or key is None:
-    return await _reject_input(request, principal)
+    return await reject_input(request, principal)
 
   context = context_of(request)
   result = await archive_contact(
@@ -1309,15 +1060,15 @@ async def contact_archive(request: Request, contact_id: str) -> Response:
 @router.post("/contacts/{contact_id}/restore", name="contact_restore")
 async def contact_restore(request: Request, contact_id: str) -> Response:
   """Restore one archived contact (``ACC-026``-``ACC-030``)."""
-  started = await _start_mutation(request, _VERSION_ONLY_FIELDS)
+  started = await start_mutation(request, _VERSION_ONLY_FIELDS)
   if isinstance(started, Response):
     return started
   principal, body = started
   identifier = _contact_id(contact_id)
-  version = _positive_int(body["version"] or None, default=0)
+  version = positive_int(body["version"] or None, default=0)
   key = parse_canonical(body["idempotency_key"])
   if version is None or version < 1 or key is None:
-    return await _reject_input(request, principal)
+    return await reject_input(request, principal)
 
   context = context_of(request)
   result = await restore_contact(
@@ -1335,15 +1086,15 @@ async def contact_restore(request: Request, contact_id: str) -> Response:
 @router.post("/contacts/{contact_id}/reassign", name="contact_reassign")
 async def contact_reassign(request: Request, contact_id: str) -> Response:
   """Move one contact to another active owner — admin only (``ACC-031``-``ACC-034``)."""
-  started = await _start_mutation(request, _REASSIGN_FIELDS, admin_for=contact_id)
+  started = await start_mutation(request, _REASSIGN_FIELDS, admin_for=contact_id)
   if isinstance(started, Response):
     return started
   principal, body = started
   identifier = _contact_id(contact_id)
-  version = _positive_int(body["version"] or None, default=0)
+  version = positive_int(body["version"] or None, default=0)
   key = parse_canonical(body["idempotency_key"])
   if version is None or version < 1 or key is None:
-    return await _reject_input(request, principal)
+    return await reject_input(request, principal)
 
   context = context_of(request)
   scope = scope_of(principal)
