@@ -119,7 +119,7 @@ import socket
 import subprocess
 import time
 import uuid
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping
+from collections.abc import AsyncIterator, Callable, Coroutine, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -153,6 +153,12 @@ BOOTSTRAP_ADMIN_PASSWORD: Final[str] = "correct horse battery staple 15"
 #: port; every test's own ``live_server`` fixture re-points it with
 #: ``manage set-origin`` before making a request (slice-a.md §7.1).
 _PLACEHOLDER_ORIGIN: Final[str] = "https://127.0.0.1:65535"
+
+#: Mirrors ``app.main._SAFE_METHODS`` (slice-a.md §2.1 step 0a): a request
+#: with none of these methods must carry a matching ``Origin`` header or the
+#: middleware refuses it before routing. httpx, unlike a browser, never adds
+#: this header on its own — see ``_default_origin_on_unsafe_methods`` below.
+_SAFE_HTTP_METHODS: Final[frozenset[str]] = frozenset({"GET", "HEAD", "OPTIONS"})
 
 _RESET_SCHEMA_SNIPPET: Final[str] = """
 import asyncio
@@ -352,9 +358,10 @@ def clock() -> object:
     the honest, expected state of every test that requests this fixture
     before then — it is not hidden.
   """
-  # Deferred import (module docstring): app/security/clock.py is contracted
-  # (slice-a.md §1.1) but not yet shipped by the Backend lane.
-  from app.security.clock import ManualClock  # type: ignore[import-not-found]
+  # Deferred import (module docstring): keeps a missing module a single
+  # failing test rather than a blank collection. Shipped now, so no
+  # `type: ignore` is needed (or accepted by mypy --strict) any more.
+  from app.security.clock import ManualClock
 
   return ManualClock(start=datetime(2026, 9, 22, 12, 0, 0, tzinfo=UTC))
 
@@ -951,6 +958,70 @@ def live_server(
 # ---------------------------------------------------------------------------
 
 
+def _default_origin_on_unsafe_methods(
+  base_url: str,
+) -> Callable[[httpx.Request], Coroutine[None, None, None]]:
+  """Build an httpx ``request`` event hook that stamps a same-origin ``Origin``.
+
+  ``app.main.OriginHostMiddleware`` (slice-a.md §2.1 step 0a) requires an
+  ``Origin`` header on every unsafe-method request and refuses ``403`` when
+  it is absent — matching a real browser, which always sends one on a
+  same-origin ``POST`` navigation (verified live: a plain Chromium form
+  submission carries ``Origin: <page origin>`` for an ordinary page).
+  httpx, unlike a browser, adds no such header on its own, so every helper
+  in this suite that drives ``POST``/``PUT``/``PATCH``/``DELETE``/``TRACE``
+  through a client from :func:`http_client_factory` would otherwise be
+  refused at step 0a before the behaviour it means to exercise (CSRF, the
+  route handler, a throttle) is ever reached — that is what produced the
+  ``AssertionError: ... status 403`` and ``ConfigError``-free ``ERROR at
+  setup`` failures this hook fixes.
+
+  A test that deliberately exercises a missing or foreign ``Origin``
+  (``SEC-040a`` et al.) already passes its own ``headers={"Origin": ...}``
+  per call, which httpx merges over the client's defaults *before* this
+  hook runs — so the hook only fills a header that is not already present
+  and never overrides an explicit test choice, including the intentionally
+  empty ``headers={}`` a safe-method test passes to assert on the no-Origin
+  case (a safe method is untouched here regardless).
+
+  Note for the backend/orchestrator, not something this hook can address:
+  a **real** browser does not always send the page's origin on an unsafe
+  navigation — when the referring page carries ``Referrer-Policy:
+  no-referrer`` (slice-a.md §2.6, sent on every response including
+  ``/login``), the Fetch standard's "append a request `Origin` header"
+  algorithm serializes it as the literal string ``"null"`` instead, which
+  then fails this same equality check. Reproduced on a plain, unrelated
+  ``http.server`` (no TLS, no app code): a ``GET`` response carrying only
+  ``Referrer-Policy: no-referrer`` makes the following real-Chromium
+  same-origin form ``POST`` arrive with ``Origin: null``. This hook
+  deliberately sends the *real* origin (what a browser would send without
+  that header) so the httpx-driven suite exercises the CSRF/session logic
+  in isolation; ``tests/e2e`` drives a real browser and is the one place
+  this actually surfaces — see ``NOTES.md``/the round-3 report for the
+  full reproduction and why it is reported as backend, not fixed here.
+
+  Parameters
+  ----------
+  base_url : str
+    ``live_server.base_url`` — the exact string the stored ``public_origin``
+    is set to by ``manage set-origin``.
+
+  Returns
+  -------
+  Callable[[httpx.Request], Coroutine[None, None, None]]
+    An async httpx request hook.
+  """
+
+  async def _hook(request: httpx.Request) -> None:
+    if request.method in _SAFE_HTTP_METHODS:
+      return
+    if "origin" in request.headers:
+      return
+    request.headers["origin"] = base_url
+
+  return _hook
+
+
 @pytest_asyncio.fixture
 async def http_client_factory(
   live_server: LiveServer,
@@ -960,7 +1031,11 @@ async def http_client_factory(
   Each call returns a client with its **own** cookie jar (``ACC-0xx``/S1-S2
   need genuinely separate sessions, not one jar reused) and
   ``follow_redirects=False`` so a test can inspect a ``303``'s ``Location``
-  header itself rather than the redirect target's body.
+  header itself rather than the redirect target's body. Every such client
+  also carries the ``Origin``-stamping request hook (see
+  :func:`_default_origin_on_unsafe_methods`) so an unsafe-method request
+  reaches the behaviour a test means to exercise instead of being refused
+  at step 0a for lacking a header a real browser sends automatically.
 
   Yields
   ------
@@ -974,6 +1049,7 @@ async def http_client_factory(
       verify=False,  # noqa: S501 — R41 point 4: the test cert is not a trust decision
       follow_redirects=False,
       timeout=10.0,
+      event_hooks={"request": [_default_origin_on_unsafe_methods(live_server.base_url)]},
     )
     clients.append(client)
     return client
