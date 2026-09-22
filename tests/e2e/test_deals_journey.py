@@ -196,6 +196,38 @@ def test_prd001_contact_to_deal_edit_move_won_and_pipeline_journey(
   won_column = page.locator("section.pipeline-column", has=won_heading)
   expect(won_column.get_by_text("Northwind platform expansion (renamed)")).to_be_visible()
 
+  # --- Activity: log one from the contact workspace's frozen form --------
+  # (plan §4 task 6, "extend the existing e2e journey to activity -> won ->
+  # dashboard"). Continues the SAME journey and the SAME fresh, isolated
+  # agent, so the dashboard totals asserted below are exact: this agent
+  # owns exactly the one contact and the one (now Won) deal this test
+  # itself created, nothing left over from another test.
+  page.goto(contact_url)
+  page.get_by_role("radio", name="Call").check()
+  page.get_by_label("Date").fill("2026-09-22")
+  activity_summary = "Journey: logged after marking the deal won."
+  page.get_by_label("Summary").fill(activity_summary)
+  page.get_by_role("button", name="Log activity").click()
+  expect(page).to_have_url(re.compile(r"/contacts/.*notice=activity_logged#timeline"))
+  expect(page.get_by_text(activity_summary)).to_be_visible()
+
+  # --- Dashboard: exact totals for this fresh, isolated agent -------------
+  page.goto(f"{live_server.base_url}/dashboard")
+  expect(page.get_by_role("heading", name="Dashboard")).to_be_visible()
+  contacts_tile = page.locator(".stat-tile", has_text="Contacts")
+  expect(contacts_tile.locator(".stat-tile-value")).to_have_text("1")
+  open_tile = page.locator(".stat-tile", has_text="Open deals")
+  expect(open_tile.locator(".stat-tile-value")).to_have_text("0")
+  won_tile = page.locator(".stat-tile", has_text="Won deals")
+  expect(won_tile.locator(".stat-tile-value")).to_have_text("1")
+  expect(won_tile).to_contain_text("€ 1,250.00")
+  expect(page.get_by_text(activity_summary)).to_be_visible()
+
+  from axe_playwright_python.sync_playwright import Axe  # type: ignore[import-untyped]
+
+  axe_results = Axe().run(page)
+  assert axe_results.violations_count == 0, axe_results.generate_snapshot()
+
 
 def test_keyboard_only_stage_change_no_drag(
   page: Page, live_server: LiveServer, ready_agent: tuple[str, str]
@@ -277,7 +309,7 @@ def test_axe_pass_on_deal_list_and_pipeline_pages(
   page: Page, live_server: LiveServer, ready_agent: tuple[str, str], page_name: str, goto_path: str
 ) -> None:
   """An automated axe-core scan of the deal list / pipeline page reports zero violations."""
-  from axe_playwright_python.sync_playwright import Axe  # type: ignore[import-untyped]
+  from axe_playwright_python.sync_playwright import Axe
 
   email, first_password = ready_agent
   password = _sign_in_and_complete_forced_reset(page, live_server.base_url, email, first_password)
