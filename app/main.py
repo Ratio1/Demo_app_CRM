@@ -12,6 +12,16 @@ the first request that needs one. That is what ``DEP-001``/``DEP-003``
 assert by importing this module with the five names absent, and with them
 pointing at an unroutable host.
 
+**The injection seam (R54).** ``create_app`` takes an optional ``config``,
+``clock`` and ``password_hasher``. Each defaults to the production object,
+so the served process behaves exactly as before; passing them is how an
+in-process test drives the whole application through
+``httpx.ASGITransport`` with a ``ManualClock``, entering the lifespan with
+``async with app.router.lifespan_context(app):``. The **same** clock
+instance reaches ``CorrelationMiddleware`` and every service the lifespan
+builds, so advancing it moves the entire application's notion of time and
+no expiry test has to sleep.
+
 Middleware order, outermost first — each wraps everything below it, so a
 failure deep in the stack still carries a correlation id and the security
 headers:
@@ -93,6 +103,7 @@ from app.security.throttle import BudgetService, ThrottleService
 if TYPE_CHECKING:
   from collections.abc import AsyncIterator, Awaitable, Callable
 
+  from argon2 import PasswordHasher
   from starlette.responses import Response
   from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -236,7 +247,8 @@ class BodySizeLimitMiddleware:
     request = Request(scope, receive)
     declared = request.headers.get("content-length", "")
     if declared.isdigit() and int(declared) > self.max_bytes:
-      await payload_too_large(request)(scope, receive, send)
+      response = await payload_too_large(request)
+      await response(scope, receive, send)
       return
 
     counted = 0
@@ -262,7 +274,8 @@ class BodySizeLimitMiddleware:
     except _BodyTooLarge:
       if started:
         raise
-      await payload_too_large(request)(scope, receive, send)
+      response = await payload_too_large(request)
+      await response(scope, receive, send)
 
 
 class OriginHostMiddleware(BaseHTTPMiddleware):
@@ -314,7 +327,7 @@ class OriginHostMiddleware(BaseHTTPMiddleware):
 
     context = getattr(request.app.state, "context", None)
     if context is None:
-      return unavailable(request)
+      return await unavailable(request)
 
     try:
       origin = await context.origin.get()
@@ -322,19 +335,19 @@ class OriginHostMiddleware(BaseHTTPMiddleware):
     # which origin it is must not accept a cross-site request on the
     # strength of not knowing.
     except Exception:
-      return unavailable(request)
+      return await unavailable(request)
     if not origin:
-      return unavailable(request)
+      return await unavailable(request)
 
     if request.headers.get("host", "").casefold() != authority_of(origin):
-      return forbidden(request)
+      return await forbidden(request)
 
     submitted = request.headers.get("origin")
     if submitted is not None:
       if submitted.strip() != origin:
-        return forbidden(request)
+        return await forbidden(request)
     elif request.method not in _SAFE_METHODS:
-      return forbidden(request)
+      return await forbidden(request)
 
     return await call_next(request)
 
@@ -361,13 +374,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
   single connection — the first real connection is made by the first
   request that needs one, which is what keeps a database that is down at
   boot from producing a container that never becomes live.
+
+  The clock was resolved by :func:`create_app` and is read back from
+  ``app.state`` here (**R54**), so the one object that timed the request in
+  ``CorrelationMiddleware`` is the same one every service in the context
+  reads — a test that advances a :class:`app.security.clock.ManualClock`
+  moves the whole application, not half of it. The Argon2 hasher is
+  resolved *here* rather than in :func:`create_app` because
+  :class:`PasswordService`'s constructor computes the dummy hash, ~20 ms of
+  work that belongs to starting the application and not to building it.
   """
   configured: Config | None = getattr(app.state, "bootstrap_config", None)
   config = load_config() if configured is None else configured
   pool = create_pool(config)
   await open_pool(pool)
-  clock = SystemClock()
-  passwords = PasswordService(production_hasher(), blocklist=DEFAULT_BLOCKLIST, clock=clock)
+  injected_clock: Clock | None = getattr(app.state, "bootstrap_clock", None)
+  clock: Clock = SystemClock() if injected_clock is None else injected_clock
+  injected_hasher: PasswordHasher | None = getattr(app.state, "bootstrap_password_hasher", None)
+  hasher = production_hasher() if injected_hasher is None else injected_hasher
+  passwords = PasswordService(hasher, blocklist=DEFAULT_BLOCKLIST, clock=clock)
   app.state.context = AppContext(
     config=config,
     pool=pool,
@@ -386,7 +411,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await close_pool(pool)
 
 
-def create_app(*, config: Config | None = None) -> FastAPI:
+def create_app(
+  *,
+  config: Config | None = None,
+  clock: Clock | None = None,
+  password_hasher: PasswordHasher | None = None,
+) -> FastAPI:
   """Build the ASGI application.
 
   Parameters
@@ -396,6 +426,22 @@ def create_app(*, config: Config | None = None) -> FastAPI:
     the environment. Used by a harness that wants to point the same code
     at another database; ``None`` — the production path — means
     ``load_config()`` inside the lifespan.
+  clock : Clock | None, optional
+    The one time source for this application (**R54**). ``None`` — the
+    production path — means :class:`app.security.clock.SystemClock`. The
+    instance passed here is the instance ``CorrelationMiddleware`` times
+    the request with **and** the instance every service in the lifespan's
+    context receives, so an in-process test that advances a
+    :class:`app.security.clock.ManualClock` moves every expiry, window and
+    TTL in the application at once. Nothing selects it from the
+    environment: it is a parameter, which is why ``ARC-019``/``ARC-020``
+    can hold.
+  password_hasher : PasswordHasher | None, optional
+    The Argon2 hasher :class:`app.security.passwords.PasswordService` is
+    built around (**R54**). ``None`` means
+    :func:`app.security.passwords.production_hasher` — the pinned
+    parameters. A test may pass a documented fast profile; no environment
+    variable and no branch anywhere can (``ARC-020``).
 
   Returns
   -------
@@ -408,7 +454,10 @@ def create_app(*, config: Config | None = None) -> FastAPI:
   Notes
   -----
   Reads no environment variable and opens no connection: everything that
-  needs either happens in :func:`lifespan`.
+  needs either happens in :func:`lifespan`. The three parameters are
+  carried on ``application.state`` rather than closed over, so the lifespan
+  can read them without this function having to run any of the work they
+  describe.
   """
   configure_logging(sys.stdout)
   application = FastAPI(
@@ -418,7 +467,10 @@ def create_app(*, config: Config | None = None) -> FastAPI:
     openapi_url=None,
     lifespan=lifespan,
   )
+  resolved_clock: Clock = SystemClock() if clock is None else clock
   application.state.bootstrap_config = config
+  application.state.bootstrap_clock = resolved_clock
+  application.state.bootstrap_password_hasher = password_hasher
   application.state.context = None
 
   application.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
@@ -445,7 +497,7 @@ def create_app(*, config: Config | None = None) -> FastAPI:
   application.add_middleware(OriginHostMiddleware)
   application.add_middleware(BodySizeLimitMiddleware)
   application.add_middleware(SecurityHeadersMiddleware)
-  application.add_middleware(CorrelationMiddleware, clock=SystemClock())
+  application.add_middleware(CorrelationMiddleware, clock=resolved_clock)
   return application
 
 

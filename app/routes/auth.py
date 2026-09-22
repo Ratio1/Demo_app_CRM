@@ -270,8 +270,9 @@ async def login_submit(request: Request) -> Response:
   Returns
   -------
   Response
-    ``303`` to the validated ``next``, to ``/account/password`` when the
-    account must change its password, or to ``/dashboard``. ``401`` with
+    ``303`` to ``/account/password`` when the account must change its
+    password — that destination **outranks** ``next`` (**R55**) — otherwise
+    to the validated ``next``, else to ``/dashboard``. ``401`` with
     ``CP-01`` on any authentication failure, ``429`` with ``CP-02`` when
     the account is throttled.
 
@@ -286,7 +287,7 @@ async def login_submit(request: Request) -> Response:
   form = await read_form(request)
   await require_csrf(request, _field(form, "csrf_token"))
   if not form_content_type_ok(request):
-    return bad_request(request)
+    return await bad_request(request)
   row = await resolve_session(request)
 
   now = context.clock.now()
@@ -337,7 +338,13 @@ async def login_submit(request: Request) -> Response:
     )
     return render(request, "auth/login.html", page, status_code=401)
 
-  destination = next_path or (PASSWORD_URL if result.must_change_password else DASHBOARD_URL)
+  # R55: the forced-reset destination outranks ``next``. An account that
+  # must change its password may not be steered past that screen by a
+  # ``next`` an attacker (or the user's own stale bookmark) supplied —
+  # every other route would refuse it at step 2 anyway, so honouring
+  # ``next`` first would only produce a 403 where the contract promises the
+  # password form.
+  destination = PASSWORD_URL if result.must_change_password else (next_path or DASHBOARD_URL)
   response = _redirect(destination, request)
   set_cookie(response, result.token)
   return response
@@ -374,7 +381,7 @@ async def password_submit(request: Request) -> Response:
   form = await read_form(request)
   await require_csrf(request, _field(form, "csrf_token"))
   if not form_content_type_ok(request):
-    return bad_request(request)
+    return await bad_request(request)
   await charge_account_budget(request, principal, safe=False)
 
   result = await change_password(
@@ -426,7 +433,7 @@ async def logout_submit(request: Request) -> Response:
   form = await read_form(request)
   await require_csrf(request, _field(form, "csrf_token"))
   if not form_content_type_ok(request):
-    return bad_request(request)
+    return await bad_request(request)
 
   await logout(
     pool=context.pool,

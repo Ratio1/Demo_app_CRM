@@ -4,9 +4,10 @@ Authority: ``CONTRACTS.md`` §8.4 (the eight templates and their frozen
 contexts), ``slice-a.md`` §3 (the ``HX-Request`` answer — **R26** — and the
 always-public shell of ``500``/``503`` — **R32**), §4 (which status each
 route may produce), ``R27`` (every step-0 failure is the same body),
-``R37``/**R19** (``ambiguous_commit``), ``R38`` (the ``405`` context).
+``R37``/**R19** (``ambiguous_commit``), ``R38`` (the ``405`` context),
+**R56** (which shell a ``4xx`` renders in).
 
-Two rules hold the anti-enumeration properties together:
+Three rules hold the anti-enumeration properties together:
 
 *One body per status, whatever the cause.* Every step-0 failure — spoofed
 ``Host``, foreign ``Origin``, missing CSRF, stale CSRF, a mutation with no
@@ -20,6 +21,17 @@ document, so htmx can never swap a full page into a region. The ``401``
 and ``403`` auth cases additionally carry ``HX-Redirect``, which htmx acts
 on before it looks at the status at all (verified against 2.0.10,
 ``slice-a.md`` §8.4).
+
+*A `4xx` shell follows the session; a `5xx` shell never asks* (**R56**).
+The ``400``/``403(role|forced_reset)``/``404``/``405``/``413``/``429``
+pages resolve the principal once — from ``request.state`` when step 1
+already ran, otherwise with one bounded read — so an authenticated user's
+``404`` on an unrouted path is the **same body** as their ``404`` on a
+foreign object, which is what "identical 404 **for one principal**"
+(``CONTRACTS.md`` §8.4) means. The ``500``, the ``503`` and the step-0
+``403`` never read a session at all (**R32**, **R27**): after an unhandled
+exception, or with the database gone, a page that tries to would fail a
+second time inside the error path.
 """
 
 from __future__ import annotations
@@ -34,6 +46,7 @@ from app.logging import current_correlation_id
 from app.routes.rendering import base_context, csrf_token_for_request, render
 from app.security.headers import apply_security_headers
 from app.security.origin import is_safe_relative
+from app.security.principal import resolve_principal
 from app.security.sessions import COOKIE_NAME
 
 if TYPE_CHECKING:
@@ -104,8 +117,8 @@ def is_fragment(request: Request) -> bool:
   return request.headers.get("hx-request", "").casefold() == "true"
 
 
-def _principal_for_shell(request: Request) -> Principal | None:
-  """Return the already-resolved principal, without any new database work.
+async def _principal_for_shell(request: Request) -> Principal | None:
+  """Return the principal whose shell this 4xx page renders in (**R56**).
 
   Parameters
   ----------
@@ -115,15 +128,44 @@ def _principal_for_shell(request: Request) -> Principal | None:
   Returns
   -------
   Principal | None
-    Whatever step 1 resolved earlier in this request, or ``None`` when it
-    never ran. An error handler must not open a connection: the failure
-    it is rendering may well be that the database is gone.
+    Whatever step 1 resolved earlier in this request; failing that, the
+    result of resolving it **once**, here. ``None`` — the public shell —
+    when there is no session or the resolution fails for any reason at
+    all.
+
+  Notes
+  -----
+  Only the ``4xx`` family reaches this function: :func:`_error_page`'s
+  ``public_shell`` flag short-circuits it for the ``500``, the ``503`` and
+  the step-0 ``403``, which must never read a session (**R32**, **R27**).
+
+  The read is why **R56** exists. A ``404`` on an unrouted path never ran
+  step 1, so before this ruling an authenticated user's ``404`` rendered
+  the *public* shell while their ``404`` on a foreign object rendered the
+  authenticated one — two distinguishable bodies where ``CONTRACTS.md``
+  §8.4's "identical 404 for one principal" requires one. Resolution is
+  memoized on ``request.state`` by
+  :func:`app.security.principal.resolve_session`, so this costs at most one
+  bounded read per request and nothing at all when step 1 already ran.
+
+  Every failure is swallowed into the public shell: an error page that
+  raises while choosing its own shell would turn a ``404`` into a ``500``,
+  and the most likely reason the read fails is the very outage the page is
+  about to describe.
   """
   principal: Principal | None = getattr(request.state, "crm_principal", None)
-  return principal
+  if principal is not None:
+    return principal
+  try:
+    return await resolve_principal(request)
+  # Any failure at all — no application context, no connection, a database
+  # that has gone away mid-request — renders the public shell rather than
+  # escalating the status the user asked about.
+  except Exception:
+    return None
 
 
-def _error_page(
+async def _error_page(
   request: Request,
   *,
   status: int,
@@ -149,7 +191,8 @@ def _error_page(
     and the step-0 ``403`` render the public shell whatever the real
     session state is, because a session may not be readable after an
     unhandled exception and a page that tries to read one can fail a
-    second time inside the error path.
+    second time inside the error path. ``False`` — every other ``4xx`` —
+    lets :func:`_principal_for_shell` resolve the session once (**R56**).
   headers : dict[str, str] | None, optional
     Extra headers, such as ``Retry-After``.
 
@@ -157,7 +200,7 @@ def _error_page(
   -------
   Response
   """
-  principal = None if public_shell else _principal_for_shell(request)
+  principal = None if public_shell else await _principal_for_shell(request)
   context = base_context(
     page_title=str(status),
     principal=principal,
@@ -218,7 +261,7 @@ def region_error(
   return apply_security_headers(response, path=request.url.path)
 
 
-def forbidden(request: Request, *, reason: str = "session") -> Response:
+async def forbidden(request: Request, *, reason: str = "session") -> Response:
   """Render the ``403`` of ``slice-a.md`` §2.1.
 
   Parameters
@@ -237,7 +280,7 @@ def forbidden(request: Request, *, reason: str = "session") -> Response:
   """
   if is_fragment(request) and reason == "forced_reset":
     return region_error(request, status=403, redirect=PASSWORD_URL)
-  return _error_page(
+  return await _error_page(
     request,
     status=403,
     template="errors/403.html",
@@ -246,7 +289,7 @@ def forbidden(request: Request, *, reason: str = "session") -> Response:
   )
 
 
-def unavailable(request: Request, *, context: str = "unavailable") -> Response:
+async def unavailable(request: Request, *, context: str = "unavailable") -> Response:
   """Render the ``503`` page, always in the public shell (**R32**).
 
   Parameters
@@ -267,7 +310,7 @@ def unavailable(request: Request, *, context: str = "unavailable") -> Response:
   """
   if is_fragment(request):
     return region_error(request, status=503, retry_after=5)
-  return _error_page(
+  return await _error_page(
     request,
     status=503,
     template="errors/503.html",
@@ -281,7 +324,7 @@ def unavailable(request: Request, *, context: str = "unavailable") -> Response:
   )
 
 
-def too_many_requests(request: Request, *, retry_after_s: int) -> Response:
+async def too_many_requests(request: Request, *, retry_after_s: int) -> Response:
   """Render the non-login ``429`` page.
 
   Parameters
@@ -298,7 +341,7 @@ def too_many_requests(request: Request, *, retry_after_s: int) -> Response:
   """
   if is_fragment(request):
     return region_error(request, status=429, retry_after=retry_after_s)
-  return _error_page(
+  return await _error_page(
     request,
     status=429,
     template="errors/429.html",
@@ -311,9 +354,9 @@ def too_many_requests(request: Request, *, retry_after_s: int) -> Response:
   )
 
 
-def not_found(request: Request) -> Response:
+async def not_found(request: Request) -> Response:
   """Render the ``404`` page — identical for a missing and a foreign object."""
-  return _error_page(
+  return await _error_page(
     request,
     status=404,
     template="errors/404.html",
@@ -322,9 +365,9 @@ def not_found(request: Request) -> Response:
   )
 
 
-def bad_request(request: Request) -> Response:
+async def bad_request(request: Request) -> Response:
   """Render the generic ``400`` page for a crafted request."""
-  return _error_page(
+  return await _error_page(
     request,
     status=400,
     template="errors/400.html",
@@ -333,9 +376,9 @@ def bad_request(request: Request) -> Response:
   )
 
 
-def method_not_allowed(request: Request) -> Response:
+async def method_not_allowed(request: Request) -> Response:
   """Render the ``405`` page with the 400-family context (**R38**)."""
-  return _error_page(
+  return await _error_page(
     request,
     status=405,
     template="errors/405.html",
@@ -349,9 +392,9 @@ def method_not_allowed(request: Request) -> Response:
   )
 
 
-def payload_too_large(request: Request) -> Response:
+async def payload_too_large(request: Request) -> Response:
   """Render the ``413`` page for a body above the 64 KiB cap."""
-  return _error_page(
+  return await _error_page(
     request,
     status=413,
     template="errors/413.html",
@@ -360,9 +403,9 @@ def payload_too_large(request: Request) -> Response:
   )
 
 
-def internal_error(request: Request) -> Response:
+async def internal_error(request: Request) -> Response:
   """Render the ``500`` page: public shell always, correlation id only."""
-  return _error_page(
+  return await _error_page(
     request,
     status=500,
     template="errors/500.html",
@@ -401,15 +444,15 @@ async def http_exception_handler(request: Request, exc: Exception) -> Response:
   """
   status = exc.status_code if isinstance(exc, HTTPException) else 500
   if status == 403:
-    return forbidden(request)
+    return await forbidden(request)
   if status == 429:
-    return too_many_requests(request, retry_after_s=5)
+    return await too_many_requests(request, retry_after_s=5)
   if status == 503:
-    return unavailable(request)
+    return await unavailable(request)
   page = _STATUS_PAGES.get(status)
   if page is None:
-    return internal_error(request)
-  response: Response = page(request)
+    return await internal_error(request)
+  response: Response = await page(request)
   return response
 
 
@@ -431,19 +474,19 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> Respo
   Response
   """
   del exc
-  return internal_error(request)
+  return await internal_error(request)
 
 
 async def step_zero_handler(request: Request, exc: Exception) -> Response:
   """Answer any step-0 refusal with the one shared ``403`` body."""
   del exc
-  return forbidden(request)
+  return await forbidden(request)
 
 
 async def not_provisioned_handler(request: Request, exc: Exception) -> Response:
   """Answer an unprovisioned deployment with the ``503`` page."""
   del exc
-  return unavailable(request)
+  return await unavailable(request)
 
 
 async def no_session_handler(request: Request, exc: Exception) -> Response:
@@ -469,7 +512,7 @@ async def no_session_handler(request: Request, exc: Exception) -> Response:
   if is_fragment(request):
     return region_error(request, status=401, redirect=f"{LOGIN_URL}?notice=session_ended")
   if request.method not in SAFE_METHODS:
-    return forbidden(request)
+    return await forbidden(request)
 
   parameters: list[tuple[str, str]] = []
   target = request.url.path
@@ -484,19 +527,19 @@ async def no_session_handler(request: Request, exc: Exception) -> Response:
 async def forced_reset_handler(request: Request, exc: Exception) -> Response:
   """Answer step 2's failure: ``403``, or ``HX-Redirect`` to the password page."""
   del exc
-  return forbidden(request, reason="forced_reset")
+  return await forbidden(request, reason="forced_reset")
 
 
 async def role_required_handler(request: Request, exc: Exception) -> Response:
   """Answer step 3's failure with the role ``403``."""
   del exc
-  return forbidden(request, reason="role")
+  return await forbidden(request, reason="role")
 
 
 async def budget_handler(request: Request, exc: Exception) -> Response:
   """Answer a budget or throttle refusal with a sanitized ``429``."""
   retry_after = getattr(exc, "retry_after_s", 5)
-  return too_many_requests(request, retry_after_s=int(retry_after))
+  return await too_many_requests(request, retry_after_s=int(retry_after))
 
 
 async def hash_queue_handler(request: Request, exc: Exception) -> Response:
@@ -516,10 +559,10 @@ async def hash_queue_handler(request: Request, exc: Exception) -> Response:
     (~20 ms), so anything longer would advertise a delay that is not real.
   """
   del exc
-  return too_many_requests(request, retry_after_s=1)
+  return await too_many_requests(request, retry_after_s=1)
 
 
 async def too_large_handler(request: Request, exc: Exception) -> Response:
   """Answer an over-cap body with the ``413`` page."""
   del exc
-  return payload_too_large(request)
+  return await payload_too_large(request)
