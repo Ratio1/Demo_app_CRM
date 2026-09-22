@@ -32,8 +32,13 @@ __all__ = [
   "apply_security_headers",
 ]
 
+#: ``img-src`` is ``'self'`` with **no** ``data:`` (**R49**): nothing in the
+#: design set uses a ``data:`` image, and the source is re-added only with a
+#: named consumer. The cross-file ``<use href="/static/img/icons.svg#…">``
+#: sprite fetch is not an image-class request and falls to ``default-src``,
+#: so dropping ``data:`` does not touch it.
 CONTENT_SECURITY_POLICY: Final = (
-  "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+  "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; "
   "connect-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; "
   "form-action 'self'"
 )
@@ -50,7 +55,14 @@ PERMISSIONS_POLICY: Final = (
 SECURITY_HEADERS: Final[dict[str, str]] = {
   "Content-Security-Policy": CONTENT_SECURITY_POLICY,
   "X-Content-Type-Options": "nosniff",
-  "Referrer-Policy": "no-referrer",
+  # R50: `same-origin`, never `no-referrer`. Per the Fetch standard a browser
+  # serializes `Origin: null` on a non-GET/HEAD request whose referrer policy
+  # is `no-referrer`, so every real-browser form POST was refused by the
+  # exact-`Origin` check of §2.1 step 0a — httpx-driven tests never saw it,
+  # because httpx sets `Origin` itself. `same-origin` keeps the full `Origin`
+  # on same-origin POSTs and sends nothing cross-origin, so the CSRF control
+  # and the privacy goal both hold (SEC-027, T-44).
+  "Referrer-Policy": "same-origin",
   "Permissions-Policy": PERMISSIONS_POLICY,
   "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
   "X-Frame-Options": "DENY",
