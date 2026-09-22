@@ -9,6 +9,11 @@ Each gate below either runs for real against the code that already exists
 missing prerequisite, rather than passing vacuously on an empty glob
 (``ARC-003``, ``ARC-008``, ``SEC-063``, which need ``app/routes/**`` and
 ``app/main.py`` that the Backend lane has not shipped yet).
+
+``ARC-018`` (**R51**/**R58**) is added at the bottom: (a) no ``UPDATE`` of
+``users`` lives outside ``app/db/repositories/users.py``; (b) the
+functions that write ``role`` or ``is_active`` — ``insert_user`` and
+``set_active`` — are referenced only from ``app/services/accounts.py``.
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ from typing import Final
 
 APP_ROOT = Path(__file__).resolve().parent.parent.parent
 APP_DIR = APP_ROOT / "app"
+SCRIPTS_DIR = APP_ROOT / "scripts"
 TEMPLATES_DIR = APP_DIR / "templates"
 ROUTES_DIR = APP_DIR / "routes"
 
@@ -255,3 +261,140 @@ def test_sec063_docs_routes_are_404_in_the_shipped_configuration() -> None:
 
   routed_paths = {getattr(route, "path", None) for route in app.routes}
   assert not (routed_paths & _DISABLED_DOC_PATHS)
+
+
+# ---------------------------------------------------------------------------
+# ARC-018 — R51's reworded gate, mechanized per ruling R58.
+#
+# (a) No file other than app/db/repositories/users.py contains an UPDATE of
+#     the users table (ARC-018(a) itself — "role" never in any SET list —
+#     stays a human-reviewed invariant of that one file, not re-derived
+#     here: a regex cannot tell a SET list's column names apart from an
+#     UPDATE's mere presence).
+# (b) The functions that write role or is_active — insert_user and
+#     set_active — are referenced only from app/services/accounts.py.
+# ---------------------------------------------------------------------------
+
+_USERS_REPOSITORY: Final = APP_DIR / "db" / "repositories" / "users.py"
+_ACCOUNTS_SERVICE: Final = APP_DIR / "services" / "accounts.py"
+
+#: Matches both the schema-qualified form every statement in this codebase
+#: actually uses (``UPDATE public.users``) and the bare form (``UPDATE
+#: users``), case-insensitively: SQL keyword casing is not a security
+#: property, and the gate must not pass vacuously just because a future
+#: statement happens to spell the keyword differently. Deliberately does
+#: **not** match ``UPDATE ... FROM users`` or a comment that merely
+#: mentions both words with something else between them (confirmed against
+#: every ``.py`` file under ``app/`` today: the only matches are the four
+#: real statements and two docstring mentions, both inside ``users.py``
+#: itself, the one file this gate exempts).
+_UPDATE_USERS_PATTERN: Final = re.compile(r"\bUPDATE\s+(?:public\.)?users\b", re.IGNORECASE)
+
+#: The two functions ``R51``/``R58`` name as writers of ``role`` or
+#: ``is_active``. ``insert_user`` writes ``role`` (``H-07``: role is set at
+#: INSERT and nowhere else); ``set_active`` writes ``is_active``.
+_ROLE_OR_ACTIVE_WRITERS: Final[frozenset[str]] = frozenset({"insert_user", "set_active"})
+
+
+def _files_scanned_for_arc018() -> list[Path]:
+  """Every ``.py`` file under ``app/``, plus ``scripts/manage`` (extensionless).
+
+  ``ARC-018``'s own wording ("no file … ") is not confined to ``app/``:
+  the one CLI entrypoint that can reach account administration at all
+  lives in ``scripts/manage``, so the gate scans it too, by explicit path
+  since it carries no ``.py`` suffix for ``rglob`` to find.
+  """
+  files = _python_files_under(APP_DIR)
+  manage_script = SCRIPTS_DIR / "manage"
+  if manage_script.is_file():
+    files = [*files, manage_script]
+  return files
+
+
+def test_arc018a_no_update_of_users_outside_its_one_repository_file() -> None:
+  """No file other than ``app/db/repositories/users.py`` contains an ``UPDATE`` of ``users``."""
+  files = _files_scanned_for_arc018()
+  assert files, "no files found to scan (app/ is empty) yet"
+  offenders: list[str] = []
+  matches_in_the_one_allowed_file = 0
+  for path in files:
+    text = path.read_text(encoding="utf-8")
+    matches = list(_UPDATE_USERS_PATTERN.finditer(text))
+    if not matches:
+      continue
+    if path == _USERS_REPOSITORY:
+      matches_in_the_one_allowed_file += len(matches)
+      continue
+    for match in matches:
+      line_number = text.count("\n", 0, match.start()) + 1
+      offenders.append(f"{path.relative_to(APP_ROOT)}:{line_number}: {match.group(0)!r}")
+  assert offenders == [], "\n".join(offenders)
+  # Not vacuous: users.py itself must actually contain the statement this
+  # gate is confining, or the pattern (or the exemption) has drifted from
+  # what the code does.
+  assert matches_in_the_one_allowed_file > 0, (
+    f"expected at least one UPDATE of users in {_USERS_REPOSITORY}; "
+    "found none — the gate's own pattern may have drifted"
+  )
+
+
+def _ast_referenced_names(tree: ast.AST, names: frozenset[str]) -> set[str]:
+  """Return which of ``names`` this file actually imports or attribute-accesses.
+
+  Parameters
+  ----------
+  tree : ast.AST
+    A parsed module.
+  names : frozenset[str]
+    The identifiers to look for.
+
+  Returns
+  -------
+  set[str]
+    The subset of ``names`` found as an ``ImportFrom`` alias (``from
+    app.db.repositories.users import set_active``) or as an attribute
+    access whose attribute name matches (``users.set_active(...)``) — real
+    code references, never a docstring or comment mention. AST-based
+    rather than a text/regex scan deliberately: ``app/services/auth.py``'s
+    own docstring says, in prose, "It imports neither ``set_active`` nor
+    ``insert_user`` …", which a text scan would flag as a false positive
+    in the one file that most explicitly documents *not* doing the thing
+    this gate forbids.
+  """
+  found: set[str] = set()
+  for node in ast.walk(tree):
+    if isinstance(node, ast.ImportFrom):
+      for alias in node.names:
+        if alias.name in names:
+          found.add(alias.name)
+    elif isinstance(node, ast.Attribute) and node.attr in names:
+      found.add(node.attr)
+  return found
+
+
+def test_arc018b_role_and_active_writers_referenced_only_from_accounts_service() -> None:
+  """The role/``is_active`` writers are referenced only from ``app/services/accounts.py``."""
+  files = _files_scanned_for_arc018()
+  assert files, "no files found to scan (app/ is empty) yet"
+  offenders: list[str] = []
+  accounts_references: set[str] = set()
+  for path in files:
+    if path == _USERS_REPOSITORY:
+      # The definitions themselves, and this file's own docstring/__all__
+      # naming them, live here and are not a "reference" this gate confines.
+      continue
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    referenced = _ast_referenced_names(tree, _ROLE_OR_ACTIVE_WRITERS)
+    if not referenced:
+      continue
+    if path == _ACCOUNTS_SERVICE:
+      accounts_references |= referenced
+      continue
+    offenders.append(f"{path.relative_to(APP_ROOT)} references {sorted(referenced)}")
+  assert offenders == [], "\n".join(offenders)
+  # Not vacuous: accounts.py must actually reference both writers, or the
+  # AST matcher (or the exemption) has drifted from what the code does.
+  assert accounts_references == _ROLE_OR_ACTIVE_WRITERS, (
+    f"expected {_ACCOUNTS_SERVICE} to reference both {sorted(_ROLE_OR_ACTIVE_WRITERS)}; "
+    f"found {sorted(accounts_references)} — the gate's own matcher may have drifted"
+  )
