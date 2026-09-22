@@ -1,0 +1,387 @@
+#!/usr/bin/env python3
+"""manage — the one maintenance entrypoint (contracts/slice-a.md §1.2).
+
+  scripts/with-env .env.owner.local -- python -B scripts/manage <subcommand>
+
+Every subcommand here runs as the **maintenance role** and has no web
+equivalent: account administration is CLI-only (spec §2), which is what
+keeps it off the attack surface. There is no server subcommand (T-10) —
+`scripts/start` serves, this script never does.
+
+Exit codes, one meaning each (§1.2):
+
+  0  success
+  1  unexpected internal error
+  2  usage or argument validation
+  3  domain refusal (last active admin, duplicate email, already
+     provisioned, unknown account, wrong current password)
+  4  database unreachable or privilege denied
+  5  not provisioned, or the migration state is unusable
+
+`--password-stdin` reads exactly one line, strips exactly one trailing
+newline and nothing else — a password may legitimately begin or end with a
+space — rejects an empty line with exit 2, and never echoes. Without it,
+entry is a hidden getpass prompt. A password never appears in argv, in an
+environment variable, or in any line this script prints.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import getpass
+import sys
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Final, cast
+from urllib.parse import urlsplit
+
+# Running a script by path puts the script's own directory on sys.path[0],
+# not the working directory, so `import app` would fail from scripts/ no
+# matter where the command was launched. Resolve the submodule root from
+# this file and put it first.
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+  sys.path.insert(0, str(_ROOT))
+
+import psycopg  # noqa: E402
+from argon2 import PasswordHasher, Type  # noqa: E402
+from psycopg import AsyncConnection  # noqa: E402
+
+from app.config import ConfigError, load_config  # noqa: E402
+from app.db.journal import (  # noqa: E402
+  DEFAULT_MIGRATIONS_ROOT,
+  MigrationError,
+  apply_migrations,
+  load_steps,
+)
+from app.db.pool import close_pool, create_pool, open_pool  # noqa: E402
+from app.logging import new_correlation_id  # noqa: E402
+from app.main import (  # noqa: E402
+  ARGON2_HASH_LEN,
+  ARGON2_MEMORY_COST,
+  ARGON2_PARALLELISM,
+  ARGON2_SALT_LEN,
+  ARGON2_TIME_COST,
+)
+from app.security.clock import SystemClock  # noqa: E402
+from app.security.passwords import (  # noqa: E402
+  DEFAULT_BLOCKLIST,
+  MAX_PASSWORD_LENGTH,
+  MIN_PASSWORD_LENGTH,
+  PasswordService,
+)
+from app.services import accounts  # noqa: E402
+
+if TYPE_CHECKING:
+  from collections.abc import Awaitable, Callable
+
+EXIT_OK: Final = 0
+EXIT_INTERNAL: Final = 1
+EXIT_USAGE: Final = 2
+EXIT_DOMAIN: Final = 3
+EXIT_DATABASE: Final = 4
+EXIT_NOT_PROVISIONED: Final = 5
+
+#: SQLSTATE class 28 is invalid authorization, 42501 is insufficient
+#: privilege: both mean "this role may not do this", which is exit 4 and
+#: not an internal error.
+_PRIVILEGE_SQLSTATES: Final = frozenset({"42501"})
+_MAX_EMAIL_LENGTH: Final = 254
+_MAX_DISPLAY_NAME_LENGTH: Final = 160
+
+
+class UsageError(Exception):
+  """An argument this script can reject without touching the database."""
+
+
+def _fail(message: str, code: int) -> int:
+  """Print one sanitized line to stderr and return the exit code."""
+  print(f"manage: {message}", file=sys.stderr)
+  return code
+
+
+def _checked_email(value: str) -> str:
+  """Return a syntactically plausible address, or raise UsageError."""
+  email = value.strip()
+  local, separator, domain = email.partition("@")
+  if not separator or not local or not domain or len(email) > _MAX_EMAIL_LENGTH:
+    raise UsageError("--email must be an address of the form name@example.test")
+  return email
+
+
+def _checked_name(value: str) -> str:
+  """Return a display name of 1..160 characters, or raise UsageError."""
+  name = value.strip()
+  if not name or len(name) > _MAX_DISPLAY_NAME_LENGTH:
+    raise UsageError("--name must be 1 to 160 characters")
+  return name
+
+
+def _checked_origin(value: str) -> str:
+  """Return an absolute HTTPS origin with no path, query or fragment."""
+  origin = value.strip()
+  parts = urlsplit(origin)
+  if parts.scheme != "https" or not parts.netloc:
+    raise UsageError("--origin must be an absolute https:// origin")
+  if parts.path not in ("", "/") or parts.query or parts.fragment:
+    raise UsageError("--origin must carry no path, query string or fragment")
+  if parts.path == "/":
+    origin = origin[:-1]
+  return origin
+
+
+def _read_password(*, from_stdin: bool) -> str:
+  """Read the password, from one stdin line or from a hidden prompt.
+
+  The CLI enforces the length bounds only. The blocklist and the
+  context-word rule of app/security/passwords.py govern a password a user
+  chooses for themselves, on POST /account/password; every password set
+  here is a hand-over credential that `create-user` and `reset-password`
+  both mark `must_change_password`, so the account holder replaces it at
+  their first login and the self-service rule applies to that value.
+  Recorded as a deliberate deviation in the session report.
+  """
+  if from_stdin:
+    line = sys.stdin.buffer.readline().decode("utf-8")
+    if line.endswith("\n"):
+      line = line[:-1]
+    password = line
+  else:
+    password = getpass.getpass("Password: ")
+  if not password:
+    raise UsageError("the password is empty")
+  if not MIN_PASSWORD_LENGTH <= len(password) <= MAX_PASSWORD_LENGTH:
+    raise UsageError(
+      f"the password must be {MIN_PASSWORD_LENGTH} to {MAX_PASSWORD_LENGTH} characters"
+    )
+  return password
+
+
+def _password_service() -> PasswordService:
+  """Build the production Argon2 profile — the same one the server uses."""
+  return PasswordService(
+    PasswordHasher(
+      time_cost=ARGON2_TIME_COST,
+      memory_cost=ARGON2_MEMORY_COST,
+      parallelism=ARGON2_PARALLELISM,
+      hash_len=ARGON2_HASH_LEN,
+      salt_len=ARGON2_SALT_LEN,
+      type=Type.ID,
+    ),
+    blocklist=DEFAULT_BLOCKLIST,
+    clock=SystemClock(),
+  )
+
+
+async def _with_pool(work: Callable[..., Awaitable[None]]) -> None:
+  """Run ``work`` with an open pool, closing it whatever happens."""
+  config = load_config()
+  pool = create_pool(config)
+  await open_pool(pool)
+  try:
+    await work(pool=pool, clock=SystemClock())
+  finally:
+    await close_pool(pool)
+
+
+async def _migrate(grant_to: str | None, root: Path, *, dry_run: bool) -> str:
+  """Apply the migration chain and return a one-line summary."""
+  config = load_config()
+  steps = load_steps(root)
+  role = grant_to if grant_to is not None else f"{config.dbname}_app"
+  kwargs = cast("dict[str, Any]", config.connect_kwargs())
+  conn = await AsyncConnection.connect(autocommit=True, **kwargs)
+  try:
+    report = await apply_migrations(conn, steps, grant_to=role, dry_run=dry_run)
+  finally:
+    await conn.close()
+  mode = "dry run" if report.dry_run else "migrate"
+  return f"{mode}: grant-to {report.grant_to}, {len(report.outcomes)} step(s)"
+
+
+async def _bootstrap(arguments: argparse.Namespace) -> str:
+  password = _read_password(from_stdin=arguments.password_stdin)
+  email = _checked_email(arguments.email)
+  name = _checked_name(arguments.name)
+  origin = _checked_origin(arguments.origin)
+  passwords = _password_service()
+  created: list[str] = []
+
+  async def _work(*, pool: Any, clock: Any) -> None:
+    result = await accounts.bootstrap(
+      pool=pool,
+      clock=clock,
+      passwords=passwords,
+      email=email,
+      display_name=name,
+      origin=origin,
+      password=password,
+      correlation_id=new_correlation_id(),
+    )
+    created.append(str(result.user_id))
+
+  await _with_pool(_work)
+  return f"bootstrap: administrator {created[0]} created and the origin stored"
+
+
+async def _create_user(arguments: argparse.Namespace) -> str:
+  password = _read_password(from_stdin=arguments.password_stdin)
+  email = _checked_email(arguments.email)
+  name = _checked_name(arguments.name)
+  passwords = _password_service()
+  created: list[str] = []
+
+  async def _work(*, pool: Any, clock: Any) -> None:
+    result = await accounts.create_user(
+      pool=pool,
+      clock=clock,
+      passwords=passwords,
+      email=email,
+      display_name=name,
+      role=arguments.role,
+      password=password,
+      correlation_id=new_correlation_id(),
+    )
+    created.append(str(result.user_id))
+
+  await _with_pool(_work)
+  return f"create-user: {arguments.role} {created[0]} created"
+
+
+async def _reset_password(arguments: argparse.Namespace) -> str:
+  password = _read_password(from_stdin=arguments.password_stdin)
+  email = _checked_email(arguments.email)
+  passwords = _password_service()
+
+  async def _work(*, pool: Any, clock: Any) -> None:
+    await accounts.reset_password(
+      pool=pool,
+      clock=clock,
+      passwords=passwords,
+      email=email,
+      password=password,
+      correlation_id=new_correlation_id(),
+    )
+
+  await _with_pool(_work)
+  return "reset-password: password replaced, a change is required and every session ended"
+
+
+async def _disable_user(arguments: argparse.Namespace) -> str:
+  email = _checked_email(arguments.email)
+
+  async def _work(*, pool: Any, clock: Any) -> None:
+    await accounts.disable_user(
+      pool=pool,
+      clock=clock,
+      email=email,
+      correlation_id=new_correlation_id(),
+    )
+
+  await _with_pool(_work)
+  return "disable-user: the account is inactive and every session ended"
+
+
+async def _set_origin(arguments: argparse.Namespace) -> str:
+  origin = _checked_origin(arguments.origin)
+
+  async def _work(*, pool: Any, clock: Any) -> None:
+    await accounts.set_origin(
+      pool=pool,
+      clock=clock,
+      origin=origin,
+      correlation_id=new_correlation_id(),
+    )
+
+  await _with_pool(_work)
+  return "set-origin: the public origin is stored"
+
+
+def _build_parser() -> argparse.ArgumentParser:
+  """Return the argument parser for every subcommand."""
+  parser = argparse.ArgumentParser(
+    prog="manage", description="Maintenance commands for Demo_App_CRM."
+  )
+  subcommands = parser.add_subparsers(dest="command", required=True)
+
+  migrate = subcommands.add_parser("migrate", help="apply every outstanding migration step")
+  migrate.add_argument("--grant-to", default=None, metavar="ROLE")
+  migrate.add_argument("--dry-run", action="store_true")
+  migrate.add_argument("--migrations-root", default=str(DEFAULT_MIGRATIONS_ROOT), metavar="DIR")
+
+  bootstrap = subcommands.add_parser("bootstrap", help="create the first administrator")
+  bootstrap.add_argument("--email", required=True)
+  bootstrap.add_argument("--name", required=True)
+  bootstrap.add_argument("--origin", required=True)
+  bootstrap.add_argument("--password-stdin", action="store_true", dest="password_stdin")
+
+  create_user = subcommands.add_parser("create-user", help="create one account")
+  create_user.add_argument("--email", required=True)
+  create_user.add_argument("--name", required=True)
+  create_user.add_argument("--role", required=True, choices=("admin", "agent"))
+  create_user.add_argument("--password-stdin", action="store_true", dest="password_stdin")
+
+  reset_password = subcommands.add_parser("reset-password", help="set a new password")
+  reset_password.add_argument("--email", required=True)
+  reset_password.add_argument("--password-stdin", action="store_true", dest="password_stdin")
+
+  disable_user = subcommands.add_parser("disable-user", help="deactivate one account")
+  disable_user.add_argument("--email", required=True)
+
+  set_origin = subcommands.add_parser("set-origin", help="store the public HTTPS origin")
+  set_origin.add_argument("--origin", required=True)
+  return parser
+
+
+async def _dispatch(arguments: argparse.Namespace) -> str:
+  """Run the chosen subcommand and return its one-line summary."""
+  if arguments.command == "migrate":
+    return await _migrate(
+      arguments.grant_to, Path(arguments.migrations_root), dry_run=arguments.dry_run
+    )
+  if arguments.command == "bootstrap":
+    return await _bootstrap(arguments)
+  if arguments.command == "create-user":
+    return await _create_user(arguments)
+  if arguments.command == "reset-password":
+    return await _reset_password(arguments)
+  if arguments.command == "disable-user":
+    return await _disable_user(arguments)
+  if arguments.command == "set-origin":
+    return await _set_origin(arguments)
+  raise UsageError(f"unknown command: {arguments.command}")
+
+
+def main(argv: list[str] | None = None) -> int:
+  """Run the command line and map every failure onto its exit code."""
+  arguments = _build_parser().parse_args(argv)
+  try:
+    summary = asyncio.run(_dispatch(arguments))
+  except UsageError as error:
+    return _fail(str(error), EXIT_USAGE)
+  except ConfigError as error:
+    return _fail(f"configuration error: {error}", EXIT_USAGE)
+  except accounts.DomainRefusal as error:
+    return _fail(str(error), EXIT_DOMAIN)
+  except MigrationError as error:
+    return _fail(str(error), EXIT_NOT_PROVISIONED)
+  except psycopg.OperationalError:
+    # No message: libpq's connection errors name the host, the user and
+    # sometimes the authentication method.
+    return _fail("the database is unreachable", EXIT_DATABASE)
+  except psycopg.errors.InsufficientPrivilege:
+    return _fail("this role is not allowed to do that", EXIT_DATABASE)
+  except psycopg.Error as error:
+    if error.sqlstate in _PRIVILEGE_SQLSTATES or (error.sqlstate or "").startswith("28"):
+      return _fail("this role is not allowed to do that", EXIT_DATABASE)
+    if (error.sqlstate or "").startswith(("42", "3F")):
+      # An undefined table or schema means the migration state is not what
+      # this code was built for, which is exit 5 and not an internal fault.
+      return _fail("the schema is not provisioned for this command", EXIT_NOT_PROVISIONED)
+    return _fail(f"database error {error.sqlstate}", EXIT_INTERNAL)
+  print(summary)
+  return EXIT_OK
+
+
+if __name__ == "__main__":
+  sys.exit(main())

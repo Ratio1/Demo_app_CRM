@@ -45,6 +45,7 @@ __all__ = [
   "CP_71_TOO_SHORT",
   "CP_72_TOO_LONG",
   "CP_73_BLOCKLISTED",
+  "CP_74_MISMATCH",
   "DEFAULT_BLOCKLIST",
   "MAX_PASSWORD_LENGTH",
   "MIN_CONTEXT_TOKEN_LENGTH",
@@ -65,6 +66,7 @@ MIN_CONTEXT_TOKEN_LENGTH: Final = 4
 CP_71_TOO_SHORT: Final = "Use at least 15 characters."
 CP_72_TOO_LONG: Final = "Use 128 characters or fewer."
 CP_73_BLOCKLISTED: Final = "Choose a password that is harder to guess."
+CP_74_MISMATCH: Final = "The two new passwords do not match."
 
 #: ``THREAT_MODEL.md`` §10 item 10: the application's own context words and
 #: "simple permutations" of them. Everything is matched case-insensitively

@@ -1,34 +1,74 @@
-"""The synchronizer CSRF token (``S3``, ``SEC-020``-``SEC-023``).
+"""The per-session CSRF token (``S3``, ``SEC-020``-``SEC-023``).
 
-Pure: no connection, no repository. The token is minted with the same
-CSPRNG as a session token and only its SHA-256 reaches the database, in
-``sessions.csrf_sha256`` — so the token is bound to exactly one session row
-and a token from another session is worthless.
+Pure: no connection, no repository. Only the token's SHA-256 reaches the
+database, in ``sessions.csrf_sha256``, so the token is bound to exactly one
+session row and a token minted for another session is worthless.
 
-The comparison is constant-time. The values compared are digests of
-attacker-supplied input, so a byte-by-byte early exit would leak how much of
-a guess was right.
+Why the token is **derived** from the session token rather than drawn
+independently — a deliberate, recorded deviation from ``slice-a.md`` §1.1's
+``mint_csrf() -> tuple[str, str]``
+-----------------------------------------------------------------------
+Every page that carries a form must render the *token*, while the database
+holds only its *digest* (``DATA_CONTRACT.md`` §3.3: "Neither raw value ever
+reaches the database"). A token drawn independently at INSERT time is
+therefore unrecoverable on the next request, which leaves three ways out,
+and two of them break a pinned rule:
+
+* store the raw token — forbidden by §3.3;
+* re-mint it on each render and ``UPDATE`` the row — a write on a safe
+  method, which ``ARC-017``(a) enumerates and forbids, and a repository
+  function that does not exist;
+* re-mint it and insert a new row — forbidden by ``ARC-017``(b), which
+  requires a still-valid pre-auth cookie to **reuse** its row.
+
+So the token is a one-way function of the session token:
+``sha256("crm-csrf-v1:" + session_token)``. The security properties that
+matter are unchanged. It is unpredictable to anyone who cannot read the
+cookie, which is the entire CSRF threat model — a cross-site attacker can
+cause a request but cannot read a ``__Host-``, ``HttpOnly``, ``SameSite=Lax``
+cookie. It is still validated **against the session row's stored digest**,
+so it is a synchronizer token and not a bare double-submit: a token from
+another session fails. And the derivation is one-way, so the CSRF token —
+which appears in HTML, in page caches and in browser history — never leaks
+the session token back.
+
+Recorded for the review council rather than taken silently.
 """
 
 from __future__ import annotations
 
 import hmac
+from typing import Final
 
-from app.security.sessions import mint_token, sha256_hex
+from app.security.sessions import sha256_hex
 
-__all__ = ["mint_csrf", "verify_csrf"]
+__all__ = ["CSRF_DERIVATION_LABEL", "csrf_for_token", "verify_csrf"]
+
+#: Domain separation, and a version marker: a future change to the
+#: derivation changes this string, which invalidates every outstanding
+#: token at once instead of silently accepting both forms.
+CSRF_DERIVATION_LABEL: Final = "crm-csrf-v1:"
 
 
-def mint_csrf() -> tuple[str, str]:
-  """Mint one CSRF token and its digest.
+def csrf_for_token(session_token: str) -> tuple[str, str]:
+  """Derive the CSRF token for a session, and its stored digest.
+
+  Parameters
+  ----------
+  session_token : str
+    The raw session token from the cookie — never the digest, which is all
+    the database holds.
 
   Returns
   -------
   tuple[str, str]
-    ``(token, sha256_hex(token))``. The token is rendered into the form's
-    hidden ``csrf_token`` field; the digest is stored on the session row.
+    ``(csrf_token, sha256_hex(csrf_token))``. The token is rendered into
+    the hidden ``csrf_token`` field; the digest is what
+    ``create_preauth_session`` and ``promote_session`` store, and what
+    :func:`verify_csrf` compares against.
   """
-  return mint_token()
+  token = sha256_hex(CSRF_DERIVATION_LABEL + session_token)
+  return token, sha256_hex(token)
 
 
 def verify_csrf(submitted: str | None, stored_sha256: str | None) -> bool:
@@ -52,10 +92,9 @@ def verify_csrf(submitted: str | None, stored_sha256: str | None) -> bool:
 
   Notes
   -----
-  :func:`hmac.compare_digest` is used rather than ``==`` even though both
-  operands are digests of public-ish values: it costs nothing and removes a
-  whole class of argument about whether the timing of a rejected token is
-  observable.
+  :func:`hmac.compare_digest` rather than ``==``: the right operand is a
+  stored secret's digest and the left is attacker-supplied, and a
+  byte-by-byte early exit would leak how much of a guess was right.
   """
   if not submitted or not stored_sha256:
     return False
