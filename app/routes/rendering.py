@@ -27,6 +27,7 @@ and never becomes a 400 (**R20**).
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any, Final
 
 import jinja2
@@ -36,6 +37,7 @@ from app.security.csrf import csrf_for_token
 from app.security.sessions import COOKIE_NAME
 
 if TYPE_CHECKING:
+  from collections.abc import Mapping
   from pathlib import Path
 
   from starlette.requests import Request
@@ -82,7 +84,8 @@ TEMPLATES: Final = Jinja2Templates(
   )
 )
 
-#: Slice A's three codes (``slice-a.md`` §2.7). Later slices extend this
+#: Slice A's three codes (``slice-a.md`` §2.7) plus Slice B's five
+#: (``CONTRACTS.md`` §8.5, ``UX_FLOWS.md`` §6.6). Later slices extend this
 #: table additively; nothing else may render a banner.
 NOTICE_CODES: Final[dict[str, dict[str, str]]] = {
   "signed_out": {"kind": "success", "text": "You are signed out."},
@@ -91,22 +94,44 @@ NOTICE_CODES: Final[dict[str, dict[str, str]]] = {
     "kind": "success",
     "text": "Password changed. You have been signed out everywhere else.",
   },
+  "contact_created": {"kind": "success", "text": "Contact created."},
+  "contact_saved": {"kind": "success", "text": "Contact saved."},
+  "contact_archived": {"kind": "success", "text": "Contact archived."},
+  "contact_restored": {"kind": "success", "text": "Contact restored."},
+  "owner_changed": {"kind": "success", "text": "Owner changed to {name}."},
 }
 
+#: The one substitution shape a notice string may carry. ``CP-57``'s
+#: ``{name}`` is the second of the fourteen (``CONTRACTS.md`` §8.5 and
+#: ``UX_FLOWS.md`` §6.6 both say *"``deal_moved``'s ``{stage}`` is the
+#: only substitution"*, which is false — finding **F-2**). The value is
+#: supplied by the **destination handler** from a re-read row, never from
+#: the query string: no free text travels in a URL (**R20**).
+_NOTICE_PLACEHOLDER: Final = re.compile(r"\{([a-z_]+)\}")
 
-def notice_for(request: Request) -> dict[str, str] | None:
+
+def notice_for(
+  request: Request, *, substitutions: Mapping[str, str] | None = None
+) -> dict[str, str] | None:
   """Return the banner for this request's ``?notice=`` code, if any.
 
   Parameters
   ----------
   request : Request
     The inbound request.
+  substitutions : Mapping[str, str] | None, optional
+    Server-side values for a code whose copy carries a placeholder, such as
+    ``owner_changed``'s ``{name}``. Supplied by the handler from a row it
+    has just read.
 
   Returns
   -------
   dict[str, str] | None
     ``{"kind": …, "text": …}`` for an allowlisted code, ``None`` for an
-    absent, unknown, malformed or repeated one.
+    absent, unknown, malformed or repeated one — and ``None`` for a code
+    whose placeholder this caller cannot fill, so a crafted
+    ``?notice=owner_changed`` on a page that knows no owner renders no
+    banner rather than a literal ``{name}``.
 
   Notes
   -----
@@ -118,7 +143,16 @@ def notice_for(request: Request) -> dict[str, str] | None:
   if len(values) != 1:
     return None
   entry = NOTICE_CODES.get(values[0])
-  return dict(entry) if entry is not None else None
+  if entry is None:
+    return None
+  banner = dict(entry)
+  needed = set(_NOTICE_PLACEHOLDER.findall(banner["text"]))
+  if needed:
+    supplied = dict(substitutions or {})
+    if not needed <= supplied.keys():
+      return None
+    banner["text"] = _NOTICE_PLACEHOLDER.sub(lambda match: supplied[match.group(1)], banner["text"])
+  return banner
 
 
 def csrf_token_for_request(request: Request) -> str:

@@ -44,6 +44,7 @@ from starlette.responses import RedirectResponse, Response
 
 from app.logging import current_correlation_id
 from app.routes.rendering import base_context, csrf_token_for_request, render
+from app.security.audit import ACTION_ACCESS_DENIED, OBJECT_CONTACT, record_denial
 from app.security.headers import apply_security_headers
 from app.security.origin import is_safe_relative
 from app.security.principal import resolve_principal
@@ -55,18 +56,25 @@ if TYPE_CHECKING:
   from app.security.principal import Principal
 
 __all__ = [
+  "CONTACTS_URL",
   "DASHBOARD_URL",
   "LOGIN_URL",
   "PASSWORD_URL",
   "SAFE_METHODS",
+  "ambiguous_commit_handler",
+  "bad_request",
   "budget_handler",
+  "conflict",
+  "contact_not_found_handler",
   "forbidden",
   "forced_reset_handler",
   "hash_queue_handler",
   "http_exception_handler",
   "is_fragment",
   "no_session_handler",
+  "not_found",
   "not_provisioned_handler",
+  "redirect",
   "region_error",
   "role_required_handler",
   "step_zero_handler",
@@ -82,6 +90,7 @@ SAFE_METHODS: Final[frozenset[str]] = frozenset({"GET", "HEAD", "OPTIONS"})
 LOGIN_URL: Final = "/login"
 PASSWORD_URL: Final = "/account/password"  # noqa: S105 — a route, not a secret
 DASHBOARD_URL: Final = "/dashboard"
+CONTACTS_URL: Final = "/contacts"
 
 #: ``UX_FLOWS.md`` §6.2 / §6.1. The ``405`` page has no ``CP-##`` of its
 #: own (``UX_FLOWS.md`` §3.8 fixes only the behaviour), so its heading and
@@ -403,6 +412,47 @@ async def payload_too_large(request: Request) -> Response:
   )
 
 
+async def conflict(request: Request, *, context: str, extra: dict[str, Any]) -> Response:
+  """Render ``errors/409.html`` — **R19**'s four contexts (``contracts/slice-b.md`` §2(d)).
+
+  Parameters
+  ----------
+  request : Request
+    The inbound request.
+  context : str
+    ``stale``, ``archived_parent``, ``duplicate`` or ``stage_terminal``.
+    The context is the **only** thing that distinguishes the three (soon
+    four) conflicts: a distinct status code would tell an attacker which
+    condition held (``ACCESS_MATRIX.md`` §1.3).
+  extra : dict[str, Any]
+    That context's own payload, exactly as ``CONTRACTS.md`` §8.4 freezes it.
+
+  Returns
+  -------
+  Response
+    Always a **full page** in the authenticated shell (**R56**), never
+    ``partials/region_error.html``. **R15** means no mutation is ever
+    issued by htmx, so no legitimate ``HX-Request`` can produce a 409; a
+    crafted one gets the page, because the region partial's ``{status,
+    text}`` shape has no 409 text and would render the 503 line. A
+    deliberate narrowing of ``slice-a.md`` §3's "every ``HX-Request``
+    response is a fragment", recorded for the review council.
+
+  Notes
+  -----
+  ``_STATUS_PAGES`` is deliberately **not** extended with ``409``: the
+  status carries a context payload only its own route holds, so no code
+  path may raise a context-less ``HTTPException(409)``.
+  """
+  return await _error_page(
+    request,
+    status=409,
+    template="errors/409.html",
+    extra={"context": context, "correlation_id": current_correlation_id(), **extra},
+    public_shell=False,
+  )
+
+
 async def internal_error(request: Request) -> Response:
   """Render the ``500`` page: public shell always, correlation id only."""
   return await _error_page(
@@ -412,6 +462,30 @@ async def internal_error(request: Request) -> Response:
     extra={"correlation_id": current_correlation_id()},
     public_shell=True,
   )
+
+
+def redirect(location: str, request: Request, *, headers: dict[str, str] | None = None) -> Response:
+  """Return a ``303`` to ``location`` with the security headers already applied.
+
+  Parameters
+  ----------
+  location : str
+    A **relative** path, built by the caller from a route name and, where
+    there is one, an allowlisted ``?notice=`` code (``ACCESS_MATRIX.md``
+    §1.2). No free text ever travels in a URL (**R20**).
+  request : Request
+    The inbound request, whose path selects the cache directives.
+  headers : dict[str, str] | None, optional
+    Extra headers, such as ``Clear-Site-Data``.
+
+  Returns
+  -------
+  Response
+    ``303 See Other`` — the Post/Redirect/Get of every mutation in this
+    application (**R15**).
+  """
+  response = RedirectResponse(location, status_code=303, headers=headers)
+  return apply_security_headers(response, path=request.url.path)
 
 
 _STATUS_PAGES: Final[dict[int, Any]] = {
@@ -566,3 +640,83 @@ async def too_large_handler(request: Request, exc: Exception) -> Response:
   """Answer an over-cap body with the ``413`` page."""
   del exc
   return await payload_too_large(request)
+
+
+async def contact_not_found_handler(request: Request, exc: Exception) -> Response:
+  """Answer step 4's contact denial: one deny row, then the one ``404`` body.
+
+  Parameters
+  ----------
+  request : Request
+    The inbound request. Step 1 has already run on every route that can
+    raise this, so the principal is memoized on ``request.state``.
+  exc : Exception
+    The :class:`app.security.failures.ContactNotFound` decision; carries
+    the requested id **iff** it was canonical.
+
+  Returns
+  -------
+  Response
+    ``404`` with ``errors/404.html`` — identical for a foreign contact, a
+    missing one and a non-canonical path segment, for the same principal
+    modulo the correlation id (**PIN 8**, **R27**).
+
+  Notes
+  -----
+  This is the single emission point of ``ACCESS_MATRIX.md`` §4.5 **row 1**
+  (``contact`` / ``access_denied`` / ``denied``), so six routes cannot
+  write six different rows. The write is best-effort and in its own short
+  transaction, opened only **after** the denying transaction unwound and
+  released its connection; :func:`app.security.audit.record_denial`
+  swallows its own failures, so a database hiccup can never turn a ``404``
+  into a ``503``.
+
+  A denial with no resolved principal writes nothing: pre-session denials
+  reach the log stream only, so an anonymous flood cannot drive unbounded
+  inserts (§4.5, *"what does not write a deny row"*).
+  """
+  object_id = getattr(exc, "object_id", None)
+  principal: Principal | None = getattr(request.state, "crm_principal", None)
+  context = getattr(request.app.state, "context", None)
+  if principal is not None and context is not None:
+    await record_denial(
+      context.pool,
+      actor_id=principal.id,
+      object_type=OBJECT_CONTACT,
+      object_id=object_id,
+      action=ACTION_ACCESS_DENIED,
+      correlation_id=current_correlation_id(),
+      at=context.clock.now(),
+    )
+  return await not_found(request)
+
+
+async def ambiguous_commit_handler(request: Request, exc: Exception) -> Response:
+  """Answer a commit whose outcome is unknown with the second ``503`` (**R19**).
+
+  Parameters
+  ----------
+  request : Request
+    The inbound request.
+  exc : Exception
+    The :class:`app.db.retry.AmbiguousCommit` signal. Its message names the
+    operation and the attempt only — never SQL, parameters or values — and
+    is not rendered.
+
+  Returns
+  -------
+  Response
+    ``503`` with ``context="ambiguous_commit"``, whose copy (``CP-19``)
+    says *do not resubmit; open the record and check*. The true outcome is
+    resolved by reading the receipt, which is the whole reason the receipt
+    is written in the same transaction as the business row (``SQL-013``).
+
+  Notes
+  -----
+  Registered so this never falls through to the ``500`` page: a 500 would
+  invite exactly the resubmission that can turn one submission into two
+  rows. ``record_url`` stays ``None`` here because this handler has no
+  object id; giving it one is a per-route refinement, recorded as open.
+  """
+  del exc
+  return await unavailable(request, context="ambiguous_commit")
