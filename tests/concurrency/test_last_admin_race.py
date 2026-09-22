@@ -152,6 +152,65 @@ def _run_manage(
   return completed
 
 
+_COUNT_ACTIVE_ADMINS_SNIPPET = """
+import asyncio
+from typing import Any, cast
+from psycopg import AsyncConnection
+from app.config import load_config
+
+async def main() -> None:
+  kwargs = cast('dict[str, Any]', load_config().connect_kwargs())
+  conn = await AsyncConnection.connect(autocommit=True, **kwargs)
+  try:
+    cur = await conn.execute(
+      "SELECT count(*) FROM public.users WHERE role = 'admin' AND is_active = true"
+    )
+    row = await cur.fetchone()
+    print("RESULT count=" + str(row[0]))
+  finally:
+    await conn.close()
+
+asyncio.run(main())
+"""
+
+
+def _count_active_admins(*, log_path: Path) -> int:
+  """Run an owner-role ``SELECT count(*)`` and return the number of active admins.
+
+  Independent of the two subprocesses' exit codes: a bug in the guard's
+  own read-after-write logic could in principle exit ``[0, 3]`` for the
+  wrong reason while still leaving the database in a bad state, so this is
+  a direct assertion on the invariant itself (ACC-608/SQL-014: "exactly
+  one active admin remains"), not an inference from process exit status.
+  """
+  argv = [
+    str(WITH_ENV),
+    OWNER_ENV_FILE,
+    "--",
+    str(VENV_PYTHON),
+    "-B",
+    "-c",
+    _COUNT_ACTIVE_ADMINS_SNIPPET,
+  ]
+  completed = subprocess.run(  # noqa: S603
+    argv,
+    cwd=SUBMODULE_ROOT,
+    capture_output=True,
+    text=True,
+    timeout=30.0,
+    check=False,
+  )
+  log_path.write_text(
+    f"returncode={completed.returncode}\n--- stdout ---\n{completed.stdout}\n"
+    f"--- stderr ---\n{completed.stderr}\n",
+    encoding="utf-8",
+  )
+  for line in completed.stdout.splitlines():
+    if line.startswith("RESULT count="):
+      return int(line.removeprefix("RESULT count="))
+  pytest.fail(f"no RESULT line from the active-admin count probe (exit {completed.returncode})")
+
+
 def _disable(email: str, *, log_path: Path) -> int:
   """Run ``manage disable-user --email <email>``, returning its exit code (never raising)."""
   argv = [
@@ -199,6 +258,13 @@ def test_sql014_two_concurrent_disable_user_races_leave_exactly_one_active_admin
   iteration races the previous survivor against one freshly created admin,
   so exactly two admins are active immediately before each race, matching
   the invariant this docstring states.
+
+  Each iteration also asserts the invariant directly against the database
+  (``_count_active_admins``, an independent owner-role ``SELECT count(*)``),
+  not only from the two subprocesses' exit codes: exit codes prove the
+  CLI's own view of the outcome, a direct count proves the database itself
+  ended the iteration with exactly one active administrator, which is what
+  ACC-608/SQL-014 actually requires.
   """
   import asyncio
 
@@ -257,3 +323,9 @@ def test_sql014_two_concurrent_disable_user_races_leave_exactly_one_active_admin
     # (the domain refusal fired because disabling it would reach zero) — so
     # whichever target got 3 is the survivor for the next iteration.
     survivor_email = survivor_email if exit_survivor == 3 else fresh_email
+
+    active_admin_count = _count_active_admins(log_path=tmp_path / f"count-{iteration}.log")
+    assert active_admin_count == 1, (
+      f"iteration {iteration}: expected exactly one active administrator in the "
+      f"database after the race, found {active_admin_count}"
+    )
