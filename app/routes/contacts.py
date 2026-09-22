@@ -157,6 +157,12 @@ _FIELD_LABELS: Final[tuple[tuple[str, str], ...]] = (
 )
 _OWNER_LABEL: Final = "Owner"
 
+#: ``UX_FLOWS.md`` §6.3 ``CP-32`` — *"Owner: you · Owner: {name}"*. The
+#: template renders ``Owner: {{ owner_label }}``, so the **value** is
+#: pre-formatted here: a record of one's own reads "you", never the
+#: viewer's own display name repeated back at them.
+_CP_32_SELF: Final = "you"
+
 #: ``UX_FLOWS.md`` §6.3 ``CP-30``/``CP-31`` and §6.5 ``CP-41``/``CP-42``/
 #: ``CP-43``.
 _CP_30_AGENT_SCOPE: Final = "Your records"
@@ -551,6 +557,11 @@ def _results(request: Request, view: ContactListView, query: _ListQuery) -> View
     dir=query.direction,
     clear_url=CONTACTS_URL,
   )
+
+
+def _owner_label(owner_name: str, *, is_own: bool) -> str:
+  """Return ``CP-32``'s owner value: "you" for one's own record, else the name."""
+  return _CP_32_SELF if is_own else owner_name
 
 
 def _scope_label(principal: Principal) -> str:
@@ -1049,7 +1060,7 @@ async def contact_new(request: Request) -> Response:
       action_url=CONTACTS_URL,
       cancel_url=CONTACTS_URL,
       contact=_submitted_contact({}, contact_id=None, version=None),
-      owner_label=principal.display_name,
+      owner_label=_CP_32_SELF,
       errors={},
       idempotency_key=mint_key(),
     ),
@@ -1087,7 +1098,7 @@ async def contact_create(request: Request) -> Response:
         action_url=CONTACTS_URL,
         cancel_url=CONTACTS_URL,
         contact=_submitted_contact(body, contact_id=None, version=None),
-        owner_label=principal.display_name,
+        owner_label=_CP_32_SELF,
         errors=result.errors,
         idempotency_key=mint_key(),
       ),
@@ -1135,7 +1146,7 @@ async def contact_edit(request: Request, contact_id: str) -> Response:
         "kind": view.kind,
         "version": view.version,
       },
-      owner_label=view.owner_name,
+      owner_label=_owner_label(view.owner_name, is_own=view.is_own),
       errors={},
       idempotency_key=mint_key(),
     ),
@@ -1184,7 +1195,7 @@ async def contact_update(request: Request, contact_id: str) -> Response:
         action_url=detail_url,
         cancel_url=detail_url,
         contact=_submitted_contact(body, contact_id=str(identifier), version=version),
-        owner_label=view.owner_name,
+        owner_label=_owner_label(view.owner_name, is_own=view.is_own),
         errors=result.errors,
         idempotency_key=mint_key(),
       ),
