@@ -2,7 +2,7 @@
 
 Importing any module in this package must not open a connection, read the
 process environment or touch the filesystem. ``app.config`` is the only module
-that reads the environment (``CONTRACTS.md`` §2) and every module here takes its
+that reads the environment and every module here takes its
 parameters from a :class:`app.config.Config` handed in by the caller.
 
 Layering, from the bottom up:

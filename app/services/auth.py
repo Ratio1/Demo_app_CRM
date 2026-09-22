@@ -1,37 +1,32 @@
-"""Login, password change and logout (``DATA_CONTRACT.md`` §6.8 rows 2-5).
-
-Authority: ``slice-a.md`` §2.4 (the ordered stages of each), §10(b) (the
-repository surface and the wrapper each function runs under),
-``DATA_CONTRACT.md`` §6.8 note 1 (the rehash's version guard),
-``THREAT_MODEL.md`` T-01/T-03.
+"""Login, password change and logout.
 
 Four properties the ordering here exists to hold:
 
 *Argon2 never runs inside a transaction.* Verifying, and the rehash a
 parameter drift triggers, both happen **before** the ``SERIALIZABLE`` block
-opens, with no connection held (``DATA_CONTRACT.md`` §6.1). A 20 ms hash
+opens, with no connection held. A 20 ms hash
 inside a transaction would hold one of four connections for the whole of
 it, and would be repeated by every retry.
 
 *Missing, disabled and wrong-password are one outcome.* There is a single
 ``invalid`` result; a caller cannot tell the three apart and neither can a
-client (``SEC-032``).
+client.
 
 *The failure counter outlives the failure.* ``register_failure`` and the
 ``login_failed`` audit row commit together in their own ``READ COMMITTED``
 transaction, so the authentication path rolling back cannot erase the
-record of what it rejected (``SQL-027``).
+record of what it rejected.
 
 *Every success writes its audit row in the same transaction as the rows it
 describes* — the same connection, inside the same ``run_serializable``
-block (``S7``, ``SQL-016``).
+block.
 
-``ARC-018``(b), as **R51** (2026-09-22) rewords it, holds here by
-construction. The rule is now: no file but ``app/db/repositories/users.py``
-holds an ``UPDATE`` of ``users``, and the functions that write ``role`` or
-``is_active`` are referenced only from ``app/services/accounts.py``; reads
-of that module are unrestricted, because authentication cannot be written
-without them. This module imports exactly ``find_user_for_auth``,
+The account-write rules hold here by construction. No file but
+``app/db/repositories/users.py`` holds an ``UPDATE`` of ``users``, and the
+functions that write ``role`` or ``is_active`` are referenced only from
+``app/services/accounts.py``; reads of that module are unrestricted,
+because authentication cannot be written without them. This module imports
+exactly ``find_user_for_auth``,
 ``read_user``, ``set_password`` and ``update_password_hash`` — two reads
 and the two password writes. It imports neither ``set_active`` nor
 ``insert_user`` (the only writers of ``is_active`` and ``role``) nor
@@ -67,7 +62,7 @@ from app.security.audit import (
   record,
 )
 from app.security.csrf import csrf_for_token
-from app.security.passwords import CP_74_MISMATCH
+from app.security.passwords import MISMATCH_MESSAGE
 from app.security.sessions import ABSOLUTE_TTL, IDLE_TTL, mint_token
 from app.security.throttle import account_key
 
@@ -83,10 +78,10 @@ if TYPE_CHECKING:
   from app.security.throttle import ThrottleService
 
 __all__ = [
-  "CP_70_WRONG_CURRENT",
   "OUTCOME_INVALID",
   "OUTCOME_LOCKED",
   "OUTCOME_OK",
+  "WRONG_CURRENT_MESSAGE",
   "ChangePasswordResult",
   "LoginResult",
   "change_password",
@@ -94,8 +89,8 @@ __all__ = [
   "logout",
 ]
 
-#: ``UX_FLOWS.md`` §6.1 ``CP-70``.
-CP_70_WRONG_CURRENT: Final = "That is not your current password."
+#: The one field error a wrong current password produces.
+WRONG_CURRENT_MESSAGE: Final = "That is not your current password."
 
 OUTCOME_OK: Final = "ok"
 OUTCOME_INVALID: Final = "invalid"
@@ -165,7 +160,7 @@ async def _count_failure(
     The ``account_key`` — written for an unknown account too, so that the
     existence of a throttle row is not an account oracle.
   user_id : UUID | None
-    The account's id when it exists, else ``None`` (**R13**): the
+    The account's id when it exists, else ``None``: the
     submitted identifier never enters the audit trail in any form.
   correlation_id : str
     This request's id.
@@ -174,8 +169,8 @@ async def _count_failure(
 
   Notes
   -----
-  ``DATA_CONTRACT.md`` §6.8 row 2: the counter and the ``login_failed``
-  row commit **together**, and ``throttle_locked`` is written once, by the
+  The counter and the ``login_failed`` row commit **together**, and
+  ``throttle_locked`` is written once, by the
   increment that set ``locked_until`` — never on each later refusal, or
   the deny trail would grow without the bound it exists to record.
   """
@@ -247,7 +242,7 @@ async def login(
   preauth_id : UUID | None
     The pre-auth row this request's CSRF token was checked against. It is
     deleted as part of the rotation, so the old cookie value dies the
-    moment the new one is issued (``SEC-012``).
+    moment the new one is issued.
   correlation_id : str
     This request's id, written into every audit row below.
 
@@ -267,7 +262,7 @@ async def login(
   verified against a hash that is no longer current, so the login **fails
   generically**: no session, and above all no rehash written under the old
   guard, which would overwrite the new password with a rehash of the old
-  one (``DATA_CONTRACT.md`` §6.8 note 1).
+  one.
   """
   now = clock.now()
   key = account_key(email)
@@ -289,8 +284,8 @@ async def login(
   # cannot narrow ``UserAuthRow | None`` through it, and every attribute
   # read below was an error. The dummy hash still runs in the same gate
   # slot, with the same parameters, for a missing and for a disabled
-  # account alike (``T-03``/``SEC-033``), and all three outcomes are still
-  # the single :data:`OUTCOME_INVALID` (``SEC-032``).
+  # account alike, and all three outcomes are still
+  # the single :data:`OUTCOME_INVALID`.
   if user is None or not user.is_active:
     await passwords.verify(None, password)
     await _count_failure(
@@ -371,7 +366,7 @@ async def login(
 
   # Only after the rotation committed: a login that failed to rotate must
   # not clear the counter that recorded why. An UPDATE, never a DELETE —
-  # the runtime role holds no DELETE on login_throttle (§5.2).
+  # the runtime role holds no DELETE on login_throttle.
   await throttle.clear(key, now=now)
   return LoginResult(
     outcome=OUTCOME_OK,
@@ -404,7 +399,7 @@ async def change_password(
   principal : Principal
     The signed-in user, forced-reset or not.
   current_password : str
-    Required even on the forced path (``SEC-016``): without it, whoever
+    Required even on the forced path: without it, whoever
     reaches an unattended signed-in browser could take the account over
     permanently instead of merely using it until the session expires.
   new_password : str
@@ -419,7 +414,7 @@ async def change_password(
   ChangePasswordResult
     On success ``errors`` is empty and ``token`` carries the rotated
     session's new cookie value; every other session of that user was
-    deleted in the same transaction (``CP-06``).
+    deleted in the same transaction.
 
   Raises
   ------
@@ -433,12 +428,12 @@ async def change_password(
 
   user = await run_read_committed(pool, _read, op="read-user-for-password-change")
   if user is None:
-    return ChangePasswordResult(errors={"current_password": [CP_70_WRONG_CURRENT]})
+    return ChangePasswordResult(errors={"current_password": [WRONG_CURRENT_MESSAGE]})
 
   expected_version: int = user.version
   errors: dict[str, list[str]] = {}
   if not await passwords.verify(user.password_hash, current_password):
-    errors["current_password"] = [CP_70_WRONG_CURRENT]
+    errors["current_password"] = [WRONG_CURRENT_MESSAGE]
 
   # Context words: the user's own display name and the local part of their
   # address, so "AdaAdmin2026" is refused for Ada Admin and nobody else.
@@ -447,7 +442,7 @@ async def change_password(
   if policy_errors:
     errors["new_password"] = policy_errors
   if new_password != confirm_password:
-    errors["confirm_password"] = [CP_74_MISMATCH]
+    errors["confirm_password"] = [MISMATCH_MESSAGE]
   if errors:
     return ChangePasswordResult(errors=errors)
 
@@ -498,7 +493,7 @@ async def change_password(
     # A concurrent change committed first. Nothing was written, and the
     # user is told their current password did not match — true of the row
     # as it now stands, and it discloses nothing about the race.
-    return ChangePasswordResult(errors={"current_password": [CP_70_WRONG_CURRENT]})
+    return ChangePasswordResult(errors={"current_password": [WRONG_CURRENT_MESSAGE]})
   return ChangePasswordResult(errors={}, token=token)
 
 
@@ -524,12 +519,11 @@ async def logout(
 
   Notes
   -----
-  ``DATA_CONTRACT.md`` §6.8 row 4 runs this at ``SERIALIZABLE``, which is
-  also what keeps the ``logout`` audit row in the same transaction as the
-  ``DELETE`` (``S7``). ``slice-a.md`` §10(b)'s table lists
-  ``delete_session`` under ``run_read_committed``; that placement is for
-  the bare delete, and it is overridden here because an audit row must
-  ride the transaction of the mutation it describes. The row is
+  This runs at ``SERIALIZABLE``, which is what keeps the ``logout`` audit
+  row in the same transaction as the ``DELETE``. A bare
+  ``delete_session`` elsewhere runs under ``run_read_committed``; the
+  stronger level is used here because an audit row must ride the
+  transaction of the mutation it describes. The row is
   hard-deleted, so no token hash is left behind.
   """
   now = clock.now()

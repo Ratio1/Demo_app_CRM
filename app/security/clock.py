@@ -1,10 +1,10 @@
-"""The only time source in the application (``slice-a.md`` §7.3, ``ARC-019``).
+"""The only time source in the application.
 
 Every expiry, window and timing measurement in ``app/`` is read from a
 :class:`Clock` handed in through a constructor. No other module calls
 ``datetime.now()``, ``datetime.utcnow()``, ``time.time()`` or
-``time.monotonic()``: ``ARC-019`` asserts that, and it is what lets every
-expiry test advance a clock instead of sleeping.
+``time.monotonic()``. The test suite asserts that no module does, and it is
+what lets every expiry test advance a clock instead of sleeping.
 
 :class:`Clock` exposes ``monotonic()`` as well as ``now()`` because
 ``CorrelationMiddleware``'s ``duration_ms`` is the one place an implementer
@@ -75,8 +75,8 @@ class ManualClock:
 
   There is no environment variable, configuration key or branch anywhere in
   ``app/`` that selects this class: a test constructs it and injects it —
-  either through the constructor of the one service under test
-  (``slice-a.md`` §7.3), or through ``create_app(clock=…)`` (**R54**), which
+  either through the constructor of the one service under test, or through
+  ``create_app(clock=…)``, which
   hands the same instance to ``CorrelationMiddleware`` and to every service
   the lifespan builds, so an in-process request through the whole
   application can be driven by advancing it.

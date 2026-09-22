@@ -1,24 +1,22 @@
 """``login_throttle`` and ``rate_budget`` — the two counters, one module.
 
-Folded together by amendment **A1**: both tables share one row shape, one
-idiom (``DATA_CONTRACT.md`` §6.5) and one transaction class, and the Slice A
-module list is five.
+Both tables share one row shape, one idiom and one transaction class, which
+is why they share a module.
 
 Everything here runs in a **short ``READ COMMITTED`` transaction of its
-own**, on its own acquisition. That is ``SQL-027``: a failed login's rollback
-must not undo the failure it recorded, so the counter cannot share the auth
+own**, on its own acquisition: a failed login's rollback must not undo the
+failure it recorded, so the counter cannot share the auth
 path's transaction. The wrapper is the caller's
 (:func:`app.db.retry.run_read_committed`); this module only assumes a
-transaction is already open, which the §6.5 idiom's nested savepoint
-requires.
+transaction is already open, which the idiom's nested savepoint requires.
 
 Three rules the statements below never break: the increment is
 ``SET counter = counter + 1`` in a single UPDATE, so the row lock makes it
 atomic with no ``SELECT … FOR UPDATE``; the post-increment value is read back
 with a plain ``SELECT`` in the same transaction, never ``RETURNING``, because
-that is the form ruling **R13** was pinned against; and every window boundary
+the row lock is what makes the re-read exact; and every window boundary
 and cutoff arrives as a bound parameter, computed in Python, never
-``date_trunc`` and never interval arithmetic (§9.1).
+``date_trunc`` and never interval arithmetic.
 """
 
 from __future__ import annotations
@@ -124,7 +122,7 @@ class ThrottleRow:
   ----------
   account_key : str
     ``sha256(submitted.strip().lower())``, 64 lowercase hex characters —
-    the identifier **hash**, never the address (ruling **R13**).
+    the identifier **hash**, never the address.
   failure_count : int
     Failures inside the current window.
   window_started_at : datetime
@@ -153,7 +151,7 @@ class ThrottleOutcome:
   transitioned : bool
     ``True`` for the one caller whose failure flipped the account into the
     locked state. It is what makes ``throttle_locked`` exactly one audit row
-    per key per lock window (§3.6) rather than one per refused request.
+    per key per lock window rather than one per refused request.
   """
 
   failure_count: int
@@ -197,7 +195,7 @@ async def read_throttle(conn: PoolConnection, *, account_key: str) -> ThrottleRo
   -------
   ThrottleRow | None
     ``None`` when the account has no failures on record. No ``now``
-    parameter (amendment **A6**): the repository decides nothing, and
+    parameter: the repository decides nothing, and
     whether ``locked_until`` is still in the future is the caller's
     comparison against its own clock.
   """
@@ -229,15 +227,15 @@ async def register_failure(
   conn : PoolConnection
     A connection inside a short ``READ COMMITTED`` transaction of this
     counter's **own** — never the auth path's, whose rollback must not undo
-    the count (``SQL-027``).
+    the count.
   account_key : str
     The 64-character hash. A row is written for an **unknown** account too:
     the alternative would make the presence of a throttle row an account
-    oracle (§3.4).
+    oracle.
   now : datetime
     The caller's instant.
   window_cutoff : datetime
-    ``now - 15 min``, computed in Python (amendment **A6**). A window that
+    ``now - 15 min``, computed in Python. A window that
     started before it is rolled over rather than continued.
   threshold : int
     Five, by ``LOGIN_FAILURES``. Passed rather than read from a constant so
@@ -256,15 +254,15 @@ async def register_failure(
   Three statements, in one transaction, in this order.
 
   1. The ``CASE`` UPDATE increments or rolls the window over in one locked
-     row. ``rowcount == 0`` means no row exists yet, which is the §6.5
-     idiom's INSERT branch: a nested ``conn.transaction()`` — a **savepoint**,
+     row. ``rowcount == 0`` means no row exists yet, which is the idiom's
+     INSERT branch: a nested ``conn.transaction()`` — a **savepoint**,
      because the UPDATE already opened the transaction — with the ``except``
      **outside** the block, because catching ``23505`` inside would
      ``RELEASE`` against an errored connection and raise ``25P02``. On the
      race, one retry of the UPDATE.
   2. A plain ``SELECT`` reads the post-increment value back. No
-     ``RETURNING``: the re-read is the form §3.6's once-per-transition rule
-     was pinned against, and the row lock is what makes it exact.
+     ``RETURNING``: the row lock is what makes the re-read exact, and
+     exactness is what makes the lock transition happen once.
   3. The conditional lock UPDATE runs only when the count has reached the
      threshold, and only matches while ``locked_until IS NULL``. Exactly one
      concurrent caller can match, so exactly one gets ``transitioned``.
@@ -333,8 +331,8 @@ async def clear_throttle(conn: PoolConnection, *, account_key: str, now: datetim
   An ``UPDATE``, never a ``DELETE``. The runtime role holds no ``DELETE`` on
   ``login_throttle`` (migration step 12) — expiry is maintenance's job — so a
   delete would fail with a privilege error on the happy path of the hottest
-  route (§6.8 note 2). If no row exists, nothing is written and nothing is
-  wrong: zero failures and no row mean the same thing, which is why the §6.5
+  route. If no row exists, nothing is written and nothing is
+  wrong: zero failures and no row mean the same thing, which is why the
   insert-or-update idiom is **not** used here.
   """
   await conn.execute(_CLEAR_THROTTLE_SQL, {"account_key": account_key, "now": now})
@@ -362,7 +360,7 @@ async def charge(
     The literal ``'*'`` for a global bucket, the actor's id for an
     ``account_*`` one.
   window_start : datetime
-    The window floored to the minute **in Python** (amendment **A7**), never
+    The window floored to the minute **in Python**, never
     ``date_trunc``: the boundary must not depend on the engine's date
     functions or on the database's clock.
   now : datetime
@@ -380,13 +378,13 @@ async def charge(
 
   Notes
   -----
-  ``retry_after_s`` is deliberately **not** returned (amendment **A7**):
+  ``retry_after_s`` is deliberately **not** returned:
   ``Retry-After`` is a presentation value the caller computes from the window
   it already holds, and a repository that returned it would be deciding part
   of the response.
 
   A new window is a new row — the primary key covers ``window_start`` — so
-  at the top of each minute the UPDATE misses and the §6.5 idiom inserts with
+  at the top of each minute the UPDATE misses and the idiom inserts with
   ``counter = 1``. That is the common path here, not the rare one, which is
   why the INSERT branch is written to survive a race rather than to be
   avoided.

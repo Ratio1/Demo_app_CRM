@@ -1,8 +1,8 @@
-"""``/health/live`` and ``/health/ready`` (``slice-a.md`` §2.5, ``H-09``).
+"""``/health/live`` and ``/health/ready``.
 
 Both are exempt from **all** of step 0 — ``Host``, ``Origin`` and CSRF
-alike — because a probe is made by an orchestrator that knows nothing about
-the application's stored origin, and an unprovisioned deployment must still
+alike — because a probe comes from the container platform, which knows
+nothing about the application's stored origin, and an unprovisioned deployment must still
 be able to say so. The exemption is implemented once, in
 ``OriginHostMiddleware``, against these two exact paths.
 

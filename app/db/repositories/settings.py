@@ -5,7 +5,7 @@ Two keys, both written only by the maintenance CLI (``bootstrap``,
 origin cache. The runtime role holds ``SELECT`` alone on this table, which is
 why :func:`upsert_setting` is reachable only from
 ``app/services/accounts.py`` under the owner role: the serving process could
-not execute it if it tried (``DATA_CONTRACT.md`` §5.2, §3.7).
+not execute it if it tried.
 """
 
 from __future__ import annotations
@@ -92,17 +92,17 @@ async def upsert_setting(
 
   Notes
   -----
-  The ``DATA_CONTRACT.md`` §6.5 idiom, and the reason it is UPDATE-first: the
+  The insert-or-update idiom, and the reason it is UPDATE-first: the
   preceding ``UPDATE`` is what opens the transaction, so the nested
   ``conn.transaction()`` is a **savepoint** rather than a bare ``BEGIN``, and
   a ``23505`` raised by the race can be recovered from. The ``except`` sits
   **outside** the ``async with`` because psycopg issues ``ROLLBACK TO`` only
   when the exception leaves the block; catching it inside would ``RELEASE``
   against a connection the server has already put in the error state and
-  raise ``25P02`` (verified, ``DATA_CONTRACT.md`` §1.2 probe 8).
+  raise ``25P02``.
 
   ``ON CONFLICT`` would be one statement and is banned: it is not portable to
-  a CockroachDB-style target (§9.1).
+  a CockroachDB-style target.
   """
   params: dict[str, object] = {
     "key": key,

@@ -1,8 +1,7 @@
 """``seed-demo`` and ``reset-demo``: the operator's re-run path on one database.
 
-Authority: `ACCEPTANCE.md` §6, the simplification plan §4 task 5, operator
-decision 7 (a reset deletes the demo's business rows, never the database,
-never the accounts, never ``audit_events``).
+A reset deletes the demo's business rows — never the database, never the
+accounts, never ``audit_events``.
 
 Three properties make this safe to point at ``crm``:
 
@@ -300,7 +299,7 @@ async def reset_demo(*, pool: Pool, clock: Clock, correlation_id: str) -> ResetR
   -----
   Deletes in foreign-key order and writes ``demo_reset`` in the **same**
   transaction, so the record of the reset commits with it — the same rule
-  every business mutation follows (``SQL-016``). ``audit_events`` is never
+  every business mutation follows. ``audit_events`` is never
   in the delete order, so the history of the run that was just erased is
   itself preserved.
   """

@@ -1,18 +1,17 @@
 """The ASGI application: construction, lifespan and the four middlewares.
 
-Authority: ``slice-a.md`` §1.1 (the lifespan order and the middleware
-table), §2.1 (step 0a, before routing), §2.3 (the 64 KiB body cap), §2.5
-(the health exemption), §2.6 (the header set), ``SEC-063`` (no auto-docs).
+There are no auto-generated API docs: ``/docs``, ``/redoc`` and
+``/openapi.json`` are all disabled below.
 
 **Nothing here connects to anything at import time.** ``create_app`` builds
 an ASGI application and reads no environment variable; ``load_config`` and
 ``create_pool`` run inside the lifespan, and the pool is opened with
 ``wait=False`` at ``min_size=0``, so the first connection is attempted by
-the first request that needs one. That is what ``DEP-001``/``DEP-003``
-assert by importing this module with the five names absent, and with them
-pointing at an unroutable host.
+the first request that needs one. The test suite asserts that by importing
+this module with the five names absent, and again with them pointing at an
+unroutable host.
 
-**The injection seam (R54).** ``create_app`` takes an optional ``config``,
+**The injection seam.** ``create_app`` takes an optional ``config``,
 ``clock`` and ``password_hasher``. Each defaults to the production object,
 so the served process behaves exactly as before; passing them is how an
 in-process test drives the whole application through
@@ -31,7 +30,7 @@ headers:
 ===  ==============================  ==================================
  1   ``CorrelationMiddleware``       mint the id, time the request, emit
                                      the one JSON log line
- 2   ``SecurityHeadersMiddleware``   the §2.6 header set on **every**
+ 2   ``SecurityHeadersMiddleware``   the one header set on **every**
                                      response, errors and health included
  3   ``BodySizeLimitMiddleware``     64 KiB, refused **before** any
                                      handler reads a byte
@@ -132,7 +131,7 @@ __all__ = [
 ]
 
 #: 64 KiB. Every form in this application is a handful of short fields; a
-#: body above this is a crafted request, not a user (``SEC-004``).
+#: body above this is a crafted request, not a user.
 MAX_BODY_BYTES: Final = 65_536
 
 _STATIC_DIR: Final = Path(__file__).resolve().parent / "static"
@@ -156,7 +155,7 @@ class CorrelationMiddleware(BaseHTTPMiddleware):
     clock : Clock
       The one time source; ``monotonic()`` measures the request, because
       a wall-clock adjustment mid-request must not produce a negative
-      duration (``ARC-019``).
+      duration.
     """
     super().__init__(app)
     self._clock = clock
@@ -317,8 +316,8 @@ class OriginHostMiddleware(BaseHTTPMiddleware):
     ``403`` and not ``404``: a wrong-host request must not be able to
     enumerate which paths exist.
 
-    The rules, from ``slice-a.md`` §2.1: ``Host`` must equal the stored
-    origin's authority on **every** non-health request and method; an
+    The rules: ``Host`` must equal the stored origin's authority on
+    **every** non-health request and method; an
     ``Origin`` header, when present, must equal the stored origin exactly,
     on safe methods too; an **absent** ``Origin`` is refused on an unsafe
     method and served on a safe one, because browsers do not send it on an
@@ -326,7 +325,7 @@ class OriginHostMiddleware(BaseHTTPMiddleware):
 
     ``X-Forwarded-Host``/``-Proto``/``-For`` are never consulted, here or
     anywhere else, and uvicorn runs with ``--no-proxy-headers`` so they
-    cannot rewrite the scope either (``SEC-041``).
+    cannot rewrite the scope either.
 
     Any failure while reading the origin — the database is down, the pool
     cannot hand out a connection — is answered ``503``. Fail closed: an
@@ -378,7 +377,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
   Notes
   -----
-  Order (binding, ``slice-a.md`` §1.1): ``load_config()`` →
+  Order: ``load_config()`` →
   ``create_pool(config)`` → the origin cache → the readiness cache; the
   reverse on exit. ``open_pool`` uses ``wait=False`` against
   ``min_size=0``, so it starts the pool's bookkeeping without opening a
@@ -387,7 +386,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
   boot from producing a container that never becomes live.
 
   The clock was resolved by :func:`create_app` and is read back from
-  ``app.state`` here (**R54**), so the one object that timed the request in
+  ``app.state`` here, so the one object that timed the request in
   ``CorrelationMiddleware`` is the same one every service in the context
   reads — a test that advances a :class:`app.security.clock.ManualClock`
   moves the whole application, not half of it. The Argon2 hasher is
@@ -407,9 +406,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
   app.state.context = AppContext(
     config=config,
     pool=pool,
-    # A-14: the one runner, over the one pool, carrying the application
-    # clock. Its `sleep` and `jitter` keep their production defaults here;
-    # a test builds its own runner with recording hooks (PIN C4).
+    # The one runner, over the one pool, carrying the application clock.
+    # Its `sleep` and `jitter` keep their production defaults here;
+    # a test builds its own runner with recording hooks.
     runner=TransactionRunner(pool, clock=clock),
     clock=clock,
     passwords=passwords,
@@ -442,28 +441,28 @@ def create_app(
     at another database; ``None`` — the production path — means
     ``load_config()`` inside the lifespan.
   clock : Clock | None, optional
-    The one time source for this application (**R54**). ``None`` — the
+    The one time source for this application. ``None`` — the
     production path — means :class:`app.security.clock.SystemClock`. The
     instance passed here is the instance ``CorrelationMiddleware`` times
     the request with **and** the instance every service in the lifespan's
     context receives, so an in-process test that advances a
     :class:`app.security.clock.ManualClock` moves every expiry, window and
     TTL in the application at once. Nothing selects it from the
-    environment: it is a parameter, which is why ``ARC-019``/``ARC-020``
-    can hold.
+    environment: it is a parameter, which is what keeps the rule "one clock,
+    injected" true of the whole tree.
   password_hasher : PasswordHasher | None, optional
     The Argon2 hasher :class:`app.security.passwords.PasswordService` is
-    built around (**R54**). ``None`` means
+    built around. ``None`` means
     :func:`app.security.passwords.production_hasher` — the pinned
     parameters. A test may pass a documented fast profile; no environment
-    variable and no branch anywhere can (``ARC-020``).
+    variable and no branch anywhere can.
 
   Returns
   -------
   FastAPI
     With ``docs_url``, ``redoc_url`` and ``openapi_url`` all disabled, so
     ``/docs``, ``/redoc`` and ``/openapi.json`` are simply not routes
-    (``SEC-063``). An interactive schema browser is an attack surface and
+   . An interactive schema browser is an attack surface and
     a disclosure surface that a tutorial CRM has no use for.
 
   Notes
@@ -495,11 +494,11 @@ def create_app(
   # After the contact table, and with `/deals/pipeline` declared before
   # `/deals/{deal_id}` inside it: Starlette matches in registration order,
   # and the other way round the literal path would be read as a
-  # non-canonical deal id and answered 404 (slice-c.md §2(c)).
+  # non-canonical deal id and answered 404.
   application.include_router(deal_routes.router)
   # After the contact table, because `GET /contacts/{contact_id}/timeline` is
   # a contact-scoped region and its sibling paths are declared there; the two
-  # tables hold no overlapping path (slice-c.md §2(c)'s registration rule).
+  # tables hold no overlapping path.
   application.include_router(activity_routes.router)
   application.include_router(dashboard_routes.router)
 

@@ -1,16 +1,12 @@
 """The Jinja environment, the frozen base context and the notice table.
 
-Authority: delta **D11** (the explicit environment), ``CONTRACTS.md`` §8.1
-(the frozen base context), ``slice-a.md`` §2.7 / ruling **R20** (the
-``?notice=`` enum), ``UX_FLOWS.md`` §6 (every string below).
-
 Three decisions worth reading before changing anything here:
 
 *The environment is explicit.* ``Jinja2Templates(directory=…)`` builds
 ``Environment(autoescape=select_autoescape())``, which escapes ``.html``,
 ``.htm`` and ``.xml`` and renders ``.txt``, ``.j2`` and ``.jinja``
-**unescaped** — verified (``slice-a.md`` §8.5). ``autoescape=True`` makes
-``SEC-005`` independent of a filename. ``undefined=StrictUndefined`` turns a
+**unescaped** — verified. ``autoescape=True`` makes escaping independent of
+a filename. ``undefined=StrictUndefined`` turns a
 missing context key into a loud failure instead of a silently blank page,
 and ``auto_reload=False`` keeps a served process from stat-ing templates.
 
@@ -22,15 +18,15 @@ a 500 or a 503 needs to be rendered.
 *Notice text never travels in a URL.* The redirect carries a code from a
 fixed allowlist and the table below turns it into copy. An unknown,
 repeated or malformed value renders no banner at all: it is never echoed
-and never becomes a 400 (**R20**).
+and never becomes a 400.
 
-*Two filters, registered once* (``contracts/slice-c.md`` §2(a)). ``eur``
-and ``day`` are the only entries in the environment's filter table, so a
-template can render ``€ 12,345.00`` and ``21 Sep 2026`` without reaching
-for a platform-dependent ``strftime("%-d")`` or building a money string by
-hand. Filters are not context keys, so ``CONTRACTS.md`` §8 is untouched by
-their existence; ``eur`` refuses anything that is not a
-:class:`decimal.Decimal` (``ARC-021``'s runtime half).
+*Two filters, registered once.* ``eur`` and ``day`` are the only entries in
+the environment's filter table, so a template can render ``€ 12,345.00``
+and ``21 Sep 2026`` without reaching for a platform-dependent
+``strftime("%-d")`` or building a money string by hand. Filters are not
+context keys, so no page's context changes because they exist; ``eur``
+refuses anything that is not a :class:`decimal.Decimal`, which is the no-float rule at the render
+boundary.
 """
 
 from __future__ import annotations
@@ -55,9 +51,9 @@ if TYPE_CHECKING:
   from app.security.principal import Principal
 
 __all__ = [
+  "ADMIN_SCOPE_LABEL",
+  "AGENT_SCOPE_LABEL",
   "APP_NAME",
-  "CP_30_AGENT_SCOPE",
-  "CP_31_ADMIN_SCOPE",
   "NOTICE_CODES",
   "TEMPLATES",
   "TEMPLATES_DIR",
@@ -71,11 +67,11 @@ __all__ = [
 
 APP_NAME: Final = "Demo_App_CRM"
 
-#: ``UX_FLOWS.md`` §6.3 ``CP-30``/``CP-31`` — the list sub-heading that
-#: tells an admin whose records they are looking at. One definition, read
+#: The list sub-heading that tells an admin whose records they are looking
+#: at. One definition, read
 #: by every private page through :func:`scope_label_for`.
-CP_30_AGENT_SCOPE: Final = "Your records"
-CP_31_ADMIN_SCOPE: Final = "All records"
+AGENT_SCOPE_LABEL: Final = "Your records"
+ADMIN_SCOPE_LABEL: Final = "All records"
 
 
 def _templates_dir() -> Path:
@@ -101,8 +97,8 @@ def _environment() -> jinja2.Environment:
   Returns
   -------
   jinja2.Environment
-    The explicit environment of delta **D11**, carrying ``eur`` and ``day``
-    (``contracts/slice-c.md`` §2(a)). Registering them here rather than at
+    The explicit environment, carrying ``eur`` and ``day``.
+    Registering them here rather than at
     first use is what makes the filter table a property of the module: a
     template that renders money can never reach a differently-configured
     environment, and an error page built outside the application still has
@@ -121,9 +117,8 @@ def _environment() -> jinja2.Environment:
 
 TEMPLATES: Final = Jinja2Templates(env=_environment())
 
-#: Slice A's three codes (``slice-a.md`` §2.7), Slice B's five, Slice C's
-#: five and Slice D's one (``CONTRACTS.md`` §8.5, ``UX_FLOWS.md`` §6.6).
-#: Extended additively; nothing else may render a banner.
+#: The fourteen notice codes a redirect may carry. Extended additively;
+#: nothing else may render a banner.
 NOTICE_CODES: Final[dict[str, dict[str, str]]] = {
   "signed_out": {"kind": "success", "text": "You are signed out."},
   "session_ended": {"kind": "info", "text": "Your session ended. Sign in to continue."},
@@ -141,17 +136,13 @@ NOTICE_CODES: Final[dict[str, dict[str, str]]] = {
   "deal_won": {"kind": "success", "text": "Deal marked won."},
   "deal_lost": {"kind": "success", "text": "Deal marked lost."},
   "deal_moved": {"kind": "success", "text": "Deal moved to {stage}."},
-  # Slice D, additive: UX_FLOWS.md §6.6 `CP-52`. The fourteenth code, and the
-  # last one §6.6 defines — the table is now the whole of it.
   "activity_logged": {"kind": "success", "text": "Activity logged."},
 }
 
-#: The one substitution shape a notice string may carry. ``CP-57``'s
-#: ``{name}`` is the second of the fourteen (``CONTRACTS.md`` §8.5 and
-#: ``UX_FLOWS.md`` §6.6 both say *"``deal_moved``'s ``{stage}`` is the
-#: only substitution"*, which is false — finding **F-2**). The value is
-#: supplied by the **destination handler** from a re-read row, never from
-#: the query string: no free text travels in a URL (**R20**).
+#: The one substitution shape a notice string may carry. Two of the
+#: fourteen use it: ``owner_changed``'s ``{name}`` and ``deal_moved``'s
+#: ``{stage}``. The value is supplied by the **destination handler** from a
+#: re-read row, never from the query string: no free text travels in a URL.
 _NOTICE_PLACEHOLDER: Final = re.compile(r"\{([a-z_]+)\}")
 
 
@@ -162,11 +153,9 @@ class View:
   ``a["b"]``, so a plain :class:`dict` hands a template its own method for
   any key that shares a name with one: ``results.items``,
   ``timeline.items``, ``activity_form.values`` and
-  ``stale.keep_form.values`` are all frozen context keys
-  (``CONTRACTS.md`` §8.3/§8.2/§8.4) that collide exactly that way. Wrapping
-  those four in this class is what makes them resolve to their values — and
-  it is also what §8's rule 1 asks for, *"every context value is a view
-  model or a primitive"*.
+  ``stale.keep_form.values`` are all context keys that collide exactly that
+  way. Wrapping those four in this class is what makes them resolve to
+  their values rather than to a bound dict method.
 
   ``__slots__`` carries the data under one private name, so **every** other
   attribute falls through to :meth:`__getattr__` and no key can ever be
@@ -274,7 +263,7 @@ def csrf_token_for_request(request: Request) -> str:
 
 
 def scope_label_for(principal: Principal) -> str:
-  """Return ``CP-30`` or ``CP-31`` for this principal's page heading.
+  """Return the scope sub-heading for this principal's page.
 
   Parameters
   ----------
@@ -290,7 +279,7 @@ def scope_label_for(principal: Principal) -> str:
     :func:`app.security.principal.scope_of` and is applied inside the
     statement.
   """
-  return CP_31_ADMIN_SCOPE if principal.is_admin else CP_30_AGENT_SCOPE
+  return ADMIN_SCOPE_LABEL if principal.is_admin else AGENT_SCOPE_LABEL
 
 
 def base_context(
@@ -314,25 +303,25 @@ def base_context(
     ``None`` selects the public shell; a principal whose
     ``must_change_password`` is set selects the reduced forced-reset nav.
     The ``500``, ``503`` and step-0 ``403`` handlers pass ``None``
-    unconditionally (**R32**, ``ACC-010``).
+    unconditionally.
   csrf_token : str
     Rendered into the navigation's sign-out form and into any page form.
   private : bool
     Adds ``hx-history="false"`` to ``<body>`` so htmx never restores the
-    page from its history cache (``SEC-024``).
+    page from its history cache.
   nav_active : str | None
     Which destination carries ``aria-current="page"``.
   announce : str | None
     Text for the polite live region.
   scope_label : str | None
-    ``CP-30``/``CP-31``; unused until a list exists.
+    "Your records" or "All records"; ``None`` on a page with no list.
   notice : dict[str, str] | None
     The banner from :func:`notice_for`.
 
   Returns
   -------
   dict[str, Any]
-    Exactly the nine keys ``CONTRACTS.md`` §8.1 freezes — always all nine,
+    Exactly nine keys — always all nine,
     because ``StrictUndefined`` makes a missing one a failure rather than
     a blank.
   """

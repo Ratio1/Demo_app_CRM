@@ -1,7 +1,6 @@
 """``GET /dashboard`` — the screen ``/`` and the nav wordmark already point at.
 
-Authority: ``CONTRACTS.md`` §8.2 (the frozen context), **R16** (three tiles,
-no fourth), §7 (no charts), ``ACCESS_MATRIX.md`` §1.1 (the check order).
+Three tiles and a recent-activity list: no fourth tile, and no charts.
 
 There is nothing to validate: the screen takes no query parameter, no sort
 and no page, so the handler is ``start_read`` plus one service call. What it
@@ -41,7 +40,7 @@ router = APIRouter()
 
 
 def _recent_context(request: Request, items: tuple[RecentItemView, ...]) -> list[dict[str, Any]]:
-  """Build ``recent_activities`` — §8.2's keys, plus the contact's URL.
+  """Build ``recent_activities`` — the rendered keys, plus the contact's URL.
 
   Notes
   -----
@@ -86,10 +85,9 @@ async def dashboard_page(request: Request) -> Response:
 
   Notes
   -----
-  ``GET /`` has redirected here since Slice A (``app/routes/auth.py``) and
-  the nav wordmark links here from every private page; until this route
-  existed both landed on a 404, which is the defect the simplification plan
-  names first.
+  ``GET /`` redirects here (``app/routes/auth.py``) and the nav wordmark
+  links here from every private page, so this route is the landing screen
+  for every signed-in session.
   """
   principal = await start_read(request)
   context = context_of(request)

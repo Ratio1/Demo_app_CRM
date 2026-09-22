@@ -1,10 +1,10 @@
 """The one lazy connection pool this process owns.
 
-Spec §5 pins the shape: "one lazy DB pool per process, zero minimum/four
-maximum connections, a five-second acquisition timeout, bounded waiters, and
-bounded query/connect/reconnection timeouts. All settings are code defaults,
-not extra environment variables." Every value below is therefore a module
-constant; nothing here reads the environment.
+The shape is fixed: one lazy pool per process, zero minimum and four
+maximum connections, a five-second acquisition timeout, bounded waiters and
+bounded query, connect and reconnection timeouts. Every value below is a
+module constant, not an environment variable; nothing here reads the
+environment.
 
 The pool is built with ``open=False`` and opened by the application lifespan,
 so importing this module — or ``app.main`` — with all five variables absent
@@ -62,7 +62,7 @@ POOL_MAX_IDLE_S: float = 300.0
 POOL_RECONNECT_TIMEOUT_S: float = 30.0
 STATEMENT_TIMEOUT_MS: int = 10_000
 
-#: ``CONTRACTS.md`` §6 D3 / ruling **R4**. A transaction left open with no
+#: A transaction left open with no
 #: statement running holds its row locks and, at ``SERIALIZABLE``, its
 #: predicate locks against every concurrent writer. Fifteen seconds is well
 #: above ``STATEMENT_TIMEOUT_MS`` — a slow statement is never mistaken for an
@@ -91,7 +91,7 @@ async def configure_connection(conn: PoolConnection) -> None:
   Two bounds are set, not one. ``statement_timeout`` bounds a *statement*;
   ``idle_in_transaction_session_timeout`` bounds a transaction that is open
   with nothing running — the state a cancelled request or a stalled client
-  leaves behind, and the one that keeps holding locks (``R4``). Neither is a
+  leaves behind, and the one that keeps holding locks. Neither is a
   variable: both are code constants, and libpq ``options`` stays the empty
   string.
 

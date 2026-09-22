@@ -1,7 +1,8 @@
 """The schema manifest the image was built with, and the readiness comparison.
 
-Spec §5: "Runtime verifies schema compatibility." Spec §8: "``/health/ready``
-checks DB/schema/provisioning, otherwise ``503``; disclose no internals."
+The runtime verifies schema compatibility before it reports itself ready:
+``/health/ready`` checks the database, the schema and provisioning, answers
+``503`` when any of them is wrong, and discloses no internals either way.
 
 The manifest is the ``(migration_id, step_id, checksum)`` triple of every step
 in ``migrations/``, which is copied into the image, so a running replica knows
@@ -60,13 +61,11 @@ SELECT EXISTS (
 #: that creates it reports "not provisioned" instead of raising. Every query
 #: returns one boolean column.
 #:
-#: **Reconciled at the Slice A contract step** (``slice-a.md`` §10(d)). Both
-#: shipped probes were correct against ``DATA_CONTRACT.md`` §3.2/§3.7 —
-#: ``app_settings`` is key/value with ``public_origin`` as the key, ``users``
-#: carries ``role`` and ``is_active`` — but a third condition was missing: with
-#: an active admin and an origin row but **no** ``provisioning_state`` row,
-#: readiness answered yes, while ``PLAN.md`` §5, ``DATA_CONTRACT.md`` §3.7 and
-#: ``slice-a.md`` §2.5 all require ``provisioning_state = 'complete'``. It is
+#: The ``provisioning_state`` probe is deliberately the first of the three.
+#: An earlier revision checked only for an active admin and an origin row,
+#: which answered "ready" on a database that had never been bootstrapped at
+#: all; a deployment is provisioned only when ``bootstrap`` has written
+#: ``provisioning_state = 'complete'``. It is
 #: the **first** entry so the cheapest condition — the single row ``bootstrap``
 #: writes last, in the same transaction as the other two — fails first.
 _PROVISIONING_PROBES: Final[tuple[tuple[str, str, LiteralString], ...]] = (
@@ -142,8 +141,8 @@ def __getattr__(name: str) -> object:
 
   Notes
   -----
-  ``CONTRACTS.md`` §4 names both a module constant and an accessor. A module
-  ``__getattr__`` (PEP 562) gives the constant its contracted spelling without
+  Callers want both a module constant and an accessor. A module
+  ``__getattr__`` (PEP 562) gives the constant its plain spelling without
   reading the migrations directory at import time, which ``app/__init__.py``
   forbids.
   """
@@ -276,8 +275,8 @@ async def readiness(conn: JournalConnection) -> ReadyReport:
 
   Any :class:`psycopg.Error` is caught and reported as ``database-error``:
   a probe that cannot reach or read the database has not established
-  readiness, and spec §6 requires a database failure to close access with a
-  sanitized answer rather than an open one.
+  readiness: a database failure closes access with a sanitized answer
+  rather than leaving it open.
   """
   try:
     expected = set(expected_manifest())

@@ -1,13 +1,5 @@
 """Deals: the parent check, the stage graph, the version, the receipt, the audit.
 
-Authority: ``contracts/slice-c.md`` §2(a) (this surface and its seven
-outcome types), §1(b)/§1(d) (the repository signatures and the statements
-behind them), §1(e) (the nine steps of a Slice C mutation and the
-transaction map), ``ACCESS_MATRIX.md`` §1.1 (the check order), §3.3/§3.4
-(every cell), §5.1-§5.5 (the field, sort and filter allowlists and the
-token map), ``UX_FLOWS.md`` §6.7 (every validation string), **PIN C1**-**PIN
-C8** (``DECISIONS.md`` §12).
-
 This module holds **no SQL and no URL**, exactly as
 :mod:`app.services.contacts` does: it calls
 :mod:`app.db.repositories.deals`, decides which of seven outcomes a
@@ -16,19 +8,19 @@ that into a status, a ``Location`` and a template. Five rules make the
 authorization boundary a property of the code rather than of a review:
 
 *Ownership lives on the parent.* ``deals`` carries no ``owner_id`` and no
-``archived_at`` (**PIN C8**): every read and every write is authorized by
+``archived_at``: every read and every write is authorized by
 the join to ``contacts``, inside the statement, under a mandatory
 :class:`~app.security.principal.Scope`. Owner injection on a deal is
 therefore structurally impossible rather than allowlisted — there is no
-parameter to inject through (``ACC-212``).
+parameter to inject through.
 
 *404 is raised, not returned.* :class:`app.security.failures.DealNotFound`
 unwinds the transaction and reaches one handler, so the five deal surfaces
 cannot drift apart. A **parent** miss raises
 :class:`~app.security.failures.ContactNotFound` instead, because
-``ACCESS_MATRIX.md`` §4.5 rule 2 says the denied object is the contact.
+a denial on a reference used as a parent names the parent.
 
-*The order inside the transaction is fixed* (§2(a) note 3): receipt →
+*The order inside the transaction is fixed*: receipt →
 scope read → archived parent → version → graph → receipt insert →
 business write → read-back → audit. Scope before archive before version
 before graph is what keeps a ``409`` from becoming an existence oracle: a
@@ -38,9 +30,9 @@ answered ``404`` first.
 *The graph is decided on the row this transaction read*, never on what was
 submitted, and the stage it read is then passed back into the ``UPDATE``'s
 own guard (``from_stage``), so the write can only land on the stage the
-decision was made about (**PIN C2**).
+decision was made about.
 
-*Money is :class:`decimal.Decimal` end to end* (**PIN C1**). Parsing,
+*Money is :class:`decimal.Decimal` end to end*. Parsing,
 canonicalization and rendering live in :mod:`app.services.money`; nothing
 here builds a float, and the digest is computed over the **canonical**
 amount so ``1250`` and ``1250.00`` are one payload.
@@ -138,28 +130,27 @@ __all__ = [
 ]
 
 #: Re-exported from the repository so ``app/routes/**`` can read them
-#: without importing ``app.db.repositories`` itself, which ``ARC-008``
-#: forbids. One definition, in the Data lane's module.
+#: without importing ``app.db.repositories`` itself, which the layering
+#: forbids. One definition, in the repository module.
 DEFAULT_PER_PAGE: Final[int] = deals_repo.DEFAULT_PER_PAGE
 MAX_PER_PAGE: Final[int] = deals_repo.MAX_PER_PAGE
 STAGE_ORDER: Final[tuple[str, ...]] = deals_repo.STAGE_ORDER
 
-#: The three writable fields of ``ACCESS_MATRIX.md`` §5.1, in the order the
-#: digest and the form both use. **The tuple is the allowlist.**
-#: ``contact_id`` and ``stage`` are absent *by construction*: there is no
-#: parameter for either, which is what makes ``ACC-211`` (no stage on
-#: create) and ``ACC-217`` (no re-parenting) structural rather than
+#: The three writable fields, in the order the digest and the form both
+#: use. **The tuple is the allowlist.** ``contact_id`` and ``stage`` are
+#: absent *by construction*: there is no parameter for either, which makes
+#: "no stage on create" and "no re-parenting" structural rather than
 #: enforced by a check somebody could forget.
 DEAL_FIELDS: Final[tuple[str, ...]] = ("title", "amount", "close_date")
 
-#: ``ACCESS_MATRIX.md`` §5.4, **PIN C2**. Free movement among the three
-#: non-terminal stages; ``won`` and ``lost`` are absorbing. The graph lives
-#: here and in no statement: a CHECK cannot see the previous value without
-#: a trigger, and triggers are banned (``DATA_CONTRACT.md`` §9.1).
+#: The stage graph. Free movement among the three non-terminal stages;
+#: ``won`` and ``lost`` are absorbing. The graph lives here and in no
+#: statement: a CHECK cannot see the previous value without
+#: a trigger, and triggers are banned.
 LATERAL: Final[frozenset[str]] = frozenset({"new", "qualified", "proposal"})
 TERMINAL: Final[frozenset[str]] = frozenset({"won", "lost"})
 
-#: ``UX_FLOWS.md`` §6.7 ``CP-128``'s status labels.
+#: The rendered label for each stage.
 STAGE_LABELS: Final[dict[str, str]] = {
   "new": "New",
   "qualified": "Qualified",
@@ -172,17 +163,17 @@ STAGE_LABELS: Final[dict[str, str]] = {
 #: the second line of defence and never the first.
 TITLE_MAX: Final = 160
 
-#: ``UX_FLOWS.md`` §6.7 — the resolved strings, named for their copy ids.
-CP_67_TITLE_REQUIRED: Final = "Enter a title."
-CP_61_TOO_LONG_160: Final = "Use 160 characters or fewer."
-CP_75_DATE_MALFORMED: Final = "Enter a date as YYYY-MM-DD."
+#: The field errors this form can produce, as resolved strings.
+TITLE_REQUIRED_MESSAGE: Final = "Enter a title."
+TOO_LONG_160_MESSAGE: Final = "Use 160 characters or fewer."
+DATE_MALFORMED_MESSAGE: Final = "Enter a date as YYYY-MM-DD."
 
 OP_CREATE: Final[Operation] = "deal_create"
 OP_UPDATE: Final[Operation] = "deal_update"
 OP_STAGE: Final[Operation] = "deal_stage_change"
 
 #: ``?notice=`` codes, resolved **per operation** and not from
-#: ``result_status`` (§2(a) note 5, finding F-3): all three stage moves
+#: ``result_status``: all three stage moves
 #: record ``result_status='updated'`` on a ``deal``, and
 #: :data:`app.security.idempotency.NOTICE_FOR_STATUS` maps ``"updated"`` to
 #: ``contact_saved``, so that table cannot tell a move from an edit — or
@@ -194,14 +185,13 @@ NOTICE_LOST: Final = "deal_lost"
 NOTICE_MOVED: Final = "deal_moved"
 
 #: ``unique_violation``. Classified by SQLSTATE string and never by a
-#: psycopg exception class name (``DECISIONS.md`` §3). ``deals`` carries no
+#: psycopg exception class name. ``deals`` carries no
 #: UNIQUE constraint besides its primary key on an application-generated
-#: UUID (§1(a) step 01, conjunct 12), so a ``23505`` inside a Slice C
-#: business transaction *is* ``uq_mutation_receipts_key`` and needs no
-#: constraint-name inspection.
+#: UUID, so a ``23505`` inside one of these business transactions *is*
+#: ``uq_mutation_receipts_key`` and needs no constraint-name inspection.
 _UNIQUE_VIOLATION: Final = "23505"
 
-#: ``CP-75``'s shape. ``date.fromisoformat`` accepts several spellings a
+#: The accepted date shape. ``date.fromisoformat`` accepts several spellings a
 #: ``<input type="date">`` never produces, so the pattern runs first and the
 #: constructor second — the same two-step
 #: :func:`app.security.idempotency.parse_canonical` uses for a UUID.
@@ -209,7 +199,7 @@ _ISO_DATE_RE: Final = re.compile(r"\A\d{4}-\d{2}-\d{2}\Z")
 
 #: The amount a pipeline column with no deals carries. A code constant, so
 #: the only Python value on a money path that the engine did not compute is
-#: this literal zero (**PIN C1**, ``ACC-302``).
+#: this literal zero.
 _ZERO_AMOUNT: Final = Decimal("0.00")
 
 
@@ -217,18 +207,17 @@ class _ConcurrentStale(Exception):
   """The guarded ``UPDATE`` matched no row although the re-read admitted it.
 
   Raised from inside the transaction body so the transaction **rolls
-  back**: the receipt was written one statement earlier (**R62**), and
+  back**: the receipt was written one statement earlier, and
   committing it beside a business write that did not happen would make a
   later replay report a success that never occurred. The caller re-reads in
-  a fresh transaction and answers 409 ``stale`` — §1(e) step 5's belt and
-  braces, with nothing left behind.
+  a fresh transaction and answers 409 ``stale``, with nothing left behind.
   """
 
 
 class _ParentGuardFired(Exception):
   """``insert_deal`` refused although ``parent_state`` had said ``active``.
 
-  A **programming error**, not a request-shaped one (§1(b)): the guard and
+  A **programming error**, not a request-shaped one: the guard and
   the decision run in the same transaction and therefore on the same
   snapshot, so the only way they can disagree is a caller that skipped the
   decision. The transaction unwinds and the answer is the sanitized 500 —
@@ -239,12 +228,12 @@ class _ParentGuardFired(Exception):
 
 @dataclass(frozen=True, slots=True)
 class DealView:
-  """One deal as its detail screen renders it (``CONTRACTS.md`` §8.2).
+  """One deal as its detail screen renders it.
 
   Attributes
   ----------
   id, contact_id : UUID
-    The record and its immutable parent (``ACC-217``).
+    The record and its immutable parent.
   contact_name : str
     ``contacts.full_name``, for the breadcrumb and the parent line.
   contact_is_archived : bool
@@ -252,17 +241,17 @@ class DealView:
     own; it inherits its parent's, which is what ``deals/detail.html``'s
     frozen ``contact.is_archived`` key exists for.
   owner_name : str
-    ``users.display_name`` of the parent's owner (§8 rule 4).
+    ``users.display_name`` of the parent's owner.
   is_own : bool
-    Whether the viewer owns the parent, for ``CP-32``'s owner line.
+    Whether the viewer owns the parent, for the owner line.
   title : str
     The deal's title.
   amount : Decimal
-    Never a float, at any point on this path (**PIN C1**).
+    Never a float, at any point on this path.
   close_date : date | None
     The one nullable column.
   stage, stage_label : str
-    The stored value and its ``CP-128`` label.
+    The stored value and its rendered label.
   stage_changed_at : datetime
     Rewritten on every accepted stage change.
   version : int
@@ -271,20 +260,19 @@ class DealView:
     Record timestamps.
   can_edit, can_change_stage : bool
     **UI hiding only** — both false **exactly when the parent is
-    archived** (§2(a) note 9). ``can_change_stage`` is *not* narrowed by a
+    archived**. ``can_change_stage`` is *not* narrowed by a
     terminal stage: the terminal case is carried by :attr:`lateral_targets`
     and by ``stage_form.terminal``, and ``partials/stage_control.html``
-    renders ``CP-35``'s *"{Won|Lost} deals cannot be moved to another
-    stage"* from that flag. Narrowing it here would take the whole panel
+    renders *"{Won|Lost} deals cannot be moved to another stage"* from
+    that flag. Narrowing it here would take the whole panel
     off a won deal's page and the sentence with it — absence without the
-    words, which is the one thing ``UX_FLOWS.md`` §4.8 rules out. Every
+    words, which would leave a user with no explanation at all. Every
     flag is re-decided server-side, and a crafted ``POST`` still meets 409
-    ``archived_parent`` or 409 ``stage_terminal`` (``ACCESS_MATRIX.md``
-    §1.4).
+    ``archived_parent`` or 409 ``stage_terminal``.
   lateral_targets : tuple[tuple[str, str], ...]
     ``(value, label)`` for the legal lateral targets **minus the current
-    stage**, so ``ACC-219``'s 400 is unreachable through the UI and still
-    enforced server-side. Empty in a terminal stage.
+    stage**, so a move to the current stage is unreachable through the UI
+    and still refused server-side. Empty in a terminal stage.
   """
 
   id: UUID
@@ -311,12 +299,12 @@ class DealView:
 class DealCardView:
   """One deal in a list, a pipeline column or a contact's deal region.
 
-  ``CONTRACTS.md`` §8.3 freezes ``deal_card`` and ``deal_row`` as **one**
-  shape, so this is one class; :data:`DealRowView` is its other contracted
-  name. The ``url`` and ``contact_url`` keys of that shape are added by the
-  route, because this module holds no URL.
+  ``deal_card`` and ``deal_row`` are **one** shape, so this is one class;
+  :data:`DealRowView` is its other name. The ``url`` and ``contact_url``
+  keys of that shape are added by the route, because this module holds no
+  URL.
 
-  ``version`` is **not** part of that frozen shape and is never rendered as
+  ``version`` is **not** part of that shape and is never rendered as
   part of a card: it is here because ``contacts/detail.html``'s
   ``deal_forms {deal_id: {…, version, …}}`` needs one concurrency token per
   deal, and reading it per card is how the workspace's stage controls are
@@ -337,33 +325,34 @@ class DealCardView:
   version: int
 
 
-#: ``CONTRACTS.md`` §8.3's second name for the identical shape. An alias
-#: rather than a second dataclass: two classes with the same fields would
-#: be two places for the inventory to drift from.
+#: The second name for the identical shape. An alias rather than a second
+#: dataclass: two classes with the same fields would be two places to
+#: drift.
 DealRowView = DealCardView
 
 
 @dataclass(frozen=True, slots=True)
 class DealListView:
-  """The non-URL half of ``CONTRACTS.md`` §8.3's ``results`` for deals.
+  """The non-URL half of a deal list page's ``results``.
 
   Attributes
   ----------
   items : tuple[DealCardView, ...]
     The page's rows, already scoped.
   total : int
-    The scoped total — the **identical** ``WHERE`` as ``items`` (§1(d)), so
-    a foreign row can never change a total or a page count (``ACC-301``,
-    ``ACC-302``).
+    The scoped total — the **identical** ``WHERE`` as ``items``, so
+    a foreign row can never change a total or a page count.
   page, per_page, pages : int
     The pagination position; ``pages`` is at least one.
   range_start, range_end : int
     1-based inclusive bounds of this page, both ``0`` when it is empty.
   has_prev, has_next : bool
     Whether the two paging controls are live; the route turns ``False``
-    into a ``None`` URL, which is **R24**'s inert ``<span>``.
+    into a ``None`` URL, which the template renders as an inert
+    ``<span>``.
   result_state : {"ok", "empty", "no_results"}
-    ``UX_FLOWS.md`` §3.22, computed server-side.
+    "no deals yet" and "nothing matched these filters" are different
+    screens, decided server-side.
   """
 
   items: tuple[DealCardView, ...]
@@ -385,19 +374,19 @@ class StageColumn:
   Attributes
   ----------
   key, label : str
-    The stage and its ``CP-128`` label.
+    The stage and its rendered label.
   count : int
-    ``count(*)`` under the predicate, from the engine (**PIN C6**).
+    ``count(*)`` under the predicate, from the engine.
   amount : Decimal
     ``SUM(d.amount)`` under the predicate, from the engine — never a Python
-    sum over ``deals`` (``ACC-302``). An empty stage carries
+    sum over ``deals``. An empty stage carries
     ``Decimal("0.00")`` from the zero-fill, which is a code constant and
     not arithmetic.
   deals : tuple[DealCardView, ...]
     The column's cards, **capped** at
     :data:`app.db.repositories.deals.PIPELINE_CARDS_PER_STAGE`. The
     aggregate is authoritative, so ``count`` may exceed ``len(deals)``;
-    the template has both and can say so (§1(h) ask **A-4**).
+    the template has both and can say so.
   """
 
   key: str
@@ -433,11 +422,11 @@ class Applied:
   contact_id : UUID
     The **parent**, which is what the ``Location`` addresses: every deal
     mutation lands on ``/contacts/{contact_id}…#deal-{deal_id}``
-    (``UX_FLOWS.md`` §2 step 6). The receipt stores only the deal id, so a
+   . The receipt stores only the deal id, so a
     replay re-reads the deal to find it — which is also where the stage
     that ``deal_moved`` names comes from.
   notice : str
-    The ``?notice=`` code, resolved per **operation** (§2(a) note 5).
+    The ``?notice=`` code, resolved per **operation**.
   replayed : bool
     ``True`` when this answer came from a stored receipt rather than from a
     write. The user sees the same page either way.
@@ -458,7 +447,7 @@ class Invalid:
 
 @dataclass(frozen=True, slots=True)
 class Stale:
-  """``409`` ``context="stale"`` — the deal moved under the editor (**PIN 3**).
+  """``409`` ``context="stale"`` — the deal moved under the editor.
 
   Attributes
   ----------
@@ -485,7 +474,7 @@ class Stale:
 
 @dataclass(frozen=True, slots=True)
 class Blocked:
-  """``409`` ``context="archived_parent"`` (``ACC-208``/``216``/``222``/``229``).
+  """``409`` with ``context="archived_parent"``.
 
   Attributes
   ----------
@@ -505,7 +494,7 @@ class Blocked:
 
 @dataclass(frozen=True, slots=True)
 class StageTerminal:
-  """``409`` ``context="stage_terminal"`` — the deal is closed (``ACC-220``)."""
+  """``409`` ``context="stage_terminal"`` — the deal is closed."""
 
   deal_id: UUID
   stage_label: str
@@ -513,13 +502,13 @@ class StageTerminal:
 
 @dataclass(frozen=True, slots=True)
 class SameStage:
-  """``400`` — a move to the stage the deal is already in (``ACC-219``).
+  """``400`` — a move to the stage the deal is already in.
 
   Unreachable through the UI, because the ``<select>`` omits the current
-  stage (§2(d)); a crafted ``POST`` meets it server-side. *"A no-op is not
-  a mutation and gets no receipt"* — and it writes **no deny row** either
-  (§2(a) note 7): it is a conflict decision about a row the actor may see,
-  not an allowlist rejection.
+  stage; a crafted ``POST`` meets it server-side. A no-op is not a
+  mutation and gets no receipt — and it writes **no deny row** either: it
+  is a conflict decision about a row the actor may see, not an allowlist
+  rejection.
   """
 
   deal_id: UUID
@@ -527,7 +516,7 @@ class SameStage:
 
 @dataclass(frozen=True, slots=True)
 class ParentSummary:
-  """What ``deals/form.html`` may echo about a deal's parent (``ACC-230``).
+  """What ``deals/form.html`` may echo about a deal's parent.
 
   Exactly the id and the ``full_name``: the two attributes the caller could
   already read at ``GET /contacts/{id}`` under the same predicate. No count,
@@ -542,7 +531,7 @@ class ParentSummary:
 
 @dataclass(frozen=True, slots=True)
 class Duplicate:
-  """``409`` ``context="duplicate"`` — same key, different payload (``SQL-028``)."""
+  """``409`` ``context="duplicate"`` — same key, different payload."""
 
   deal_id: UUID
 
@@ -556,7 +545,7 @@ class _Normalized:
 
 
 def _validate(submitted: Mapping[str, str]) -> Invalid | _Normalized:
-  """Normalize and check the three writable fields (``UX_FLOWS.md`` §6.7).
+  """Normalize and check the three writable fields.
 
   Parameters
   ----------
@@ -568,7 +557,7 @@ def _validate(submitted: Mapping[str, str]) -> Invalid | _Normalized:
   -------
   Invalid | _Normalized
     ``Invalid`` carries one list of strings per failing field, keyed by the
-    wire name so the error summary can link to the control (**R28**).
+    wire name so the error summary can link to the control.
 
   Notes
   -----
@@ -582,16 +571,16 @@ def _validate(submitted: Mapping[str, str]) -> Invalid | _Normalized:
   :meth:`datetime.date.fromisoformat`, which in 3.12 also accepts week
   dates, ordinal dates and a compact ``yyyymmdd`` that ``<input
   type="date">`` never produces. An impossible calendar date — ``2026-02-30``
-  — passes the pattern and fails the constructor, and both answer
-  ``CP-75``.
+  — passes the pattern and fails the constructor, and both answer the same
+  field error.
   """
   errors: dict[str, list[str]] = {}
   title = submitted.get("title", "").strip()
   title_lower = title.lower()
   if not title:
-    errors["title"] = [CP_67_TITLE_REQUIRED]
+    errors["title"] = [TITLE_REQUIRED_MESSAGE]
   elif len(title) > TITLE_MAX or len(title_lower) > TITLE_MAX:
-    errors["title"] = [CP_61_TOO_LONG_160]
+    errors["title"] = [TOO_LONG_160_MESSAGE]
 
   amount = parse_amount(submitted.get("amount", ""))
   if isinstance(amount, AmountError):
@@ -601,12 +590,12 @@ def _validate(submitted: Mapping[str, str]) -> Invalid | _Normalized:
   close_date: date | None = None
   if raw_close:
     if _ISO_DATE_RE.match(raw_close) is None:
-      errors["close_date"] = [CP_75_DATE_MALFORMED]
+      errors["close_date"] = [DATE_MALFORMED_MESSAGE]
     else:
       try:
         close_date = date.fromisoformat(raw_close)
       except ValueError:
-        errors["close_date"] = [CP_75_DATE_MALFORMED]
+        errors["close_date"] = [DATE_MALFORMED_MESSAGE]
 
   if errors or isinstance(amount, AmountError):
     return Invalid(errors=errors)
@@ -621,7 +610,7 @@ def _validate(submitted: Mapping[str, str]) -> Invalid | _Normalized:
       "title": title,
       # The **canonical** spelling, not what was typed: it is what the
       # digest hashes, so `1250` resubmitted after `1250.00` replays
-      # instead of answering a spurious 409 duplicate (ask A-6).
+      # instead of answering a spurious 409 duplicate.
       "amount": canonical_amount(amount),
       "close_date": "" if close_date is None else close_date.isoformat(),
     },
@@ -645,9 +634,9 @@ def lateral_targets(stage: str) -> tuple[tuple[str, str], ...]:
   -------
   tuple[tuple[str, str], ...]
     ``(value, label)`` pairs in :data:`STAGE_ORDER` order, or ``()`` for a
-    terminal stage — which renders **no control at all**, just ``CP-35``
-    (``UX_FLOWS.md`` §4.8). Omitting the current stage is what makes
-    ``ACC-219``'s 400 unreachable through the UI while it stays enforced
+    terminal stage — which renders **no control at all**, just the
+    closing sentence. Omitting the current stage is what makes a move to
+    the current stage unreachable through the UI while it stays refused
     server-side for a crafted request.
   """
   if stage in TERMINAL:
@@ -676,8 +665,8 @@ def _view(row: DealRow, scope: Scope) -> DealView:
     version=row.version,
     created_at=row.created_at,
     updated_at=row.updated_at,
-    # A-8, implemented conditionally: the detail stays readable under an
-    # archived parent and the controls are absent. A crafted POST still
+    # The detail stays readable under an archived parent, with the
+    # controls absent. A crafted POST still
     # meets 409 archived_parent, decided in the transaction.
     can_edit=not archived_parent,
     can_change_stage=not archived_parent,
@@ -712,14 +701,14 @@ def _notice_for(operation: Operation, stage: str) -> str:
     Which mutation answered.
   stage : str
     The stage of the row **as it was read back**, never a submitted value
-    and never a URL value (``CONTRACTS.md`` §8.5 F-2's rule).
+    and never a URL value.
 
   Returns
   -------
   str
-    One of the five Slice C codes. Resolved per operation rather than from
-    ``result_status``, which records ``updated`` for an edit and for all
-    three stage moves alike (finding F-3).
+    One of the five deal notice codes. Resolved per operation rather than
+    from ``result_status``, which records ``updated`` for an edit and for
+    all three stage moves alike.
   """
   if operation == OP_CREATE:
     return NOTICE_CREATED
@@ -772,7 +761,7 @@ async def _replay_in_transaction(
 
   Notes
   -----
-  The re-read is structural, not a workaround (§2(a) note 6): the ``303``
+  The re-read is structural, not a workaround: the ``303``
   target is the **parent**, and the receipt stores only the deal id, so the
   parent has to be read anyway. The stage it returns is what
   ``deal_moved``'s ``{stage}`` substitutes.
@@ -842,7 +831,7 @@ async def _settle(
   key: UUID,
   digest: str,
 ) -> Applied:
-  """Resolve an ambiguous commit through the receipt (**PIN C5**, ``SQL-013``).
+  """Resolve an ambiguous commit through the receipt.
 
   Returns
   -------
@@ -886,8 +875,8 @@ async def _blocked_parent(conn: PoolConnection, scope: Scope, *, contact_id: UUI
   Returns
   -------
   Blocked
-    With a **real** restore form (``UX_FLOWS.md`` §3.10's primary action)
-    when the parent is readable and still archived, and ``None`` when it is
+    With a **real** restore form — the page's primary action — when the
+    parent is readable and still archived, and ``None`` when it is
     not — a control that cannot act is not offered.
   """
   parent = await contacts_repo.get_contact(conn, scope, contact_id=contact_id)
@@ -908,7 +897,7 @@ async def _stale_after_race(
   deal_id: UUID,
   submitted: Mapping[str, str],
 ) -> Stale:
-  """Re-read a deal in a fresh transaction to build §1(e) step 5's 409.
+  """Re-read a deal in a fresh transaction to build the 409 ``stale``.
 
   Raises
   ------
@@ -951,23 +940,23 @@ def build_deal_query(
   ----------
   term : str | None
     The raw ``?q=`` value, or ``None``. Normalized and escaped here, which
-    is the one place it happens (§1(d), ``ACCESS_MATRIX.md`` §5.5).
+    is the one place it happens.
   stage : str | None
     One of the five stages, or ``None``; the route has already answered
-    400 for anything else (``ACC-308``).
+    400 for anything else.
   status : str
     ``active``, ``archived`` or ``all`` — a filter on the **parent's**
     ``archived_at``, through the join. ``active`` is the default, so
-    ``ACC-306`` is the absence of an input rather than a branch a caller
-    can forget.
+    "deals under archived contacts are hidden" is the absence of an input
+    rather than a branch a caller can forget.
   sort : str
-    One of ``ACCESS_MATRIX.md`` §5.2's five deal keys.
+    One of the five allowed deal sort keys.
   direction : str
     ``asc`` or ``desc``.
   page : int
     A positive integer.
   per_page : int
-    A positive integer; clamped to :data:`MAX_PER_PAGE` here (``ACC-309``).
+    A positive integer; clamped to :data:`MAX_PER_PAGE` here.
 
   Returns
   -------
@@ -1002,11 +991,11 @@ def build_deal_query(
 
 
 async def list_deals(runner: TransactionRunner, scope: Scope, *, query: DealQuery) -> DealListView:
-  """Read one page of deals and its scoped total (``ACC-301``-``ACC-306``).
+  """Read one page of deals and its scoped total.
 
   Notes
   -----
-  One short ``READ COMMITTED`` transaction (§1(e) row 6), never a
+  One short ``READ COMMITTED`` transaction, never a
   ``SERIALIZABLE`` one: a list page taking predicate locks would make every
   concurrent deal edit a ``40001`` candidate for no benefit. The page and
   its count come from the **same** ``WHERE`` builder, so a foreign row can
@@ -1044,7 +1033,7 @@ async def list_deals(runner: TransactionRunner, scope: Scope, *, query: DealQuer
 
 
 async def pipeline(runner: TransactionRunner, scope: Scope, *, status: str) -> PipelineView:
-  """Read the five pipeline columns in one read-only snapshot (**PIN C6**).
+  """Read the five pipeline columns in one read-only snapshot.
 
   Parameters
   ----------
@@ -1067,7 +1056,7 @@ async def pipeline(runner: TransactionRunner, scope: Scope, *, status: str) -> P
   Notes
   -----
   All six statements run inside **one** ``SERIALIZABLE, READ ONLY``
-  transaction (§1(c)): a column's header and its cards are rendered side by
+  transaction: a column's header and its cards are rendered side by
   side, and at ``READ COMMITTED`` a commit between the two statements is
   *visible* as a header that disagrees with its column. Read-only is a
   property of the transaction — a write inside it is refused with
@@ -1108,18 +1097,18 @@ async def pipeline(runner: TransactionRunner, scope: Scope, *, status: str) -> P
 
 
 async def get_for_detail(runner: TransactionRunner, scope: Scope, *, deal_id: UUID) -> DealView:
-  """Read one deal for its detail page or its edit form (``ACC-201``-``ACC-203``).
+  """Read one deal for its detail page or its edit form.
 
   Raises
   ------
   DealNotFound
     For a foreign deal and for a missing one alike — one statement, one
-    code path, one body (**PIN 8**, ``ACC-202``).
+    code path, one body.
 
   Notes
   -----
   There is **no archive clause**: a deal under an archived parent stays
-  readable to a principal who can see the parent (ask **A-8**), and the
+  readable to a principal who can see the parent, and the
   screen renders the archived banner from ``contact.is_archived`` while
   ``can.edit`` and ``can.change_stage`` are false.
   """
@@ -1136,14 +1125,14 @@ async def get_for_detail(runner: TransactionRunner, scope: Scope, *, deal_id: UU
 async def list_for_contact(
   runner: TransactionRunner, scope: Scope, *, contact_id: UUID
 ) -> tuple[DealCardView, ...]:
-  """Read one contact's deals for the workspace's ``#deals`` region (**A-15**).
+  """Read one contact's deals for the workspace's ``#deals`` region.
 
   Notes
   -----
-  ``contacts/detail.html``'s frozen ``deals [deal_card]`` carries no paging
-  keys, so this asks for one page of :data:`MAX_PER_PAGE` and flattens it.
-  At §9's profile a contact with more than 100 deals does not occur; if one
-  ever did, the region would show the first 100 — recorded, not hidden.
+  ``contacts/detail.html``'s ``deals`` region carries no paging keys, so
+  this asks for one page of :data:`MAX_PER_PAGE` and flattens it. At the
+  scale this application is sized for a contact with more than 100 deals
+  does not occur; if one ever did, the region would show the first 100.
 
   **No archive clause**, like the timeline: the parent read has already
   decided whether this contact is viewable, and an archived contact's
@@ -1176,20 +1165,19 @@ async def parent_for_form(
   Returns
   -------
   ParentSummary | Blocked
-    The two attributes the form may echo (``ACC-230``), or the 409
-    ``archived_parent`` payload (``ACC-229``).
+    The two attributes the form may echo, or the 409
+    ``archived_parent`` payload.
 
   Raises
   ------
   ContactNotFound
-    For a foreign parent and for a missing one alike (``ACC-228``).
+    For a foreign parent and for a missing one alike.
 
   Notes
   -----
-  ``ACC-228`` requires the pre-filled form to resolve its parent *"by the
-  same statement ``ACC-207`` uses on the POST — one code path, so the GET
-  cannot 404 differently from the POST"*. That statement is
-  :func:`app.db.repositories.deals.parent_state`, and it is what **decides**
+  The pre-filled form resolves its parent by the **same statement** the
+  ``POST`` uses, so the ``GET`` cannot 404 differently from the ``POST``.
+  That statement is :func:`app.db.repositories.deals.parent_state`, and it is what **decides**
   here: the name is read only **after** it has answered ``active``, so both
   verbs refuse from the same place and the extra read can never turn a
   refusal into a disclosure.
@@ -1213,9 +1201,9 @@ async def blocked_parent(runner: TransactionRunner, scope: Scope, *, contact_id:
   """Build the 409 ``archived_parent`` payload outside a mutation.
 
   Used by ``GET /deals/{id}/edit``, which answers 409 rather than render a
-  form whose ``POST`` could only ever answer 409 (ask **A-8**), and by the
-  ``POST`` paths that must refuse a field error under an archived parent —
-  ``ACCESS_MATRIX.md`` §1.1 puts the archive state ahead of validation. The
+  form whose ``POST`` could only ever answer 409, and by the ``POST``
+  paths that must refuse a field error under an archived parent, because
+  the archive state is decided ahead of validation. The
   read is scoped, so it discloses nothing the caller could not already open.
   """
 
@@ -1235,7 +1223,7 @@ async def create_for_contact(
   key: UUID,
   correlation_id: str,
 ) -> Applied | Invalid | Blocked | Duplicate:
-  """Create one deal under one contact (``ACC-205``-``ACC-211``).
+  """Create one deal under one contact.
 
   Parameters
   ----------
@@ -1245,10 +1233,10 @@ async def create_for_contact(
     The injected time source; every instant below comes from it.
   scope : Scope
     The actor's scope. **The owner is the parent's owner**: ``insert_deal``
-    has no ``owner_id`` parameter and ``deals`` has no such column, so
-    ``ACC-212`` is unreachable by construction.
+    has no ``owner_id`` parameter and ``deals`` has no such column, so an
+    injected owner is unreachable by construction.
   contact_id : UUID
-    The parent, from the **path** — never from the body (§2(d)).
+    The parent, from the **path** — never from the body.
   submitted : Mapping[str, str]
     The three writable fields.
   key : UUID
@@ -1263,9 +1251,8 @@ async def create_for_contact(
   Raises
   ------
   ContactNotFound
-    For a foreign parent and for a missing one alike — **PIN C3**'s order,
-    and §4.5 rule 2's object: the denial names the *contact*, because that
-    is what the caller was refused (``ACC-207``).
+    For a foreign parent and for a missing one alike. The denial names
+    the *contact*, because that is what the caller was refused.
 
   Notes
   -----
@@ -1276,7 +1263,7 @@ async def create_for_contact(
 
   The parent is resolved **inside** the ``SERIALIZABLE`` transaction, so a
   contact archived between the form render and the submit is seen here —
-  or provokes a ``40001`` and is seen on the retry (``SQL-029``).
+  or provokes a ``40001`` and is seen on the retry.
   """
   validated = _validate(submitted)
   if isinstance(validated, Invalid):
@@ -1354,7 +1341,7 @@ async def update_deal(
   key: UUID,
   correlation_id: str,
 ) -> Applied | Invalid | Stale | Blocked | Duplicate:
-  """Edit one deal's three writable fields (``ACC-213``-``ACC-217``).
+  """Edit one deal's three writable fields.
 
   Returns
   -------
@@ -1365,12 +1352,12 @@ async def update_deal(
   DealNotFound
     Foreign or missing, decided by the scope predicate before the parent's
     archive state is ever consulted — the ordering that keeps the 409 from
-    becoming an existence oracle (``ACC-214``).
+    becoming an existence oracle.
 
   Notes
   -----
   There is no ``contact_id`` and no ``stage`` parameter: re-parenting and a
-  stage move are not edits (``ACC-217``, §5.3), and the absence of the
+  stage move are not edits, and the absence of the
   parameter is the enforcement.
   """
   validated = _validate(submitted)
@@ -1467,7 +1454,7 @@ async def change_stage(
   key: UUID,
   correlation_id: str,
 ) -> Applied | Stale | Blocked | StageTerminal | SameStage | Duplicate:
-  """Move one deal along the stage graph (``ACC-218``-``ACC-223``, **PIN C2**).
+  """Move one deal along the stage graph.
 
   Parameters
   ----------
@@ -1476,7 +1463,7 @@ async def change_stage(
     answered 400 for anything else. ``won`` and ``lost`` arrive here from
     their own dedicated routes as well — there is **one** service function,
     one statement and one receipt vocabulary, so the terminal check cannot
-    be forgotten in a second place (§2(a) note 2).
+    be forgotten in a second place.
 
   Returns
   -------
@@ -1495,9 +1482,8 @@ async def change_stage(
   that same stage is then passed to the ``UPDATE`` as ``from_stage``, so
   the write can only land on the stage the decision was made about. The
   business instant is split in two — ``stage_changed_at`` is the fact
-  ``DATA_CONTRACT.md`` §3.10 requires to be rewritten on every accepted
-  move, ``now`` is ``updated_at`` — exactly as ``archive_contact`` splits
-  ``archived_at`` from ``now``.
+  rewritten on every accepted move, ``now`` is ``updated_at`` — exactly as
+  ``archive_contact`` splits ``archived_at`` from ``now``.
   """
   digest = payload_sha256(
     operation=OP_STAGE,
@@ -1541,7 +1527,7 @@ async def change_stage(
       key=key,
       digest=digest,
       # `ck_mutation_receipts_status` admits no `stage_changed`, so all
-      # three moves record `updated` (§1(a), ask A-3). The notice is
+      # three moves record `updated`. The notice is
       # resolved from the operation and the re-read stage instead.
       status="updated",
       object_type="deal",

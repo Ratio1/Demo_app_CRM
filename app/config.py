@@ -1,11 +1,10 @@
 """The only module in ``app`` that reads the process environment.
 
-Spec §4 allows exactly four operator-supplied variables, with the port carried
-inside ``DB_SERVER``; decision D-K adds an optional ``DB_PORT`` defaulting to
-5432, so that a file written by ``_tools/pgsql/pg env`` — which emits the four
-names and no ``DB_PORT`` — works unchanged while a container environment may
-still set the port separately. If both carry a port and they disagree, startup
-fails rather than silently preferring one.
+Four operator-supplied variables carry the whole configuration, with the
+port carried inside ``DB_SERVER``. An optional fifth, ``DB_PORT``, defaults
+to 5432, so that an env file that names only the four works unchanged while
+a container environment may still set the port separately. If both carry a
+port and they disagree, startup fails rather than silently preferring one.
 
 Everything else is a code constant. There is no ``DATABASE_URL``, no signing
 secret, no ``APP_URL`` and no ``PORT``: the public HTTPS origin lives in the
@@ -38,7 +37,7 @@ __all__ = [
 
 DEFAULT_DB_PORT: int = 5432
 
-#: Resolved from this package's own location (delta **D2**), not from the
+#: Resolved from this package's own location, not from the
 #: working directory: ``scripts/manage``, a ``python -c`` probe and a test
 #: subprocess do not all run from the submodule root, and a cwd-relative
 #: bundle silently becomes "no trust anchor" — which ``sslmode=verify-full``
@@ -48,11 +47,10 @@ CA_BUNDLE_PATH: str = str(Path(__file__).resolve().parent / "certs" / "ca-bundle
 
 CONNECT_TIMEOUT_S: int = 5
 
-#: The four TLS/encoding constants of delta **D1** (ruling **R34**). Each is a
-#: code constant; none is an environment variable, and none may be relaxed
-#: without a contract step. ``R2``'s spelling ``sslminprotocolversion`` is
-#: invalid — libpq rejects it outright — and ``R34`` corrects it to the
-#: spelling below.
+#: The four TLS and encoding constants. Each is a code constant; none is an
+#: environment variable, and none may be relaxed. Note the spelling
+#: ``ssl_min_protocol_version``: libpq rejects ``sslminprotocolversion``
+#: outright.
 SSLMODE: str = "verify-full"
 SSL_MIN_PROTOCOL_VERSION: str = "TLSv1.2"
 GSSENCMODE: str = "disable"
@@ -64,10 +62,10 @@ _ASCII_DIGITS = frozenset("0123456789")
 _MAX_PORT_DIGITS = 5
 _MIN_PORT = 1
 _MAX_PORT = 65535
-# Spec §4: "No URL/query/TLS options." A host is a name or an IP literal.
-# The comma is in the set because libpq reads `host=a,b` as a multi-host
-# failover list, which is another way to reach a server the operator did not
-# name; spec §4 says `host[:port]`, singular.
+# No URL, query or TLS options: a host is a name or an IP literal. The comma
+# is in the set because libpq reads `host=a,b` as a multi-host failover list,
+# which is another way to reach a server the operator did not name; the value
+# is `host[:port]`, singular.
 _FORBIDDEN_HOST_CHARS = frozenset("/?#@=,\\'\"[]")
 
 
@@ -113,7 +111,7 @@ class Config:
     Returns
     -------
     dict[str, object]
-      Delta **D1**'s twelve keys, exactly: ``host``, ``port``, ``user``,
+      Twelve keys, exactly: ``host``, ``port``, ``user``,
       ``password``, ``dbname``, ``sslmode="verify-full"``,
       ``sslrootcert=CA_BUNDLE_PATH``, ``connect_timeout=CONNECT_TIMEOUT_S``,
       ``options=""``, ``ssl_min_protocol_version="TLSv1.2"``,
@@ -123,15 +121,15 @@ class Config:
     -----
     Every parameter is passed explicitly so libpq never falls back to
     ``PGSERVICE``, ``PGSERVICEFILE``, ``PGSSLMODE``, ``PGSSLROOTCERT``,
-    ``PGHOST``, ``PGPASSFILE`` or ``PGOPTIONS``. No key is added without a
-    contract step. ``statement_timeout`` is applied by the pool's configure
-    hook, not here, because ``options`` must stay empty.
+    ``PGHOST``, ``PGPASSFILE`` or ``PGOPTIONS``. ``statement_timeout`` is
+    applied by the pool's configure hook, not here, because ``options`` must
+    stay empty.
 
-    The last three are delta **D1** / ruling **R34**, each closing a
-    downgrade an explicit value would otherwise leave open: a TLS floor
+    The last three each close a downgrade an explicit value would otherwise
+    leave open: a TLS floor
     below 1.2, a GSSAPI encryption negotiation this deployment never wants,
     and a client encoding libpq would otherwise take from the environment's
-    locale. ``sslrootcert`` is resolved from the package (delta **D2**), so
+    locale. ``sslrootcert`` is resolved from the package, so
     the trust anchor does not depend on the working directory.
     """
     return {
@@ -235,8 +233,8 @@ def _split_server(raw: str) -> tuple[str, str | None]:
   ConfigError
     If the value is unparsable: an unterminated or empty bracket, trailing
     characters after ``]``, an empty host or port, an unbracketed value with
-    more than one ``:`` (an IPv6 address that must be bracketed), or any URL,
-    query or option syntax, which spec §4 forbids.
+    more than one ``:`` (an IPv6 address that must be bracketed), or any
+    URL, query or option syntax, none of which belongs in this value.
   """
   if raw.startswith("["):
     closing = raw.find("]")

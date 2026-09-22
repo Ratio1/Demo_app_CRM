@@ -1,32 +1,26 @@
-"""Password hashing, verification, policy and the bounded hash queue (``S1``).
-
-Authority: ``slice-a.md`` §1.1 (the :class:`PasswordService` surface), §7.4
-(parameters come from the constructor and nowhere else — ``ARC-020``),
-``THREAT_MODEL.md`` §10 item 10 (the blocklist's context words),
-``UX_FLOWS.md`` §6.1 (``CP-71``-``CP-73``, the copy a rejected password
-shows).
+"""Password hashing, verification, policy and the bounded hash queue.
 
 Three properties this module exists to hold:
 
 *Parameters are injected, never selected.* The :class:`argon2.PasswordHasher`
 is a constructor argument — reached from outside through
-``create_app(password_hasher=…)`` (**R54**), whose default is
+``create_app(password_hasher=…)``, whose default is
 :func:`production_hasher`. There is no environment variable, no
 configuration key and no branch here that could pick a cheaper profile, so
 a production process cannot be talked into test-grade hashing
-(``ARC-020``); the module source names no environment read at all.
+; the module source names no environment read at all.
 
 *Hashing is bounded.* Argon2id at the pinned parameters allocates 19 MiB and
 runs ~20 ms. Unbounded concurrency would turn the login form into a memory
 amplifier, so every hash and every verify passes through a gate admitting
 ``max_active`` at a time with at most ``max_queued`` waiting; the request
 that would exceed that raises :class:`HashQueueFull`, which the route
-answers with a sanitized ``429`` (``SEC-034``).
+answers with a sanitized ``429``.
 
 *A missing account costs the same as a wrong password.* ``verify(None, …)``
 runs a real Argon2 verification against a dummy hash in the same gate slot,
 so the response time of "no such user" and "wrong password" are the same
-measurement (``SEC-032``, ``SEC-033``).
+measurement.
 """
 
 from __future__ import annotations
@@ -48,14 +42,14 @@ __all__ = [
   "ARGON2_PARALLELISM",
   "ARGON2_SALT_LEN",
   "ARGON2_TIME_COST",
-  "CP_71_TOO_SHORT",
-  "CP_72_TOO_LONG",
-  "CP_73_BLOCKLISTED",
-  "CP_74_MISMATCH",
+  "BLOCKLISTED_MESSAGE",
   "DEFAULT_BLOCKLIST",
   "MAX_PASSWORD_LENGTH",
   "MIN_CONTEXT_TOKEN_LENGTH",
   "MIN_PASSWORD_LENGTH",
+  "MISMATCH_MESSAGE",
+  "TOO_LONG_MESSAGE",
+  "TOO_SHORT_MESSAGE",
   "HashQueueFull",
   "PasswordService",
   "production_hasher",
@@ -64,11 +58,11 @@ __all__ = [
 MIN_PASSWORD_LENGTH: Final = 15
 MAX_PASSWORD_LENGTH: Final = 128
 
-#: The pinned Argon2id profile (``THREAT_MODEL.md`` T-01, ``SEC-017``),
-#: measured at ~20 ms per hash on the development machine (``slice-a.md``
-#: §8.7). Code constants: no variable, configuration key or branch selects
+#: The pinned Argon2id profile, measured at ~20 ms per hash on the
+#: development machine. Code constants: no variable, configuration key or
+#: branch selects
 #: anything else, and :class:`PasswordService` never reads them — it uses
-#: whatever hasher it is handed (``ARC-020``). They live here rather than
+#: whatever hasher it is handed. They live here rather than
 #: in ``app/main.py`` so that ``scripts/manage`` can hash a password
 #: without importing the ASGI application.
 ARGON2_TIME_COST: Final = 2
@@ -83,13 +77,13 @@ ARGON2_SALT_LEN: Final = 16
 #: and rejecting on them would refuse good passwords for no security gain.
 MIN_CONTEXT_TOKEN_LENGTH: Final = 4
 
-CP_71_TOO_SHORT: Final = "Use at least 15 characters."
-CP_72_TOO_LONG: Final = "Use 128 characters or fewer."
-CP_73_BLOCKLISTED: Final = "Choose a password that is harder to guess."
-CP_74_MISMATCH: Final = "The two new passwords do not match."
+TOO_SHORT_MESSAGE: Final = "Use at least 15 characters."
+TOO_LONG_MESSAGE: Final = "Use 128 characters or fewer."
+BLOCKLISTED_MESSAGE: Final = "Choose a password that is harder to guess."
+MISMATCH_MESSAGE: Final = "The two new passwords do not match."
 
-#: ``THREAT_MODEL.md`` §10 item 10: the application's own context words and
-#: "simple permutations" of them. Everything is matched case-insensitively
+#: The application's own context words and simple permutations of them.
+#: Everything is matched case-insensitively
 #: as a substring, so a permutation such as ``Demo_App_CRM2026`` is caught
 #: by the base word.
 DEFAULT_BLOCKLIST: Final[frozenset[str]] = frozenset(
@@ -170,7 +164,7 @@ class PasswordService:
       :data:`DEFAULT_BLOCKLIST` is what production passes.
     clock : Clock
       The injected time source. Held so that the service never reaches for
-      a wall clock of its own (``ARC-019``).
+      a wall clock of its own.
     max_active : int, optional
       Hashes running at once. One, so a burst of logins cannot multiply the
       19 MiB arena.
@@ -317,9 +311,9 @@ class PasswordService:
 
     Notes
     -----
-    ``T-03``/``SEC-033``: the dummy path runs in the same gate slot with
-    the same parameters, so a missing account and a wrong password cost the
-    same and contend for the same resource.
+    The dummy path runs in the same gate slot with the same parameters, so
+    a missing account and a wrong password cost the same and contend for
+    the same resource.
     """
     target = self._dummy_encoded if encoded is None else encoded
 
@@ -371,28 +365,27 @@ class PasswordService:
     Returns
     -------
     list[str]
-      Rendered copy strings, in a fixed order, empty when the password is
-      acceptable: ``CP-71`` (too short), ``CP-72`` (too long), ``CP-73``
-      (blocklisted or built from a context word). The strings are the
-      user-facing text of ``UX_FLOWS.md`` §6.1 rather than bare ids,
-      because the templates render a message verbatim in both the field
-      error and the error summary.
+      Messages, in a fixed order, empty when the password is acceptable:
+      too short, too long, or blocklisted/built from a context word. They
+      are the user-facing strings rather than codes, because the templates
+      render a message verbatim in both the field error and the error
+      summary.
 
     Notes
     -----
     Length is measured in characters, not bytes, and there is no upper
-    truncation anywhere in this module: ``SEC-008`` asserts that a
-    128-character password authenticates unchanged.
+    truncation anywhere in this module: a 128-character password
+    authenticates unchanged.
     """
     errors: list[str] = []
     if len(password) < MIN_PASSWORD_LENGTH:
-      errors.append(CP_71_TOO_SHORT)
+      errors.append(TOO_SHORT_MESSAGE)
     elif len(password) > MAX_PASSWORD_LENGTH:
-      errors.append(CP_72_TOO_LONG)
+      errors.append(TOO_LONG_MESSAGE)
 
     folded = password.casefold()
     if any(word in folded for word in self._forbidden_words(context)):
-      errors.append(CP_73_BLOCKLISTED)
+      errors.append(BLOCKLISTED_MESSAGE)
     return errors
 
   def _forbidden_words(self, context: Sequence[str]) -> Iterable[str]:

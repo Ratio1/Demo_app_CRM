@@ -2,11 +2,10 @@
 
 Every class here is a *decision already taken*: the pipeline step that
 raises it has finished deciding, and the only thing left is to render the
-answer ``slice-a.md`` §2.1 pins for it. None of them carries a message a
-user sees, a value read from the request, or anything from the database —
-the rendered page comes from a frozen template and a copy id, so two
-different causes of the same status are byte-identical apart from the
-correlation id (``R27``).
+answer fixed for it. None of them carries a message a user sees, a value
+read from the request, or anything from the database — the rendered page
+comes from a frozen template and a fixed body key, so two different causes
+of the same status are byte-identical apart from the correlation id.
 
 They are ordinary exceptions rather than ``HTTPException`` subclasses
 because three of them are raised from a pure-ASGI middleware, outside the
@@ -38,12 +37,12 @@ class StepZeroDenied(Exception):
 
   Every cause renders the same ``errors/403.html`` with ``reason="session"``
   and the public shell, so the response cannot tell a spoofed ``Host`` from
-  a stale form (``ACC-010``, ``SEC-040``).
+  a stale form.
   """
 
 
 class NotProvisioned(Exception):
-  """No ``public_origin`` row exists yet — the ``503`` of ``slice-a.md`` §2.1.
+  """No ``public_origin`` row exists yet, so every request is a ``503``.
 
   Raised before routing, so an unprovisioned deployment answers the same
   way on every path but ``/health/*``.
@@ -54,7 +53,7 @@ class NoSession(Exception):
   """Step 1 found no live session.
 
   A private ``GET`` becomes ``303 /login``; an unsafe method becomes ``403``;
-  an ``HX-Request`` becomes ``401`` with ``HX-Redirect`` (``R26``).
+  an ``HX-Request`` becomes ``401`` with ``HX-Redirect``.
   """
 
 
@@ -74,7 +73,7 @@ class BudgetExceeded(Exception):
   retry_after_s : int
     Whole seconds until the window rolls, for the ``Retry-After`` header.
     Never longer than the window itself, so the advertised recovery matches
-    the real one (``SEC-031``(c)).
+    the real one.
   """
 
   def __init__(self, retry_after_s: int) -> None:
@@ -97,22 +96,20 @@ class TooLarge(Exception):
 class ContactNotFound(Exception):
   """Step 4: the scope predicate admitted no contact — foreign **or** missing.
 
-  Raised, never returned, so the six contact surfaces cannot drift apart
-  (``contracts/slice-b.md`` §2(a) note 1): one handler writes
-  ``ACCESS_MATRIX.md`` §4.5 **row 1** and renders the one ``404`` body, so
-  a foreign object and a missing one are byte-identical for the same
-  principal modulo the correlation id (**PIN 8**, **R27**).
+  Raised, never returned, so the six contact surfaces cannot drift apart:
+  one handler writes the ``(contact, access_denied, denied)`` row and
+  renders the one ``404`` body, so a foreign object and a missing one are
+  byte-identical for the same principal modulo the correlation id.
 
   Raising it from inside ``run_serializable`` also unwinds the transaction
   and returns its connection **before** the handler opens the deny-audit's
-  own one, which is the one-connection-at-a-time rule
-  (``DATA_CONTRACT.md`` §6.1).
+  own one, which is the one-connection-at-a-time rule.
 
   Attributes
   ----------
   object_id : UUID | None
     The requested id, **iff** the application already validated it as a
-    canonical 36-character UUID; ``None`` otherwise (§4.5 rule 1). A
+    canonical 36-character UUID; ``None`` otherwise. A
     hostile path segment would violate ``ck_audit_events_object_id`` and
     the best-effort write would then die on exactly the inputs the row
     exists to record.
@@ -133,26 +130,23 @@ class ContactNotFound(Exception):
 class DealNotFound(Exception):
   """Step 4: the join to ``contacts`` admitted no deal — foreign **or** missing.
 
-  The deal twin of :class:`ContactNotFound`, and for the same reason
-  (``contracts/slice-c.md`` §2(a) decision 1): raised rather than returned,
-  so the five deal surfaces — detail, edit form, update, stage change and
-  the two terminal moves — reach **one** handler, which writes
-  ``ACCESS_MATRIX.md`` §4.5 **row 2** (``deal`` / ``access_denied``) and
+  The deal twin of :class:`ContactNotFound`, and for the same reason:
+  raised rather than returned, so the five deal surfaces — detail, edit
+  form, update, stage change and the two terminal moves — reach **one**
+  handler, which writes the ``(deal, access_denied, denied)`` row and
   renders the one ``404`` body. A foreign deal and a missing one are then
-  byte-identical for the same principal modulo the correlation id
-  (``ACC-202``, **PIN 8**, **R27**).
+  byte-identical for the same principal modulo the correlation id.
 
   A **parent** miss is not this exception. ``POST /contacts/{id}/deals`` and
   ``GET /contacts/{id}/deals/new`` raise :class:`ContactNotFound` instead,
-  because §4.5 rule 2 says a reference-as-parent denial names the *parent*:
-  the object the caller was refused is the contact (``ACC-207``,
-  ``ACC-228``).
+  because a denial on a reference used as a parent names the *parent*: the
+  object the caller was refused is the contact.
 
   Attributes
   ----------
   object_id : UUID | None
     The requested id, **iff** it was already validated as a canonical
-    36-character UUID; ``None`` otherwise (§4.5 rule 1).
+    36-character UUID; ``None`` otherwise.
   """
 
   def __init__(self, object_id: UUID | None) -> None:

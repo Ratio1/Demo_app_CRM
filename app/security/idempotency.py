@@ -1,11 +1,7 @@
 """Receipts: one submission is one mutation, however many times it arrives.
 
-Authority: ``contracts/slice-b.md`` §2(b) (this module's whole surface),
-§1(b)/§1(c) (``app/db/repositories/receipts.py``'s two statements), §1(d)
-(the statement order inside a Slice B mutation and the three arms a
-duplicate can take), ``DATA_CONTRACT.md`` §3.8 (the table) and §6.4 (the
-rollback-and-re-read recovery), spec §5 (*"user/operation-scoped
-idempotency keys bind to payloads"*).
+An idempotency key is scoped to one user and one operation, and it binds
+to the payload digest stored beside it in ``mutation_receipts``.
 
 Four decisions carry the control, and each is here rather than in a
 service so that five mutations cannot implement it five ways:
@@ -13,23 +9,23 @@ service so that five mutations cannot implement it five ways:
 *The key is minted by the server, once per rendered form.* A client never
 chooses one and never re-uses one: :func:`mint_key` is called while the
 form is built, and the 409-stale recovery view mints a **fresh** one
-(**PIN 3**) because re-posting the submitted key would meet the receipt
+ because re-posting the submitted key would meet the receipt
 and answer 409 ``duplicate``, which explains nothing.
 
 *The digest is injective.* :func:`payload_sha256` length-prefixes every
 key and every value, so no value containing a delimiter can forge a
 different field list into the same digest. That is what makes "same key,
-different payload" (**R19**'s ``duplicate`` context) a decision about the
-payload rather than about how it was spelled.
+different payload" a decision about the payload rather than about how it
+was spelled.
 
 *The receipt is read inside the transaction that will write it.*
 :func:`decide` runs as the first statement after ``SET TRANSACTION
 ISOLATION LEVEL SERIALIZABLE`` and :func:`commit_receipt` runs **before**
-the business write (``DATA_CONTRACT.md`` §6.2, *"so a duplicate can never
-have a business write in flight"*).
+the business write, so a duplicate can never have a business write in
+flight.
 
 *A duplicate is resolved by reading the receipt, never by writing again.*
-Three arms converge on that one rule (§1(d)): a receipt that is already
+Three arms converge on that one rule: a receipt that is already
 committed is a **replay**; a concurrent submission usually loses to SSI
 with ``40001``, which :func:`app.db.retry.run_serializable` retries
 invisibly; and a ``23505`` on the receipt insert aborts its transaction
@@ -81,15 +77,15 @@ __all__ = [
 
 #: The canonical 36-character form, case-insensitive hex. ``uuid.UUID()``
 #: also accepts braces, URNs and the dash-free form; ``ck_contacts_id`` and
-#: ``ACCESS_MATRIX.md`` §4.5 rule 1 accept only this one, so the regex runs
+#: the audit row's id CHECK accept only this one, so the regex runs
 #: **first** and the constructor second.
 CANONICAL_UUID: Final = re.compile(r"\A[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\Z")
 
 #: ``mutation_receipts.result_status`` → the ``?notice=`` code a replay
-#: re-emits (**R20**, ``CONTRACTS.md`` §8.5). The ``Location`` itself is
+#: re-emits. The ``Location`` itself is
 #: rebuilt by the **route** from ``(result_object_type, result_object_id)``
 #: plus this code: there is no ``response_location`` column and none is
-#: added (§1(b)), because a stored URL goes stale the moment a route is
+#: added, because a stored URL goes stale the moment a route is
 #: renamed and a URL is free text in a table whose whole discipline is
 #: identifiers only.
 NOTICE_FOR_STATUS: Final[dict[str, str]] = {
@@ -111,9 +107,9 @@ class ReceiptDecision:
     ``replay`` — a receipt exists and its ``payload_sha256`` equals this
     submission's, so the stored outcome is returned and **nothing at all**
     is written, not even an audit row. ``duplicate`` — a receipt exists
-    under the same key with a *different* payload, which is **R19**'s
-    ``duplicate`` context at 409 (``SQL-028``). ``execute`` — no receipt,
-    so the mutation runs.
+    under the same key with a *different* payload, which the route
+    answers 409 ``duplicate``. ``execute`` — no receipt, so the mutation
+    runs.
   receipt : ReceiptRow | None
     The stored row for the first two kinds; ``None`` for ``execute``.
   """
@@ -129,8 +125,8 @@ def mint_key() -> UUID:
   -------
   UUID
     A version-4 UUID. One per form: a page with N forms carries N keys
-    (``CONTRACTS.md`` §8 rule 2), and the 409-stale recovery form gets a
-    new one rather than the submitted one (**PIN 3**).
+   , and the 409-stale recovery form gets a
+    new one rather than the submitted one.
   """
   return uuid.uuid4()
 
@@ -203,9 +199,9 @@ def payload_sha256(
   version : int | None, optional
     The concurrency token the form carried, or ``None`` where the form has
     none. Included so a re-post at a different version is a 409; the one
-    form that legitimately re-posts at a new version — **PIN 3**'s "Keep my
-    changes" — carries a **fresh** key by construction, so it never meets
-    its own receipt.
+    form that legitimately re-posts at a new version — the "Keep my
+    changes" recovery after a stale edit — carries a **fresh** key by
+    construction, so it never meets its own receipt.
   fields : Sequence[tuple[str, str]], optional
     The operation's declared writable fields, already **normalized** — the
     same strings the statement will bind — in
@@ -226,10 +222,9 @@ def payload_sha256(
   is the lookup, not the content.
 
   ``version`` is an explicit parameter rather than the caller's first
-  ``fields`` pair — a refinement of §2(b)'s sketch, recorded in the build
-  report — so that the contracted pair order ``op``, ``target``,
-  ``version``, then the declared fields is enforced by this function and
-  not by five call sites remembering it.
+  ``fields`` pair, so that the pair order ``op``, ``target``, ``version``,
+  then the declared fields is enforced by this function and not by five
+  call sites remembering it.
   """
   pairs: list[tuple[str, str]] = [
     ("op", operation),
@@ -257,9 +252,8 @@ async def decide(
   ----------
   conn : PoolConnection
     A connection already inside the caller's ``SERIALIZABLE`` transaction.
-    This is step 1 of §1(d): it runs **before** the scope re-read and
-    before any write, so a duplicate can never have a business write in
-    flight.
+    It runs **before** the scope re-read and before any write, so a
+    duplicate can never have a business write in flight.
   user_id : UUID
     The session's user — never a submitted value. One user's key can never
     replay another user's mutation.
@@ -313,7 +307,7 @@ async def commit_receipt(
   conn : PoolConnection
     The connection the mutation is running on — the same transaction, so
     the receipt and the business row and the audit row commit together or
-    not at all (``SQL-011``, ``SQL-013``).
+    not at all.
   user_id : UUID
     The session's user.
   operation : Operation
@@ -336,9 +330,8 @@ async def commit_receipt(
   -----
   Nothing is caught here. A ``23505`` means a concurrent submission won the
   race; it is **not** in :data:`app.db.retry.RETRYABLE_SQLSTATES`, so the
-  whole transaction unwinds with no business write — ``DATA_CONTRACT.md``
-  §6.4 step 1, for free — and the caller then performs steps 2 and 3 with
-  :func:`replay_after_conflict`.
+  whole transaction unwinds with no business write — for free — and the
+  caller then re-reads the receipt with :func:`replay_after_conflict`.
 
   The receipt id is generated per attempt rather than once, exactly as the
   audit row's is: only the attempt that commits leaves a row.
@@ -370,9 +363,9 @@ async def replay_after_conflict(
   Parameters
   ----------
   runner : TransactionRunner
-    The process runner (amendment **A-14**). A new acquisition, taken only
+    The process-wide transaction runner. A new acquisition, taken only
     after the conflicting transaction has ended and released its own
-    connection (``DATA_CONTRACT.md`` §6.1).
+    connection.
   user_id : UUID
     The session's user.
   operation : Operation
@@ -395,9 +388,9 @@ async def replay_after_conflict(
   -----
   The transaction **must** be a fresh one. A ``23505`` leaves its
   transaction aborted, so the very next statement on it fails ``25P02``
-  (``in_failed_sql_transaction``) — measured, §1(g) probe 4. That is also
-  why this is not the §6.5 savepoint idiom: there the recovery happens
-  inside one transaction, here the whole transaction must die.
+  (``in_failed_sql_transaction``). That is also why this is not the
+  savepoint idiom the counters use: there the recovery happens inside one
+  transaction, here the whole transaction must die.
   """
 
   async def _read(conn: PoolConnection) -> ReceiptDecision:
@@ -415,7 +408,7 @@ async def settle_ambiguous(
   key: UUID,
   digest: str,
 ) -> ReceiptRow:
-  """Resolve a commit whose outcome is unknown, through the receipt (**PIN C5**).
+  """Resolve a commit whose outcome is unknown, through the receipt.
 
   Parameters
   ----------
@@ -450,14 +443,13 @@ async def settle_ambiguous(
     duplicate submission: the key is ours and the digest is ours, so a row
     with another payload proves the row under this key was **not** written
     by the transaction that vanished, and we cannot claim it landed.
-    ``main.py``'s shipped handler then renders the 503 whose ``CP-19``
-    copy forbids resubmission and sends the user to the record.
+    ``main.py``'s handler then renders the 503 whose copy forbids
+    resubmission and sends the user to the record.
 
   Notes
   -----
-  This is the whole of ``SQL-013``'s resolution and it adds **no second
-  lookup path**: it reuses :func:`replay_after_conflict`'s fresh
-  ``READ COMMITTED`` read, which is the one **PIN C5** names.
+  This adds **no second lookup path**: it reuses
+  :func:`replay_after_conflict`'s fresh ``READ COMMITTED`` read.
 
   The transaction is never retried. Retrying a commit whose outcome is
   unknown is precisely how one submission becomes two rows, which is why

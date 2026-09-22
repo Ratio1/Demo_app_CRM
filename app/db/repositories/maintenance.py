@@ -11,11 +11,11 @@ one.
 
 What keeps that safe is not this module — it is the privilege set. The
 runtime role holds no ``DELETE`` on ``contacts``, ``deals`` or
-``activities`` at all (``DATA_CONTRACT.md`` §5.2), so nothing reachable over
+``activities`` at all, so nothing reachable over
 HTTP can execute any of this even if it could somehow call it. These
 functions run from ``scripts/manage`` alone, as the owner role, in a process
-with no session and no request (``ARC-001``'s allowlist: identity and
-infrastructure modules take explicit ids, never a ``Scope``).
+with no session and no request: an infrastructure module takes explicit
+ids, never a ``Scope``.
 
 ``reset_demo`` deletes in **foreign-key order** — activities, deals,
 contacts, then the operational tables — and never touches ``users``,
@@ -67,7 +67,7 @@ DEMO_DELETE_ORDER: Final[tuple[str, ...]] = (
 
 #: One statement per table, spelled out in full rather than composed from the
 #: table name, so nothing here is built by string formatting even under the
-#: maintenance role (``DATA_CONTRACT.md`` §9.1).
+#: maintenance role.
 _DELETE_SQL: Final[dict[str, LiteralString]] = {
   "activities": "DELETE FROM public.activities",
   "deals": "DELETE FROM public.deals",

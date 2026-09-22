@@ -1,27 +1,21 @@
 """The maintenance use cases behind ``scripts/manage``.
 
-Authority: ``slice-a.md`` §1.2 (the subcommands and their exit codes),
-``DATA_CONTRACT.md`` §6.8 rows 15-19, §6.9 (the last-active-admin rule),
-``ACCESS_MATRIX.md`` ``ACC-605``/``ACC-609``/``ACC-611``, ``H-07``
-(``role`` is set here and nowhere else).
-
 Everything in this module runs as the **maintenance role**, from a CLI, in
-its own process. There is no web route to any of it (spec §2), which is
+its own process. There is no web route to any of it, which is
 what keeps account administration off the attack surface entirely: an
 attacker with a session cannot create, disable or re-role anybody, because
 the code that could is not reachable over HTTP.
 
-``ARC-018``(b), in **R51**'s (2026-09-22) wording: this is the one module
-that references the functions writing ``role`` or ``is_active`` —
-``insert_user`` and ``set_active`` — together with
+This is the one module that references the functions writing ``role`` or
+``is_active`` — ``insert_user`` and ``set_active`` — together with
 ``count_active_admins``. The ``UPDATE`` behind ``set_active`` is the only
 place ``is_active`` is ever written, and it lives in
 ``app/db/repositories/users.py`` like every other statement in this
 application.
 
-**``role`` is written once, at INSERT, and never updated** — ``ARC-018``(a).
-A role change in this MVP is ``create-user`` plus ``disable-user``: two
-audited operations rather than one silent one.
+**``role`` is written once, at INSERT, and never updated.** A role change
+is ``create-user`` plus ``disable-user``: two audited operations rather
+than one silent one.
 """
 
 from __future__ import annotations
@@ -136,8 +130,9 @@ def normalize_email(email: str) -> str:
   Returns
   -------
   str
-    ``email.strip().lower()`` — byte for byte ``DATA_CONTRACT.md`` §3.2's
-    rule, and byte for byte what ``account_key`` normalizes before
+    ``email.strip().lower()`` — byte for byte the rule behind
+    ``users.email_norm``, and byte for byte what ``account_key``
+    normalizes before
     hashing, so one account is always one throttle row and one unique key.
   """
   return email.strip().lower()
@@ -277,7 +272,7 @@ async def create_user(
   display_name : str
     Their display name.
   role : str
-    ``admin`` or ``agent`` — set **here and nowhere else** (``H-07``).
+    ``admin`` or ``agent`` — set **here and nowhere else**.
   password : str
     The initial password the operator hands over.
   correlation_id : str
@@ -298,7 +293,7 @@ async def create_user(
   -----
   ``must_change_password`` is **true**: somebody other than the account
   holder knows this password, so it is a hand-over credential and the
-  first login must replace it (``S1``).
+  first login must replace it.
   """
   now = clock.now()
   password_hash = await passwords.hash(password)
@@ -372,7 +367,7 @@ async def reset_password(
 
   Notes
   -----
-  Operator-only recovery (``S1``). Every session of that user is deleted
+  Operator-only recovery. Every session of that user is deleted
   in the same transaction as the new hash, so a reset always ends whatever
   access the old password was supporting — including an attacker's.
   """
@@ -445,15 +440,15 @@ async def disable_user(
 
   Notes
   -----
-  ``DATA_CONTRACT.md`` §6.9, and the reason this is the one command that
-  genuinely needs ``SERIALIZABLE``: the ``UPDATE`` runs **first** and the
+  This is the one command that genuinely needs ``SERIALIZABLE``: the
+  ``UPDATE`` runs **first** and the
   ``count(*)`` is a predicate read taken **after** this transaction's own
   write. Two concurrent invocations, each disabling the other's
   administrator, each see ``1`` locally; PostgreSQL's SSI detects the
   read-write conflict and aborts one with ``40001``. The retry wrapper
   re-runs it, the re-read now sees ``0``, and it fails with this domain
   error — which is never retried. At ``READ COMMITTED`` both would commit
-  and the deployment would be left with no administrator (``SQL-014``).
+  and the deployment would be left with no administrator.
 
   The account's sessions are deleted in the same transaction, so disabling
   takes effect immediately rather than at the next expiry.
@@ -515,7 +510,7 @@ async def set_origin(
   Notes
   -----
   CLI-only, by design: the runtime role holds ``SELECT`` on
-  ``app_settings`` and nothing more (``DATA_CONTRACT.md`` §5.2), so no web
+  ``app_settings`` and nothing more, so no web
   path — and no compromised session — can repoint the origin the
   ``Host``/``Origin`` check depends on.
   """
@@ -576,15 +571,15 @@ async def ensure_demo_agent(
   Notes
   -----
   ``must_change_password`` is **false**, which is the one way this differs
-  from :func:`create_user`, and it is a deliberate, narrow exception
-  (``S1``): a demo agent that had to change its password at first login
-  could not be signed into during a demo without changing it. It is
+  from :func:`create_user`, and it is a deliberate, narrow exception: a
+  demo agent that had to change its password at first login could not be
+  signed into during a demo without changing it. It is
   justified only because these two accounts hold fictional ``example.test``
   data and are named in the README as demo accounts; every human account
   still goes through ``create-user`` and its forced reset.
 
-  ``role`` is ``agent``, set at INSERT like every other account (``H-07``,
-  ``ARC-018``) — this module remains the only one that references
+  ``role`` is ``agent``, set at INSERT like every other account — this
+  module remains the only one that references
   :func:`~app.db.repositories.users.insert_user`.
   """
   now = clock.now()

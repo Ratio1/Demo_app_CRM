@@ -1,14 +1,14 @@
 """The ``SERIALIZABLE`` transaction runner and its retry contract.
 
-Spec §5: "Short ``SERIALIZABLE`` writes recheck authorization inside the
-transaction. Retry the entire transaction on ``40001``/confirmed retryable
-``40P01``: maximum five attempts, exponential backoff/jitter. […] never
-blindly retry ambiguous commits."
+Writes are short ``SERIALIZABLE`` transactions that recheck authorization
+inside the transaction. The whole transaction is retried on ``40001`` and on
+a confirmed retryable ``40P01`` — at most five attempts, with exponential
+backoff and jitter — and an ambiguous commit is never retried.
 
 Three properties carry that:
 
 *Classification is by SQLSTATE string, never by exception class name.* The
-psycopg class names were never independently confirmed (``DECISIONS.md`` §3),
+psycopg class names were never independently confirmed,
 and a class hierarchy is the library's business; the five-character SQLSTATE
 is the server's contract and is identical on PostgreSQL and on a Cockroach-wire
 database.
@@ -24,14 +24,14 @@ database.
 resolves through the receipt table. Retrying it blindly is how a single
 submission becomes two rows.
 
-Slice C adds a fourth, and it is a *testability* property rather than a new
-rule (``contracts/slice-c.md`` §1(c), ``PIN C4``): *the timing is injected.*
+A fourth is a *testability* property rather than a rule: *the timing is
+injected.*
 :class:`TransactionRunner` takes its ``sleep``, its ``jitter`` and its optional
 ``Clock`` through construction, so a test can observe the exact backoff
 schedule with no wall-clock wait at all, and an exhausted budget raises
 :class:`RetryExhausted` — carrying the attempt count as an **attribute**
-rather than as a message to parse. The two module-level functions stay, build a
-default runner and delegate, so the fourteen shipped call sites do not move.
+rather than as a message to parse. The two module-level functions build a
+default runner and delegate, so a caller that needs no seams can ignore them.
 """
 
 from __future__ import annotations
@@ -73,9 +73,9 @@ BACKOFF_CAP_S: float = 1.0
 #: Attempt ceiling for the short ``READ COMMITTED`` transactions — session
 #: reads, counter increments, the origin lookup. Lower than
 #: :data:`MAX_ATTEMPTS` because none of them re-reads a business row under a
-#: version guard: a serialization failure here is the portability hedge of
-#: ``DATA_CONTRACT.md`` §6.1 (a Cockroach-wire target may promote
-#: ``READ COMMITTED``), not the expected outcome it is for a business write.
+#: version guard: a serialization failure here is a portability hedge — a
+#: Cockroach-wire target may promote ``READ COMMITTED`` — and not the
+#: expected outcome it is for a business write.
 RC_MAX_ATTEMPTS: int = 3
 
 #: ``40001`` serialization_failure and ``40P01`` deadlock_detected. Both are
@@ -95,8 +95,8 @@ AMBIGUOUS_SQLSTATES: frozenset[str] = frozenset({"57P01", "57P02", "57P05"})
 _SET_SERIALIZABLE = sql.SQL("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
 _SET_READ_COMMITTED = sql.SQL("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
 
-#: ``SERIALIZABLE, READ ONLY`` — the pipeline's snapshot (``PIN C6``,
-#: ``contracts/slice-c.md`` §1(c)). ``READ ONLY`` is not decoration: a write
+#: ``SERIALIZABLE, READ ONLY`` — the pipeline's snapshot. ``READ ONLY`` is
+#: not decoration: a write
 #: attempted inside such a transaction is refused by the **server** with
 #: ``25006``, which makes "this transaction reads" a property of the
 #: transaction rather than of the caller's good behaviour.
@@ -121,7 +121,7 @@ class AmbiguousCommit(Exception):
   attempts : int | None
     The 1-based number of the attempt whose commit was in flight. The same two
     facts the message spells out, as attributes, so a caller never has to
-    parse the message (``contracts/slice-c.md`` §1(c)).
+    parse the message.
   """
 
   def __init__(self, message: str, *, op: str | None = None, attempts: int | None = None) -> None:
@@ -154,8 +154,7 @@ class RetryExhausted(Exception):
   a *budget* failure. It is also the opposite of :class:`AmbiguousCommit` — a
   serialization failure reported by the server is a **confirmed** abort, so
   nothing was written and the honest answer is "try again", never "do not
-  resubmit" (``contracts/slice-c.md`` §1(h) ask A-2, answered in §2(b) note 5:
-  the 503 ``unavailable`` page).
+  resubmit" — which is what the 503 ``unavailable`` page says.
 
   The message carries ``op`` and the attempt count only — no SQL text, no
   parameters, no record values — so it is safe to log verbatim. The count is
@@ -172,10 +171,10 @@ class RetryExhausted(Exception):
   elapsed_s : float | None
     Seconds from the first attempt to the last, read from the injected
     :class:`app.security.clock.Clock`. ``None`` when the runner was built
-    without one, which is the module-level shims' case (``ARC-019`` forbids the
-    standard library's monotonic counter outside ``app/security/clock.py``, and B3 forbids
-    ``app/db/**`` from importing ``app/security/**`` at runtime, so a default
-    runner cannot own a clock).
+    without one, which is the module-level shims' case: the standard
+    library's monotonic counter is not read outside
+    ``app/security/clock.py``, and ``app/db/**`` imports nothing from
+    ``app/security/**`` at runtime, so a default runner cannot own a clock.
   """
 
   def __init__(
@@ -288,8 +287,7 @@ def _backoff_ceiling(attempt: int, policy: RetryPolicy) -> float:
   -----
   Separating the ceiling from the draw is what makes the schedule assertable:
   a test injects ``jitter=lambda ceiling: ceiling`` and observes those four
-  numbers exactly, while production keeps the full-jitter draw
-  (``contracts/slice-c.md`` §1(c), ``SQL-012`` part 3).
+  numbers exactly, while production keeps the full-jitter draw.
 
   The doubling is a shift rather than ``2 ** n``, and the shift count is
   bounded by :data:`_MAX_DOUBLINGS`: the clamp against ``cap_s`` comes
@@ -330,9 +328,8 @@ class TransactionRunner:
 
   One instance is built in the application lifespan with the application
   :class:`app.security.clock.Clock` and reaches the services through the
-  request context (``contracts/slice-c.md`` §2(i) amendment A-14). The two
-  module-level functions build a default instance per call and delegate, so
-  every shipped call site keeps working unchanged.
+  request context. The two module-level functions build a default instance
+  per call and delegate, so a caller that needs no seams can ignore them.
 
   Notes
   -----
@@ -340,7 +337,7 @@ class TransactionRunner:
 
   ``sleep`` receives the **computed delay in seconds** and may return at once,
   so a test records the schedule without any wall-clock wait while production
-  passes :func:`asyncio.sleep`. It is the hook ``PIN C4`` names.
+  passes :func:`asyncio.sleep`.
 
   ``jitter`` receives the attempt's **ceiling** and returns a delay inside it.
   Without an injectable jitter the schedule could only ever be asserted as an
@@ -349,10 +346,10 @@ class TransactionRunner:
   ``clock`` is **optional and is never control flow**: only ``monotonic()`` is
   read, and only to stamp elapsed time onto :class:`RetryExhausted` and the
   log line. It has to be optional because two standing rules make a mandatory
-  one impossible — ``ARC-019`` forbids the standard library's monotonic counter
-  outside ``app/security/clock.py``, and B3 forbids ``app/db/**`` from importing
-  ``app/security/**`` at runtime — so a module-level default runner cannot own
-  a clock (``contracts/slice-c.md`` §1(h) ask A-1).
+  one impossible — the standard library's monotonic counter is not read
+  outside ``app/security/clock.py``, and ``app/db/**`` imports nothing from
+  ``app/security/**`` at runtime — so a module-level default runner cannot
+  own a clock.
   """
 
   def __init__(
@@ -439,7 +436,7 @@ class TransactionRunner:
     ``SERIALIZABLE`` side there is no such catcher — ``app/services/contacts.py``
     catches ``psycopg.Error`` only to test for ``23505`` and re-raises
     everything else — so :class:`RetryExhausted` propagating past it is the
-    intended path (``contracts/slice-c.md`` §1(c)).
+    intended path.
     """
     return await self._run(
       fn,
@@ -529,7 +526,7 @@ class TransactionRunner:
 
     Notes
     -----
-    The pipeline is this wrapper's first caller (``PIN C6``): a column's header
+    The pipeline is this wrapper's first caller: a column's header
     count and € total come from one statement and its cards from another, the
     two are rendered side by side, and at ``READ COMMITTED`` a commit between
     them is *visible* as a column whose header disagrees with its cards. The
@@ -681,12 +678,11 @@ async def run_serializable[T](
   module-level runner cannot own one. Same attempt ceiling, same SQLSTATE
   sets, same commit-window flag, same :class:`AmbiguousCommit`.
 
-  The one behavioural delta against the Slice B shim is the exhausted budget:
-  it now raises :class:`RetryExhausted` instead of re-raising the last
-  ``psycopg.Error`` bare. That is the intended path — ``contracts/slice-c.md``
-  §1(c) reasons it through ``app/services/contacts.py``'s
-  ``except psycopg.Error`` clause, which tests for ``23505`` and re-raises
-  everything else — and it is what makes ``SQL-012``'s cap assertable.
+  An exhausted budget raises :class:`RetryExhausted` rather than re-raising
+  the last ``psycopg.Error`` bare. That is the intended path: a service's
+  ``except psycopg.Error`` clause tests for ``23505`` and re-raises
+  everything else, so the exhausted budget travels past it to the handler,
+  and the attempt cap can be asserted by a test.
   """
   return await TransactionRunner(pool).serializable(fn, op=op, attempts=attempts)
 
@@ -732,17 +728,17 @@ async def run_read_committed[T](
 
   Notes
   -----
-  ``slice-a.md`` §10(c): the same body as :func:`run_serializable` with
+  The same body as :func:`run_serializable` with
   ``SET TRANSACTION ISOLATION LEVEL READ COMMITTED`` as the transaction's
   first statement. The level is set explicitly although it is PostgreSQL's
   default, because a CockroachDB-style target's default is not, and the
   ``40001``/``40P01`` wrapping is kept for the same reason: such an engine
   may promote this level and hand back a serialization failure the caller
-  never asked for (``DATA_CONTRACT.md`` §6.1, §9.3 item 2).
+  never asked for.
 
   This is the wrapper the counter transactions use. ``register_failure`` and
   ``charge`` run here on their **own** acquisition so that the count survives
-  the rollback of the auth path that provoked it (``SQL-027``) — which is a
+  the rollback of the auth path that provoked it — which is a
   property of *where the caller opens this*, not of anything in this
   function.
 

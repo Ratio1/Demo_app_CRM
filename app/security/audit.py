@@ -1,15 +1,15 @@
-"""Audit rows: identifiers only, and atomic with what they describe (``S7``).
+"""Audit rows: identifiers only, and atomic with what they describe.
 
-Authority: ``slice-a.md`` §1.1, ``DATA_CONTRACT.md`` §3.6 (the closed
-action and object-type vocabulary, and the ``outcome`` pinned per action),
-§6.8 (which row writes which action).
+The action and object-type vocabularies are closed, and the ``outcome``
+that may accompany each action is fixed; both are enforced by CHECK
+constraints in ``migrations/0002_auth_core/16_audit_events.sql``.
 
 Two rules carry the control:
 
 *A business audit row rides the caller's transaction.* :func:`record` takes
 the connection the mutation is already using, so the row commits with the
 mutation or not at all — there is no window in which the change exists and
-its record does not (``SQL-016``).
+its record does not.
 
 *A denial audit row does not.* :func:`record_denial` opens its own short
 transaction **after** the denying transaction has ended, and swallows its
@@ -76,9 +76,9 @@ __all__ = [
   "record_denial",
 ]
 
-#: The Slice A and Slice B subset of ``ck_audit_events_action``'s 31 values.
-#: Every one is emitted by a named row of ``DATA_CONTRACT.md`` §6.8; nothing
-#: here is admitted-but-unwritten.
+#: The authentication and account subset of ``ck_audit_events_action``'s 31
+#: values. Every one of them is written by a code path in this application;
+#: nothing here is admitted-but-unwritten.
 ACTION_LOGIN_SUCCEEDED: Final = "login_succeeded"
 ACTION_LOGIN_FAILED: Final = "login_failed"
 ACTION_LOGOUT: Final = "logout"
@@ -92,10 +92,8 @@ ACTION_PROVISIONED: Final = "provisioned"
 ACTION_FORCED_RESET_BLOCKED: Final = "forced_reset_blocked"
 ACTION_BUDGET_DENIED: Final = "budget_denied"
 
-#: Slice B. The five business verbs of ``DATA_CONTRACT.md`` §6.8 rows 6-9
-#: and the reassign row, each written in the same transaction as the
-#: mutation it describes, and the three denial actions of
-#: ``ACCESS_MATRIX.md`` §4.5 rows 1, 4 and 6 — the only denial triples a
+#: The contact verbs, each written in the same transaction as the mutation
+#: it describes, and the three denial actions — the only denial triples a
 #: contact surface emits. ``ck_audit_events_denied`` is an *iff*: these
 #: three carry ``outcome='denied'`` and nothing else, and the five verbs
 #: never carry it.
@@ -108,18 +106,18 @@ ACTION_ACCESS_DENIED: Final = "access_denied"
 ACTION_ROLE_DENIED: Final = "role_denied"
 ACTION_INPUT_REJECTED: Final = "input_rejected"
 
-#: Slice C. ``DATA_CONTRACT.md`` §6.8 rows 10-12 and §3.6's emission map:
-#: each rides the ``SERIALIZABLE`` transaction of the mutation it describes,
+#: The deal verbs: each rides the ``SERIALIZABLE`` transaction of the
+#: mutation it describes,
 #: carries ``object_type='deal'`` and the deal's id, and never
 #: ``outcome='denied'``. All three stage moves — lateral, Won and Lost —
 #: record the **one** action ``deal_stage_changed``: they are one statement
 #: and one receipt vocabulary, and the stage that was reached is a fact of
-#: the row, not of the action name (``contracts/slice-c.md`` §1(e)).
+#: the row, not of the action name.
 ACTION_DEAL_CREATED: Final = "deal_created"
 ACTION_DEAL_UPDATED: Final = "deal_updated"
 ACTION_DEAL_STAGE_CHANGED: Final = "deal_stage_changed"
 
-#: Slice D. ``activity_created`` rides the ``SERIALIZABLE`` transaction of the
+#: ``activity_created`` rides the ``SERIALIZABLE`` transaction of the
 #: append it describes and carries ``object_type='activity'``; there is no
 #: ``activity_updated`` and no ``activity_deleted`` in the vocabulary, because
 #: the runtime role holds neither privilege on the table.
@@ -169,7 +167,8 @@ async def record(
   object_type : str
     One of the seven values ``ck_audit_events_object_type`` admits.
   object_id : UUID | None
-    The object acted on, or ``None`` where §3.6's emission map says so.
+    The object acted on, or ``None`` where the action names no object — a
+    failed login against an account that does not exist, for instance.
   action : str
     One of the 31 values ``ck_audit_events_action`` admits.
   outcome : str
@@ -177,16 +176,16 @@ async def record(
     makes the pairing an *iff*, so a mismatched pair is rejected by the
     database rather than silently stored.
   correlation_id : str
-    The request's id, 36 characters (**R33**) — the join to the log line.
+    The request's id, 36 characters — the join to the log line.
   at : datetime
     The instant, supplied by the caller's clock; the schema bans server
-    clocks (``DATA_CONTRACT.md`` §2.3).
+    clocks.
 
   Notes
   -----
   The event id is generated here rather than by the database: ids are
-  application-generated throughout this schema (§2.2), which also lets a
-  test pin one.
+  application-generated throughout this schema, which also lets a test fix
+  one in advance.
   """
   await insert_event(
     conn,
@@ -218,10 +217,10 @@ async def record_denial(
   pool : Pool
     The process pool. A fresh acquisition, taken only after the denying
     transaction has ended and released its own connection — a request
-    holds at most one connection at a time (``DATA_CONTRACT.md`` §6.1).
+    holds at most one connection at a time.
   actor_id : UUID | None
     The authenticated actor. Pre-session denials never reach this function
-    at all (§3.6): they are logged to stdout and nothing else.
+    at all: they are logged to stdout and nothing else.
   object_type : str
     The surface the request targeted.
   object_id : UUID | None

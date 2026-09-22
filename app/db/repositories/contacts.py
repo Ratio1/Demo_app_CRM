@@ -1,19 +1,19 @@
 """``contacts`` — the first business repository, and the first ``Scope`` consumer.
 
-`contracts/slice-b.md` §1(b) and §1(c). Every public function takes a
-mandatory :class:`app.security.principal.Scope` as its first *business*
-argument (``PIN 7``, ``ARC-001``), and the ownership predicate it carries is
-**in the SQL** — in the list, in the count, in the search, in the detail read
-and in every ``UPDATE``. There is no Python post-filter anywhere in this
+Every public function takes a mandatory
+:class:`app.security.principal.Scope` as its first *business* argument,
+and the ownership predicate it carries is **in the SQL** — in the list, in
+the count, in the search, in the detail read and in every ``UPDATE``. There
+is no Python post-filter anywhere in this
 module, because a post-filter still leaks existence through counts and
-pagination totals (``PLAN.md`` §5).
+pagination totals.
 
 Four shapes carry that, and each is a property of the code rather than of a
 review:
 
 *One ``WHERE`` builder.* :func:`_visible_where` composes the list's predicate
 and the count consumes the identical fragment, so a count can never see a row
-the list cannot (``DATA_CONTRACT.md`` §6.6). The ownership conjunct is one of
+the list cannot. The ownership conjunct is one of
 exactly **two** module-level literals chosen by ``scope.is_admin`` — never
 ``(%(admin)s OR c.owner_id = %(actor_id)s)``, which would put the whole
 authorization decision inside one bound parameter and deny the planner
@@ -21,16 +21,16 @@ authorization decision inside one bound parameter and deny the planner
 
 *The search ``OR`` is parenthesised inside the fragment constant.* An
 unparenthesised ``OR`` beside the ownership conjunct makes every row of every
-owner match — the classic scope bypass (``ACC-103``, ``SQL-032``). The
+owner match — the classic scope bypass. The
 parentheses live in the constant, so no edit to the builder can lose them.
 
 *Every write is versioned.* ``WHERE id = %(contact_id)s AND version =
-%(version)s`` with ``version = version + 1`` in the same statement (§4.1); no
+%(version)s`` with ``version = version + 1`` in the same statement; no
 trigger, ever. Zero rows matched is reported as ``None`` and conflates
 foreign, missing, stale and wrong-archive-state **on purpose**, so that no
 single statement is an existence oracle. The service re-reads under the
 scope-only predicate and decides which 404 or which 409 context that was
-(§4.3, ``PIN 3``, ``PIN 4``).
+.
 
 *Nothing is deleted.* Archive sets ``archived_at``; the runtime role holds no
 ``DELETE`` on this table at all (migration ``0003`` step 05), so an archive
@@ -39,7 +39,7 @@ written as a delete would fail with ``42501`` rather than lose a row.
 ``Scope`` is imported under ``TYPE_CHECKING`` only: the annotations need the
 type, and ``scope.actor_id`` / ``scope.is_admin`` are plain attribute reads at
 runtime. That keeps ``app/db/**`` free of any runtime import of
-``app/security/**`` (§1(b) B3).
+``app/security/**``.
 """
 
 from __future__ import annotations
@@ -78,24 +78,24 @@ __all__ = [
   "update_contact",
 ]
 
-#: ``UX_FLOWS.md``'s pinned page size for contacts.
+#: The contact list's page size.
 DEFAULT_PER_PAGE: Final[int] = 25
-#: ``ACC-112``'s hard clamp: a larger ``per_page`` is reduced, never refused.
+#: The hard clamp: a larger ``per_page`` is reduced, never refused.
 MAX_PER_PAGE: Final[int] = 100
-#: ``DATA_CONTRACT.md`` §6.6's server-side offset clamp. A page past it repeats
+#: The server-side offset clamp. A page past it repeats
 #: the last reachable window rather than making the database skip unboundedly.
 MAX_OFFSET: Final[int] = 10_000
 
-#: The five sort keys ``ACCESS_MATRIX.md`` §5.2 allows, default ``updated_at``.
+#: The five sort keys the contact list allows, default ``updated_at``.
 type SortKey = Literal["name", "company", "email", "created_at", "updated_at"]
 type SortDir = Literal["asc", "desc"]
 #: The lead/customer column is ``kind``; the request token ``status`` is the
-#: archive filter and reaches ``archived_at`` (§3.9's token map).
+#: archive filter and reaches ``archived_at``.
 type ContactKind = Literal["lead", "customer"]
 type StatusFilter = Literal["active", "archived", "all"]
 
 #: The ownership conjunct of a **read**, aliased, as ``P-CONTACT-SCOPE-AGENT``
-#: and ``P-CONTACT-VISIBLE-AGENT`` write it (§6.6). Its admin twin is the
+#: and ``P-CONTACT-VISIBLE-AGENT`` write it. Its admin twin is the
 #: absence of a conjunct, not a widened one.
 _READ_OWNED: Final = sql.SQL("AND c.owner_id = %(actor_id)s")
 _READ_ANY: Final = sql.SQL("")
@@ -110,8 +110,8 @@ _VISIBLE_KIND: Final = sql.SQL("c.kind = %(kind)s")
 
 #: Prefix-only search over the three normalized columns, OR-ed **inside one
 #: pair of parentheses** and reusing a single bound parameter. No leading
-#: ``%``, no ``ILIKE``, no ``~``, no ``SIMILAR TO``, no ``COLLATE`` (§6.6,
-#: §9.1). The service escapes ``!``, ``%`` and ``_`` in that order and appends
+#: ``%``, no ``ILIKE``, no ``~``, no ``SIMILAR TO``, no ``COLLATE``. The
+#: service escapes ``!``, ``%`` and ``_`` in that order and appends
 #: the single trailing ``%``.
 _VISIBLE_SEARCH: Final = sql.SQL(
   "(   c.full_name_lower LIKE %(term)s ESCAPE '!'\n"
@@ -121,14 +121,14 @@ _VISIBLE_SEARCH: Final = sql.SQL(
 
 #: ``status`` selects a fragment; the submitted string never reaches SQL.
 #: ``all`` maps to ``None`` — **no** conjunct — which is why ``active`` being
-#: the default makes ``PIN 4``'s "archived hidden by default" the absence of an
-#: input rather than a branch a caller can forget.
+#: the default makes "archived hidden by default" the absence of an input
+#: rather than a branch a caller can forget.
 #:
 #: The three keys are spelled out and the lookup is indexed rather than
 #: ``.get``-ed, so that a value outside the enum raises ``KeyError`` — a
 #: programming error, exactly as an out-of-allowlist sort key is — instead of
 #: silently reading as ``all`` and widening the result to archived rows. The
-#: service has already answered 400 for such a value (``ACC-109``); this is the
+#: service has already answered 400 for such a value; this is the
 #: failure mode of the one filter that could otherwise fail *open*.
 _ARCHIVE_FRAGMENTS: Final[dict[StatusFilter, sql.SQL | None]] = {
   "active": sql.SQL("c.archived_at IS NULL"),
@@ -140,7 +140,7 @@ _ARCHIVE_FRAGMENTS: Final[dict[StatusFilter, sql.SQL | None]] = {
 #: tiebreaker on ``c.id``. The submitted ``sort``/``dir`` strings only *look
 #: up* a fragment; no request text ever reaches an ``ORDER BY``. A ``KeyError``
 #: here is a programming error — the service has already answered 400 for a
-#: value outside the allowlist (``ACC-110``, ``ACC-111``).
+#: value outside the allowlist.
 #:
 #: The tiebreaker follows the sort direction rather than being pinned to
 #: ``ASC``: PostgreSQL can walk ``ix_contacts_owner_archived_name`` backwards
@@ -162,13 +162,13 @@ _ORDER_BY: Final[dict[tuple[SortKey, SortDir], sql.SQL]] = {
 
 #: The three reads spell their column list out in full rather than sharing a
 #: fragment — the package convention ``users.py`` set, for the reason it gives:
-#: every SELECT names its columns (``ARC-011``) and SQL assembled from pieces
+#: every SELECT names its columns and SQL assembled from pieces
 #: is exactly the shape a reviewer should not have to think about.
 #: :func:`_row_to_contact` unpacks both of the row-returning ones, so the two
 #: lists must stay identical; they are adjacent here so a drift is visible.
 #:
-#: ``u.display_name`` is amendment **A-8**: ``CONTRACTS.md`` §8.2/§8.3 freeze
-#: ``owner_name`` on both the detail and the row, and the join is over a
+#: ``u.display_name`` comes from the join because both the detail page and
+#: the list row render ``owner_name``. The join is over a
 #: ``NOT NULL`` foreign key, so it cannot change the row count and the count
 #: statement's identical ``WHERE`` still holds.
 _GET_CONTACT_SQL: Final = sql.SQL("""
@@ -197,7 +197,7 @@ SELECT count(*)
  {where}
 """)
 
-#: The dashboard's first tile (Slice D). Deliberately **not** built from
+#: The dashboard's first tile. Deliberately **not** built from
 #: :func:`_visible_where`: the dashboard takes no query at all, so composing a
 #: whole ``ContactQuery`` to reach one predicate would put a search term, a
 #: kind filter and a sort key on a statement that has none of them. The
@@ -261,8 +261,8 @@ UPDATE public.contacts
 """)
 
 #: Admin only, so there is no ownership conjunct at all and none is composed.
-#: ``archived_at IS NULL`` is ``R25``: reassignment is denied while a contact
-#: is archived — restore first.
+#: ``archived_at IS NULL``: reassignment is denied while a contact is
+#: archived — restore first.
 _REASSIGN_CONTACT_SQL: Final[LiteralString] = """
 UPDATE public.contacts
    SET owner_id   = %(new_owner_id)s,
@@ -286,10 +286,10 @@ class ContactRow:
     Whose contact. The **only** ownership column in the business schema:
     deals and activities reach their owner by the join to this table.
   owner_name : str
-    ``users.display_name`` of the owner, from the join (amendment **A-8**).
-    ``CONTRACTS.md`` §8.2/§8.3 freeze ``contact.owner_name``, and a second
-    lookup per row would be an N+1; the join is over a ``NOT NULL`` foreign
-    key, so it can never change the row count.
+    ``users.display_name`` of the owner, from the join. Both the detail
+    page and the list row render it, and a second lookup per row would be
+    an N+1; the join is over a ``NOT NULL`` foreign key, so it can never
+    change the row count.
   full_name : str
     As typed. The sort and search key is the normalized ``full_name_lower``,
     which no read returns.
@@ -297,14 +297,14 @@ class ContactRow:
     As typed; may be empty.
   email : str
     As typed. **No unique constraint of any kind** exists on this column
-    (``T-36``, ``SQL-022``).
+   .
   phone : str
     As typed; may be empty.
   kind : str
     ``lead`` or ``customer``.
   archived_at : datetime | None
     ``None`` for an active contact. The only archive flag in the schema, and
-    the only nullable column on the table (§4.2).
+    the only nullable column on the table.
   version : int
     The optimistic-concurrency guard every write carries.
   created_at : datetime
@@ -331,8 +331,8 @@ class ContactRow:
 class ContactFields:
   """The five writable fields, with their normalized companions.
 
-  ``ACCESS_MATRIX.md`` §5.1 allows ``name``, ``company``, ``email``, ``phone``
-  and ``kind`` on create and on edit, and nothing else. The service normalizes
+  ``name``, ``company``, ``email``, ``phone`` and ``kind`` are writable on
+  create and on edit, and nothing else is. The service normalizes
   in Python and fills both halves of each pair; the repository writes what it
   is given and allowlists nothing, because **this dataclass's field list is
   the allowlist**. That is why a mass-assignment bug cannot exist in this
@@ -442,7 +442,7 @@ def _row_to_contact(row: tuple[object, ...]) -> ContactRow:
   ContactRow
     The row with its ``TEXT`` ids converted back to :class:`uuid.UUID`. This
     is the module's single conversion point in that direction
-    (``DATA_CONTRACT.md`` §2.2), and the reason the list, the detail read and
+   , and the reason the list, the detail read and
     every mutation's read-back cannot disagree about a column's meaning.
   """
   archived_at = row[8]
@@ -496,7 +496,7 @@ def _write_scope(scope: Scope) -> sql.SQL:
   Notes
   -----
   The conjunct is in the ``UPDATE`` itself and not only in the re-read the
-  service does first (``ACC-014``). The re-read decides the *status*; this
+  service does first. The re-read decides the *status*; this
   conjunct means that a service which skipped it still cannot write a foreign
   row.
   """
@@ -530,7 +530,7 @@ def _visible_where(scope: Scope, query: ContactQuery) -> tuple[sql.Composed, dic
   Notes
   -----
   This is the single place a contact predicate is built, which is what makes
-  §6.6's "a count can never see a row the list cannot" a property of the code:
+  "a count can never see a row the list cannot" a property of the code:
   :func:`list_contacts` hands the very same object to both of its statements.
 
   The empty case is real and reachable: an admin asking for ``status=all``
@@ -572,11 +572,11 @@ async def list_contacts(conn: PoolConnection, scope: Scope, *, query: ContactQue
   ----------
   conn : PoolConnection
     A connection inside the caller's short ``READ COMMITTED`` transaction
-    (§6.8 row 6). A list page never runs at ``SERIALIZABLE``: taking
+   . A list page never runs at ``SERIALIZABLE``: taking
     predicate locks over a whole list would make every concurrent contact
     edit a ``40001`` candidate for no benefit.
   scope : Scope
-    The caller's authorization scope, mandatory (``PIN 7``).
+    The caller's authorization scope, mandatory.
   query : ContactQuery
     The already-validated request.
 
@@ -589,21 +589,22 @@ async def list_contacts(conn: PoolConnection, scope: Scope, *, query: ContactQue
   Notes
   -----
   Two statements, not one. ``count(*) OVER ()`` would make it one round trip,
-  but a window function is absent from §9.2's portable set and would make the
-  total's correctness depend on the ``LIMIT``/``OFFSET`` shape. The honest
+  but a window function is outside the portable SQL subset this codebase
+  keeps to, and it would make the total's correctness depend on the
+  ``LIMIT``/``OFFSET`` shape. The honest
   consequence, stated rather than hidden: at ``READ COMMITTED`` the two
   statements are two snapshots, so a row committed between them can make
   ``total`` disagree with the page by one. It can **never** show a row the
   predicate excludes, because the predicate is the same object; only the
-  dashboard's totals are pinned exact, and they get their own
-  ``SERIALIZABLE, READ ONLY`` transaction in Slice D.
+  dashboard's totals are exact, and they get their own
+  ``SERIALIZABLE, READ ONLY`` transaction.
 
   ``LIMIT`` and ``OFFSET`` are bound parameters, clamped here as well as in
-  the service. A page past the end is an ordinary empty result (``ACC-112``),
-  never an error. Keyset pagination is §6.6's documented upgrade path and is
-  deliberately not taken: at the profile's 1,000 contacts ``OFFSET`` stays
-  inside a bounded scan, and keyset would change pagination markup that
-  ``R24``/``R38`` have already frozen.
+  the service. A page past the end is an ordinary empty result,
+  never an error. Keyset pagination is the upgrade path if the data ever
+  outgrows this, and is deliberately not taken here: at the few thousand
+  contacts this application is sized for ``OFFSET`` stays inside a bounded
+  scan, and keyset would change the pagination markup.
   """
   where, params = _visible_where(scope, query)
   page = max(query.page, 1)
@@ -640,14 +641,14 @@ async def get_contact(conn: PoolConnection, scope: Scope, *, contact_id: UUID) -
   ContactRow | None
     ``None`` for a foreign contact **and** for a missing one: the two are one
     code path, which is what makes the 404 byte-identical for the same
-    principal, modulo the correlation id (``PIN 8``, ``R27``).
+    principal, modulo the correlation id.
 
   Notes
   -----
   There is deliberately **no archive clause**. An archived contact stays
-  readable to its owner (``ACC-006``), and this read is also the re-read every
+  readable to its owner, and this read is also the re-read every
   mutation branches on, which has to *see* ``archived_at`` rather than be
-  filtered by it (§4.3). It is what turns a zero-row ``UPDATE`` into the right
+  filtered by it. It is what turns a zero-row ``UPDATE`` into the right
   answer: 404, 409 ``stale`` or 409 with the archived context.
   """
   cursor = await conn.execute(
@@ -684,16 +685,16 @@ async def insert_contact(
 
   Notes
   -----
-  There is no ``owner_id`` parameter. ``ACC-007`` says the owner "is set by
-  the service, never read from the request"; putting it behind the ``Scope``
-  is stronger — there is no parameter through which a request value could
-  arrive, so an agent supplying ``owner_id`` (``ACC-012``) is unreachable from
+  There is no ``owner_id`` parameter. The owner is set from the session,
+  never read from the request, and putting it behind the ``Scope`` is
+  stronger than an allowlist — there is no parameter through which a request value could
+  arrive, so an agent supplying ``owner_id`` is unreachable from
   this module by construction rather than by allowlist. An admin creates for
   themselves too and reassigns afterwards.
 
   ``archived_at`` is the literal ``NULL`` and ``version`` the literal ``1``:
   a new contact is active at version one and no caller could legitimately ask
-  for anything else. The schema carries no DEFAULT clauses (§2.3 rule 1), so
+  for anything else. The schema carries no DEFAULT clauses, so
   both are written here.
 
   Nothing is returned (**A3**): the id is the caller's, and the caller already
@@ -754,16 +755,15 @@ async def update_contact(
   Notes
   -----
   The ``SET`` list is fixed literal text and ``version = version + 1`` rides
-  the same statement (§4.1). ``archived_at IS NULL`` is belt-and-braces for
-  ``ACC-018``: editing an archived own contact matches zero rows, and the
+  the same statement. ``archived_at IS NULL`` is belt-and-braces:
+  editing an archived own contact matches zero rows, and the
   service's re-read is what turns that into the archived 409 context rather
   than the stale one.
 
   The row is read back with the ordinary primary-key ``SELECT`` inside the
-  same transaction rather than with a ``RETURNING`` clause: §9.2 records
-  ``RETURNING`` as portable and permitted while noting that no statement in
-  this contract uses it, and keeping the tree uniform is what makes the R1DB
-  portability claim one claim instead of two.
+  same transaction rather than with a ``RETURNING`` clause: no statement in
+  this codebase uses ``RETURNING``, and keeping the tree uniform is what
+  makes the portability claim one claim instead of two.
   """
   cursor = await conn.execute(
     _UPDATE_CONTACT_SQL.format(scope=_write_scope(scope)),
@@ -817,7 +817,7 @@ async def archive_contact(
   -------
   ContactRow | None
     The archived row, or ``None`` when no row matched — including the case of
-    a contact that is **already** archived (``ACC-023``), which the service's
+    a contact that is **already** archived, which the service's
     re-read separates from a stale version.
 
   Notes
@@ -828,8 +828,8 @@ async def archive_contact(
   silently rewrite ``updated_at``.
 
   This is an ``UPDATE`` and could not be a ``DELETE`` even by mistake: the
-  runtime role holds no ``DELETE`` privilege on ``contacts`` at all (``S7``,
-  migration ``0003`` step 05), so the absence of the grant is the control.
+  runtime role holds no ``DELETE`` privilege on ``contacts`` at all
+  (migration ``0003`` step 05), so the absence of the grant is the control.
   """
   cursor = await conn.execute(
     _ARCHIVE_CONTACT_SQL.format(scope=_write_scope(scope)),
@@ -873,7 +873,7 @@ async def restore_contact(
   -------
   ContactRow | None
     The restored row, or ``None`` when no row matched — including restoring a
-    contact that is already active (``ACC-028``).
+    contact that is already active.
 
   Notes
   -----
@@ -918,7 +918,7 @@ async def reassign_contact(
   contact_id : UUID
     Which contact.
   expected_version : int
-    The version the submitted form carried (``R25``).
+    The version the submitted form carried.
   new_owner_id : UUID
     The target owner, already confirmed active **inside this transaction**.
   now : datetime
@@ -928,7 +928,8 @@ async def reassign_contact(
   -------
   ContactRow | None
     The reassigned row, or ``None`` when no row matched — missing, stale, or
-    archived (``R25``: restore first).
+    archived — a reassign is refused while a contact is archived, so it
+    must be restored first.
 
   Raises
   ------
@@ -937,21 +938,22 @@ async def reassign_contact(
 
   Notes
   -----
-  The ``ValueError`` is **not** the authorization decision — ``ACC-033``'s 403
-  is taken at pipeline step 3, before the transaction opens. It is a
+  The ``ValueError`` is **not** the authorization decision — the ``403``
+  for a non-admin is taken at pipeline step 3, before the transaction
+  opens. It is a
   precondition on an admin-only statement whose scope fragment is *empty*: an
   agent ``Scope`` reaching here would be a programming error that the empty
   fragment could not catch, and a 500 is the right answer to that, never a
   request-shaped one.
 
   Exactly **one row** changes. Children follow by join, because neither
-  ``deals`` nor ``activities`` carries an owner column (§3.10, §3.11), which
-  is what ``SQL-023`` asserts and why no reader can ever observe children
-  under one owner and their parent under another.
+  ``deals`` nor ``activities`` carries an owner column, which is why no
+  reader can ever observe children under one owner and their parent under
+  another.
 
   The target's validity is **not** folded into this statement as an ``EXISTS``
-  subquery: that would collapse ``ACC-032``'s 400 into an indistinguishable
-  zero-row stale/404. It is a separate read composed by the service inside
+  subquery: that would collapse the ``400`` for an invalid target into an
+  indistinguishable zero-row stale/404. It is a separate read composed by the service inside
   this same transaction, so a concurrent ``disable-user`` becomes a ``40001``
   and the retry refuses.
   """
@@ -977,9 +979,8 @@ async def count_visible(conn: PoolConnection, scope: Scope) -> int:
   Notes
   -----
   The ownership conjunct is the same pair every other read in this module
-  uses, so the tile can never count a contact the list would not show
-  (``ACC-301``/``ACC-302``). An admin gets no conjunct rather than a widened
-  one.
+  uses, so the tile can never count a contact the list would not show. An
+  admin gets no conjunct rather than a widened one.
   """
   cursor = await conn.execute(
     _COUNT_VISIBLE_SQL.format(scope=_read_scope(scope)),

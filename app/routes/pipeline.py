@@ -1,17 +1,7 @@
 """The ordered request pipeline every business route runs, in one place.
 
-Authority: ``ACCESS_MATRIX.md`` §1.1 (the check order), §1.2 (the status
-policy and the H-08 unknown-parameter rule), §4.5 rows 4, 6 and 7 (the
-deny-audit triples these helpers write), §5.1 (the writable-field
-allowlists a body is read against), ``contracts/slice-b.md`` §2(c)/§2(f)
-and ``contracts/slice-c.md`` §2(c) (the handler order, restated unchanged
-for the deal routes), **R69** (the zero-difference 409-stale body).
-
-Everything here shipped inside ``app/routes/contacts.py`` in Slice B and is
-**unchanged in behaviour**; Slice C moves it because the deal routes must
-run the *same* order rather than a copy of it (§2(c): *"the handler order
-is the shipped ``_start_mutation`` / ``_start_read`` order, unchanged"*),
-and because two copies of an authorization order are two orders.
+The contact routes and the deal routes run the *same* order rather than a
+copy of it, because two copies of an authorization order are two orders.
 
 The order is fixed and shared so eighteen routes cannot drift: session,
 body, CSRF, content type, budget, forced-reset gate, role, body allowlist.
@@ -22,9 +12,8 @@ cannot burn an authenticated user's budget.
 
 The one thing that varies between the contact surfaces and the deal
 surfaces is the **object type** of the deny row an allowlist rejection
-writes — §4.5 row 6 for a contact surface, row 7 for a deal one — so it is
-a parameter, and the default is the contact surface the Slice B routes
-already pass by omission.
+writes — ``contact`` or ``deal`` — so it is a parameter, and ``contact`` is
+the default.
 """
 
 from __future__ import annotations
@@ -63,7 +52,7 @@ if TYPE_CHECKING:
   from app.security.principal import Principal
 
 __all__ = [
-  "CP_OWED_ZERO_FIELD_STALE",
+  "ZERO_FIELD_STALE_MESSAGE",
   "field",
   "is_fragment_request",
   "positive_int",
@@ -78,25 +67,20 @@ __all__ = [
 
 _DIGITS: Final = re.compile(r"\A[0-9]+\Z")
 
-#: **R63**/**R69** — the body of a 409-stale panel in which **no rendered
-#: field differs**. ``UX_FLOWS.md`` §3.9's own orientation sentence promises
-#: two panels ("Your version is on the left, the saved version on the
-#: right"), which an archive or a restore cannot fill: their form carries a
-#: version and nothing else (``ACCESS_MATRIX.md`` §5.1). That screen keeps
-#: the ``CP-85`` heading — the heading of the screen ``CP-12`` sits on,
-#: which is how R63's *"CP-12's heading"* reads, ``CP-12`` itself being
-#: 409-stale **secondary** copy rather than a heading — and carries this
-#: sentence as its body instead. The ruling supplies the text verbatim and
-#: records the **CP id as owed** to the copy authority; this constant is its
-#: only spelling in the code, so the id lands in one place when it is
-#: issued.
-CP_OWED_ZERO_FIELD_STALE: Final = (
+#: The body of a 409-stale panel in which **no rendered field differs**.
+#: The ordinary stale screen promises two panels ("Your version is on the
+#: left, the saved version on the right"), which an archive or a restore
+#: cannot fill: their form carries a version and nothing else. That screen
+#: keeps the ordinary heading and carries this sentence as its body
+#: instead. One spelling, here, so the two surfaces cannot word it
+#: differently.
+ZERO_FIELD_STALE_MESSAGE: Final = (
   "This record changed since you opened it. Review it and try again."
 )
 
 
 def stale_body(fields: Sequence[Mapping[str, Any]]) -> str | None:
-  """Return the 409-stale panel's body for this comparison (**R69**).
+  """Return the 409-stale panel's body for this comparison.
 
   Parameters
   ----------
@@ -106,22 +90,21 @@ def stale_body(fields: Sequence[Mapping[str, Any]]) -> str | None:
   Returns
   -------
   str | None
-    ``None`` when at least one field differs — the screen then keeps
-    ``UX_FLOWS.md`` §3.9's own orientation sentence — and
-    :data:`CP_OWED_ZERO_FIELD_STALE` when **none** does.
+    ``None`` when at least one field differs — the screen then keeps its
+    ordinary two-panel orientation sentence — and
+    :data:`ZERO_FIELD_STALE_MESSAGE` when **none** does.
 
   Notes
   -----
-  **R69** fixes the predicate as *"no rendered field differs"* rather than
-  *"there are no fields"*: it covers an archive or a restore, whose form
-  has no data field at all, **and** a reassign to the current owner or a
-  stage move someone else already made — one row, rendered, identical on
-  both sides. Promising two panels and then showing two identical ones
-  explains nothing, which is the defect the ruling closes.
+  The predicate is *"no rendered field differs"* rather than *"there are no
+  fields"*: it covers an archive or a restore, whose form has no data field
+  at all, **and** a reassign to the current owner or a stage move someone
+  else already made — one row, rendered, identical on both sides. Promising
+  two panels and then showing two identical ones explains nothing.
   """
   if any(field_row["differs"] for field_row in fields):
     return None
-  return CP_OWED_ZERO_FIELD_STALE
+  return ZERO_FIELD_STALE_MESSAGE
 
 
 def field(form: FormData, name: str) -> str | None:
@@ -131,7 +114,7 @@ def field(form: FormData, name: str) -> str | None:
 
 
 def is_fragment_request(request: Request) -> bool:
-  """Return whether this ``GET`` must answer with the partial (**PIN 5**).
+  """Return whether this ``GET`` must answer with the partial.
 
   Parameters
   ----------
@@ -169,9 +152,9 @@ def query_value(request: Request, key: str) -> tuple[bool, str | None]:
   -------
   tuple[bool, str | None]
     ``ok`` is ``False`` when the key was supplied more than once
-    (``SEC-076``), which is a ``400``; the rule applies to allowlisted keys
+   , which is a ``400``; the rule applies to allowlisted keys
     only, because an unknown key is already gone by the time duplicates are
-    counted (H-08). ``value`` is ``None`` when the key was absent **or
+    counted. ``value`` is ``None`` when the key was absent **or
     empty**: a ``<select>`` always submits something, so an empty value is
     the absence of a choice.
   """
@@ -215,11 +198,11 @@ def read_body(form: FormData, allowed: frozenset[str]) -> dict[str, str] | None:
   -------
   dict[str, str] | None
     Every allowed name, with ``""`` for one the body omitted — which is
-    how an unselected radio group reaches ``CP-66`` rather than a crafted
-    400. ``None`` means the body carried a name outside the set, a
-    **repeated** name, or a non-textual part: all three are crafted
+    how an unselected radio group reaches its field error rather than a
+    crafted-request 400. ``None`` means the body carried a name outside the
+    set, a **repeated** name, or a non-textual part: all three are crafted
     requests, rejected and never ignored, because silence makes mass
-    assignment untestable (``ACCESS_MATRIX.md`` §5.1).
+    assignment untestable.
   """
   counts: dict[str, int] = {}
   for key, value in form.multi_items():
@@ -238,7 +221,7 @@ def read_body(form: FormData, allowed: frozenset[str]) -> dict[str, str] | None:
 async def reject_input(
   request: Request, principal: Principal, *, object_type: str = OBJECT_CONTACT
 ) -> Response:
-  """Answer a crafted query or body with ``400`` and §4.5 row 6 or row 7.
+  """Answer a crafted query or body with ``400`` and an ``input_rejected`` row.
 
   Parameters
   ----------
@@ -247,19 +230,17 @@ async def reject_input(
   principal : Principal
     The resolved actor the row names.
   object_type : str, optional
-    The surface the request targeted: ``contact`` (row 6, the default and
-    what every Slice B route passes by omission) or ``deal`` (row 7). The
-    two rows differ in this field alone, which is why it is a parameter
-    and not a second function.
+    The surface the request targeted: ``contact`` (the default) or
+    ``deal``. The two rows differ in this field alone, which is why it is a
+    parameter and not a second function.
 
   Notes
   -----
   ``object_id`` is ``NULL``: the row records *that* an allowlist refused
   this actor's request, never which value it refused, so no submitted free
-  text reaches a 90-day table the runtime role can read (§4.5 rule 1).
-  The generic ``errors/400.html`` names no field and echoes no value
-  (``CP-80``/``CP-15``), which is what keeps it a different screen from the
-  inline field errors of ``UX_FLOWS.md`` §3.13.
+  text reaches a 90-day table the runtime role can read.
+  The generic ``errors/400.html`` names no field and echoes no value, which
+  is what keeps it a different screen from an ordinary inline field error.
   """
   context = context_of(request)
   await record_denial(
@@ -277,15 +258,15 @@ async def reject_input(
 async def require_admin_audited(
   request: Request, principal: Principal, raw_id: str, *, object_type: str = OBJECT_CONTACT
 ) -> None:
-  """Step 3: the role check, with §4.5 **row 4** written on refusal.
+  """Step 3: the role check, with a ``role_denied`` row written on refusal.
 
   Notes
   -----
   Runs **before** the path id is parsed, so an agent posting to
   ``/contacts/<garbage>/reassign`` meets ``403`` and not ``404``: the role
-  check is constant over objects and leaks nothing about the target
-  (``ACC-033``). ``object_id`` is the path id **iff** it is canonical,
-  ``NULL`` otherwise.
+  check is constant over objects and leaks nothing about the target.
+  ``object_id`` is the path id **iff** it is canonical, ``NULL``
+  otherwise.
   """
   try:
     require_admin(principal)
@@ -324,7 +305,8 @@ async def start_mutation(
     check is constant over objects, so it must not sit behind a check that
     a crafted body could answer first.
   object_type : str, optional
-    Which §4.5 row an allowlist rejection writes; see :func:`reject_input`.
+    Which object type an allowlist rejection records; see
+    :func:`reject_input`.
 
   Returns
   -------
@@ -354,7 +336,7 @@ async def start_read(request: Request) -> Principal:
   Notes
   -----
   The gate refuses through :func:`~app.security.authz.deny_forced_reset`,
-  so the block writes ``ACCESS_MATRIX.md`` §4.5 row 5 (**R67**) — and it
+  so the block writes its ``forced_reset_blocked`` row — and it
   does so for every route that starts here, contacts and deals alike,
   rather than at four sites that could drift apart.
   """

@@ -1,8 +1,8 @@
 """The checksummed, restartable migration runner and its command-line entry point.
 
-Spec §5: "Use explicit, single-operator, checksummed/restartable migrations:
-one DDL statement/step plus verified postcondition. Do not assume transactional
-DDL portability."
+Migrations are explicit and restartable: one DDL statement per step, each
+checksummed and each followed by a postcondition that verifies its effect.
+Transactional DDL is never assumed.
 
 Layout
 ------
@@ -55,8 +55,7 @@ Entry point
 -----------
 ``python -B -m app.db.journal migrate [--grant-to ROLE] [--dry-run]``
   Exit ``0`` on success, ``1`` on a migration failure, ``2`` on a
-  configuration or usage error. ``scripts/manage migrate`` — a Backend-lane
-  file — wraps this; it is not created here.
+  configuration or usage error. ``scripts/manage migrate`` wraps this.
 """
 
 from __future__ import annotations

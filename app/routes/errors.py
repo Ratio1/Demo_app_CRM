@@ -1,11 +1,7 @@
 """One place that turns a refusal into a page.
 
-Authority: ``CONTRACTS.md`` §8.4 (the eight templates and their frozen
-contexts), ``slice-a.md`` §3 (the ``HX-Request`` answer — **R26** — and the
-always-public shell of ``500``/``503`` — **R32**), §4 (which status each
-route may produce), ``R27`` (every step-0 failure is the same body),
-``R37``/**R19** (``ambiguous_commit``), ``R38`` (the ``405`` context),
-**R56** (which shell a ``4xx`` renders in).
+Eight templates, one handler each, and no route renders a status page of
+its own.
 
 Three rules hold the anti-enumeration properties together:
 
@@ -13,23 +9,22 @@ Three rules hold the anti-enumeration properties together:
 ``Host``, foreign ``Origin``, missing CSRF, stale CSRF, a mutation with no
 session — renders ``errors/403.html`` with ``reason="session"`` and the
 public shell. The correlation id is the only byte that differs, and the
-tests that compare two bodies normalize it (``ACC-010``, ``SEC-040``).
+tests that compare two bodies normalize it.
 
 *A fragment gets a fragment.* A request carrying ``HX-Request: true`` is
 answered with ``partials/region_error.html`` and never with a whole
 document, so htmx can never swap a full page into a region. The ``401``
 and ``403`` auth cases additionally carry ``HX-Redirect``, which htmx acts
-on before it looks at the status at all (verified against 2.0.10,
-``slice-a.md`` §8.4).
+on before it looks at the status at all (verified against htmx 2.0.10).
 
-*A `4xx` shell follows the session; a `5xx` shell never asks* (**R56**).
+*A `4xx` shell follows the session; a `5xx` shell never asks*.
 The ``400``/``403(role|forced_reset)``/``404``/``405``/``413``/``429``
 pages resolve the principal once — from ``request.state`` when step 1
 already ran, otherwise with one bounded read — so an authenticated user's
 ``404`` on an unrouted path is the **same body** as their ``404`` on a
 foreign object, which is what "identical 404 **for one principal**"
-(``CONTRACTS.md`` §8.4) means. The ``500``, the ``503`` and the step-0
-``403`` never read a session at all (**R32**, **R27**): after an unhandled
+ means. The ``500``, the ``503`` and the step-0
+``403`` never read a session at all: after an unhandled
 exception, or with the database gone, a page that tries to would fail a
 second time inside the error path.
 """
@@ -94,13 +89,10 @@ PASSWORD_URL: Final = "/account/password"  # noqa: S105 — a route, not a secre
 DASHBOARD_URL: Final = "/dashboard"
 CONTACTS_URL: Final = "/contacts"
 
-#: ``UX_FLOWS.md`` §6.2 / §6.1. The ``405`` page has no ``CP-##`` of its
-#: own (``UX_FLOWS.md`` §3.8 fixes only the behaviour), so its heading and
-#: body are supplied here as resolved strings, which is how ``R38``'s
-#: "``message`` (a copy id)" is read: the value *is* the text, exactly as
-#: ``notice.text`` already is elsewhere in this contract.
-_CP_405_TITLE: Final = "That is not something you can do here"
-_CP_405_MESSAGE: Final = "That request could not be processed. Go back and try again."
+#: The ``405`` page's heading and body, as resolved strings: the value *is*
+#: the text, exactly as a notice's ``text`` already is.
+_METHOD_NOT_ALLOWED_TITLE: Final = "That is not something you can do here"
+_METHOD_NOT_ALLOWED_MESSAGE: Final = "That request could not be processed. Go back and try again."
 
 _REGION_TEXT: Final[dict[int, str]] = {
   401: "Your session ended. Sign in to continue.",
@@ -109,13 +101,13 @@ _REGION_TEXT: Final[dict[int, str]] = {
   503: "Demo_App_CRM is temporarily unavailable. Nothing you did caused this.",
 }
 
-#: **R70**. The ``401`` fragment body is a **pair**, selected by whether a
-#: session cookie was presented — the same evidence **R65** already uses for
-#: the ``?notice=session_ended`` suffix. With a cookie the region keeps
-#: ``CP-07``'s two sentences above; **without one**, "Your session ended" is
+#: The ``401`` fragment body is a **pair**, selected by whether a session
+#: cookie was presented — the same evidence the ``?notice=session_ended``
+#: suffix uses. With a cookie the region keeps the two sentences above;
+#: **without one**, "Your session ended" is
 #: a claim about a client that never had a session, so the region says only
 #: this. One rule, both shapes: a first-time visitor is never told a session
-#: ended, whether they asked for a page or for a fragment (``ACC-037``).
+#: ended, whether they asked for a page or for a fragment.
 _REGION_TEXT_401_COOKIELESS: Final = "Sign in to continue."
 
 
@@ -138,7 +130,7 @@ def is_fragment(request: Request) -> bool:
 
 
 async def _principal_for_shell(request: Request) -> Principal | None:
-  """Return the principal whose shell this 4xx page renders in (**R56**).
+  """Return the principal whose shell this 4xx page renders in.
 
   Parameters
   ----------
@@ -157,13 +149,13 @@ async def _principal_for_shell(request: Request) -> Principal | None:
   -----
   Only the ``4xx`` family reaches this function: :func:`_error_page`'s
   ``public_shell`` flag short-circuits it for the ``500``, the ``503`` and
-  the step-0 ``403``, which must never read a session (**R32**, **R27**).
+  the step-0 ``403``, which must never read a session.
 
-  The read is why **R56** exists. A ``404`` on an unrouted path never ran
-  step 1, so before this ruling an authenticated user's ``404`` rendered
+  The read is why this function exists. A ``404`` on an unrouted path never
+  ran step 1, so without it an authenticated user's ``404`` would render
   the *public* shell while their ``404`` on a foreign object rendered the
-  authenticated one — two distinguishable bodies where ``CONTRACTS.md``
-  §8.4's "identical 404 for one principal" requires one. Resolution is
+  authenticated one — two distinguishable bodies where one is required.
+  Resolution is
   memoized on ``request.state`` by
   :func:`app.security.principal.resolve_session`, so this costs at most one
   bounded read per request and nothing at all when step 1 already ran.
@@ -207,12 +199,12 @@ async def _error_page(
   extra : dict[str, Any]
     The template's own frozen context, beyond the base.
   public_shell : bool
-    ``True`` forces ``principal=None`` (**R32**): the ``500``, the ``503``
+    ``True`` forces ``principal=None``: the ``500``, the ``503``
     and the step-0 ``403`` render the public shell whatever the real
     session state is, because a session may not be readable after an
     unhandled exception and a page that tries to read one can fail a
     second time inside the error path. ``False`` — every other ``4xx`` —
-    lets :func:`_principal_for_shell` resolve the session once (**R56**).
+    lets :func:`_principal_for_shell` resolve the session once.
   headers : dict[str, str] | None, optional
     Extra headers, such as ``Retry-After``.
 
@@ -254,13 +246,13 @@ def region_error(
     status, so a ``401`` redirects exactly as a ``200`` would while still
     being the honest status; if a proxy strips the header the body is
     swapped into the region and the user sees a real recovery link
-    instead of nothing (**R26**).
+    instead of nothing.
   retry_after : int | None, optional
     Whole seconds, rendered in the fragment and sent as ``Retry-After``.
   presented_cookie : bool, optional
-    Whether this request carried a session cookie (**R70**). It selects the
+    Whether this request carried a session cookie. It selects the
     ``401`` body only and is ignored on every other status; the default is
-    ``True`` so the three other callers keep ``CP-07`` unchanged. The
+    ``True`` so the three other callers keep the two-sentence body. The
     cookie's *value* is never parsed — it is evidence that this client once
     had a session and nothing more.
 
@@ -292,15 +284,14 @@ def region_error(
 
 
 async def forbidden(request: Request, *, reason: str = "session") -> Response:
-  """Render the ``403`` of ``slice-a.md`` §2.1.
+  """Render the ``403`` page.
 
   Parameters
   ----------
   request : Request
     The inbound request.
   reason : str, optional
-    ``session`` (step 0 — the default and the only one Slice A reaches
-    from a route), ``role`` or ``forced_reset``.
+    ``session`` (step 0, the default), ``role`` or ``forced_reset``.
 
   Returns
   -------
@@ -320,7 +311,7 @@ async def forbidden(request: Request, *, reason: str = "session") -> Response:
 
 
 async def unavailable(request: Request, *, context: str = "unavailable") -> Response:
-  """Render the ``503`` page, always in the public shell (**R32**).
+  """Render the ``503`` page, always in the public shell.
 
   Parameters
   ----------
@@ -329,8 +320,7 @@ async def unavailable(request: Request, *, context: str = "unavailable") -> Resp
   context : str, optional
     ``unavailable`` (the database is down, or the deployment is not
     provisioned — one body for both, so an outsider cannot tell a fresh
-    deployment from a broken one) or ``ambiguous_commit`` (**R19**,
-    **R37**).
+    deployment from a broken one) or ``ambiguous_commit``.
 
   Returns
   -------
@@ -363,7 +353,7 @@ async def too_many_requests(request: Request, *, retry_after_s: int) -> Response
     The inbound request.
   retry_after_s : int
     Whole seconds until the window rolls; never a fixed long value, so the
-    advertised recovery matches the real one (``SEC-031``(c)).
+    advertised recovery matches the real one.
 
   Returns
   -------
@@ -407,15 +397,15 @@ async def bad_request(request: Request) -> Response:
 
 
 async def method_not_allowed(request: Request) -> Response:
-  """Render the ``405`` page with the 400-family context (**R38**)."""
+  """Render the ``405`` page with the 400-family context."""
   return await _error_page(
     request,
     status=405,
     template="errors/405.html",
     extra={
       "status": 405,
-      "title": _CP_405_TITLE,
-      "message": _CP_405_MESSAGE,
+      "title": _METHOD_NOT_ALLOWED_TITLE,
+      "message": _METHOD_NOT_ALLOWED_MESSAGE,
       "correlation_id": current_correlation_id(),
     },
     public_shell=False,
@@ -434,7 +424,7 @@ async def payload_too_large(request: Request) -> Response:
 
 
 async def conflict(request: Request, *, context: str, extra: dict[str, Any]) -> Response:
-  """Render ``errors/409.html`` — **R19**'s four contexts (``contracts/slice-b.md`` §2(d)).
+  """Render ``errors/409.html`` in one of its four contexts.
 
   Parameters
   ----------
@@ -444,20 +434,19 @@ async def conflict(request: Request, *, context: str, extra: dict[str, Any]) -> 
     ``stale``, ``archived_parent``, ``duplicate`` or ``stage_terminal``.
     The context is the **only** thing that distinguishes the three (soon
     four) conflicts: a distinct status code would tell an attacker which
-    condition held (``ACCESS_MATRIX.md`` §1.3).
+    condition held.
   extra : dict[str, Any]
-    That context's own payload, exactly as ``CONTRACTS.md`` §8.4 freezes it.
+    That context's own payload, and nothing beyond it.
 
   Returns
   -------
   Response
-    Always a **full page** in the authenticated shell (**R56**), never
-    ``partials/region_error.html``. **R15** means no mutation is ever
-    issued by htmx, so no legitimate ``HX-Request`` can produce a 409; a
-    crafted one gets the page, because the region partial's ``{status,
-    text}`` shape has no 409 text and would render the 503 line. A
-    deliberate narrowing of ``slice-a.md`` §3's "every ``HX-Request``
-    response is a fragment", recorded for the review council.
+    Always a **full page** in the authenticated shell, never
+    ``partials/region_error.html``. No mutation is ever issued by htmx, so
+    no legitimate ``HX-Request`` can produce a 409; a crafted one gets the
+    page, because the region partial's ``{status, text}`` shape has no 409
+    text and would render the 503 line. This is the one deliberate
+    narrowing of "every ``HX-Request`` response is a fragment".
 
   Notes
   -----
@@ -492,8 +481,7 @@ def redirect(location: str, request: Request, *, headers: dict[str, str] | None 
   ----------
   location : str
     A **relative** path, built by the caller from a route name and, where
-    there is one, an allowlisted ``?notice=`` code (``ACCESS_MATRIX.md``
-    §1.2). No free text ever travels in a URL (**R20**).
+    there is one, an allowlisted ``?notice=`` code. No free text ever travels in a URL.
   request : Request
     The inbound request, whose path selects the cache directives.
   headers : dict[str, str] | None, optional
@@ -503,7 +491,7 @@ def redirect(location: str, request: Request, *, headers: dict[str, str] | None 
   -------
   Response
     ``303 See Other`` — the Post/Redirect/Get of every mutation in this
-    application (**R15**).
+    application.
   """
   response = RedirectResponse(location, status_code=303, headers=headers)
   return apply_security_headers(response, path=request.url.path)
@@ -534,8 +522,8 @@ async def http_exception_handler(request: Request, exc: Exception) -> Response:
   -------
   Response
     The frozen page for that status, or the ``500`` page for a status
-    Slice A does not register — a status with no page is a bug in this
-    application, not something to improvise a body for.
+    this application does not register — a status with no page is a bug
+    here, not something to improvise a body for.
   """
   status = exc.status_code if isinstance(exc, HTTPException) else 500
   if status == 403:
@@ -561,7 +549,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> Respo
   exc : Exception
     The exception. Neither its message nor its traceback reaches the
     response or the log: the log line carries the **class name** only
-    (``SEC-062``), and the page carries the correlation id that joins the
+   , and the page carries the correlation id that joins the
     two.
 
   Returns
@@ -597,22 +585,21 @@ async def no_session_handler(request: Request, exc: Exception) -> Response:
   Returns
   -------
   Response
-    A fragment request gets ``401`` plus ``HX-Redirect`` (**R26**); a
+    A fragment request gets ``401`` plus ``HX-Redirect``; a
     private ``GET`` gets ``303`` to the login page, carrying a validated
     ``next``; an unsafe method gets the step-0 ``403``.
 
   Notes
   -----
-  **R65**: the ``?notice=session_ended`` suffix is gated on a **presented
-  cookie** on *both* branches, not only on the ``303`` — a first-time
-  visitor is never told a session ended (``CP-07``), whichever shape they
-  asked for (``ACC-037``). The cookie is evidence that this client once
-  had a session and no more: its value is never parsed here, so a
+  The ``?notice=session_ended`` suffix is gated on a **presented cookie**
+  on *both* branches, not only on the ``303`` — a first-time visitor is
+  never told a session ended, whichever shape they asked for. The cookie is
+  evidence that this client once had a session and no more: its value is never parsed here, so a
   fabricated one only buys the sentence a genuine expiry would have
   earned.
 
-  **R70** takes the same flag one step further: it also selects the
-  fragment's **body**, so a cookieless htmx ``401`` reads *"Sign in to
+  The same flag goes one step further: it also selects the fragment's
+  **body**, so a cookieless htmx ``401`` reads *"Sign in to
   continue."* rather than announcing an ending that never happened. The
   header and the body now say the same thing.
   """
@@ -697,12 +684,12 @@ async def contact_not_found_handler(request: Request, exc: Exception) -> Respons
   Response
     ``404`` with ``errors/404.html`` — identical for a foreign contact, a
     missing one and a non-canonical path segment, for the same principal
-    modulo the correlation id (**PIN 8**, **R27**).
+    modulo the correlation id.
 
   Notes
   -----
-  This is the single emission point of ``ACCESS_MATRIX.md`` §4.5 **row 1**
-  (``contact`` / ``access_denied`` / ``denied``), so six routes cannot
+  This is the single emission point of the
+  ``(contact, access_denied, denied)`` row, so six routes cannot
   write six different rows. The write is best-effort and in its own short
   transaction, opened only **after** the denying transaction unwound and
   released its connection; :func:`app.security.audit.record_denial`
@@ -711,7 +698,7 @@ async def contact_not_found_handler(request: Request, exc: Exception) -> Respons
 
   A denial with no resolved principal writes nothing: pre-session denials
   reach the log stream only, so an anonymous flood cannot drive unbounded
-  inserts (§4.5, *"what does not write a deny row"*).
+  inserts.
   """
   object_id = getattr(exc, "object_id", None)
   principal: Principal | None = getattr(request.state, "crm_principal", None)
@@ -748,21 +735,21 @@ async def deal_not_found_handler(request: Request, exc: Exception) -> Response:
     :func:`contact_not_found_handler` renders, from the same
     :func:`not_found`, so a foreign deal, a missing deal, a non-canonical
     deal id and a foreign *contact* are one answer for one principal
-    modulo the correlation id (``ACC-202``, **PIN 8**, **R27**).
+    modulo the correlation id.
 
   Notes
   -----
-  The single emission point of ``ACCESS_MATRIX.md`` §4.5 **row 2**
-  (``deal`` / ``access_denied`` / ``denied``), so five deal surfaces cannot
-  write five different rows. It differs from row 1 in exactly one field —
+  The single emission point of the ``(deal, access_denied, denied)`` row,
+  so five deal surfaces cannot write five different rows. It differs from
+  the contact row in exactly one field —
   ``object_type`` — and that is the whole reason the two handlers exist
   separately rather than one guessing the surface.
 
   A **parent** miss never reaches here: ``POST /contacts/{id}/deals`` and
   ``GET /contacts/{id}/deals/new`` raise ``ContactNotFound`` instead, so
-  the deny row names the contact the caller was actually refused (§4.5
-  rule 2). The write is best-effort, in its own short transaction opened
-  after the denying one unwound, and a denial with no resolved principal
+  the deny row names the contact the caller was actually refused. The
+  write is best-effort, in its own short transaction opened after the
+  denying one unwound, and a denial with no resolved principal
   writes nothing at all.
   """
   object_id = getattr(exc, "object_id", None)
@@ -782,7 +769,7 @@ async def deal_not_found_handler(request: Request, exc: Exception) -> Response:
 
 
 async def retry_exhausted_handler(request: Request, exc: Exception) -> Response:
-  """Answer a spent retry budget with the ``unavailable`` ``503`` (ask **A-2**).
+  """Answer a spent retry budget with the ``unavailable`` ``503``.
 
   Parameters
   ----------
@@ -805,21 +792,21 @@ async def retry_exhausted_handler(request: Request, exc: Exception) -> Response:
   serialization failure that spent its budget is a *confirmed* abort:
   every attempt rolled back, nothing was written, and the honest copy is
   the ``unavailable`` page's *"temporarily unavailable. Nothing you did
-  caused this."* — the user may simply try again. ``CP-19``'s *"do not
-  resubmit; open the record and check"* must stay reserved for the commit
+  caused this."* — the user may simply try again. *"Do not resubmit; open
+  the record and check"* must stay reserved for the commit
   whose outcome is genuinely unknown, or the one sentence that matters
   there stops meaning anything.
 
   Registering it is what keeps an exhausted budget off the ``500`` page:
   a 500 reads as a defect in the application rather than as the momentary
-  contention it is (``contracts/slice-c.md`` §2(b) note 5).
+  contention it is.
   """
   del exc
   return await unavailable(request)
 
 
 async def ambiguous_commit_handler(request: Request, exc: Exception) -> Response:
-  """Answer a commit whose outcome is unknown with the second ``503`` (**R19**).
+  """Answer a commit whose outcome is unknown with the second ``503``.
 
   Parameters
   ----------
@@ -833,10 +820,10 @@ async def ambiguous_commit_handler(request: Request, exc: Exception) -> Response
   Returns
   -------
   Response
-    ``503`` with ``context="ambiguous_commit"``, whose copy (``CP-19``)
-    says *do not resubmit; open the record and check*. The true outcome is
+    ``503`` with ``context="ambiguous_commit"``, whose copy says *do not
+    resubmit; open the record and check*. The true outcome is
     resolved by reading the receipt, which is the whole reason the receipt
-    is written in the same transaction as the business row (``SQL-013``).
+    is written in the same transaction as the business row.
 
   Notes
   -----

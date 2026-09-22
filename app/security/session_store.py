@@ -2,11 +2,10 @@
 
 Split from :mod:`app.security.sessions` so that the parameters and the
 primitives stay importable with no database in sight; everything here
-reaches ``app.db.repositories.sessions`` through the short
-``READ COMMITTED`` wrapper the contract assigns each function
-(``slice-a.md`` §10(b)).
+reaches ``app.db.repositories.sessions`` through a short ``READ COMMITTED``
+transaction of its own.
 
-``app/routes/**`` may not import a repository (``ARC-008``), so this module
+``app/routes/**`` may not import a repository, so this module
 is how a route reads or creates a session row. The two *mutations* that
 belong to a business transaction — promoting a pre-auth row at login and
 revoking siblings at a password change — are not here: they run inside the
@@ -70,7 +69,8 @@ class PreauthSession:
   issued_token : str | None
     The raw token when a **new** row was created and the cookie must be
     set, ``None`` when a still-valid row was reused and the browser
-    already holds its cookie (``ARC-017``(b) forbids a second INSERT).
+    already holds its cookie: a live pre-auth row is reused, never
+    duplicated.
   """
 
   session_id: UUID
@@ -136,9 +136,9 @@ async def ensure_preauth(pool: Pool, *, token: str | None, now: datetime) -> Pre
   this browser, which is the same thing that happens to a visitor who
   simply navigates to ``/login`` while signed in.
 
-  This is ``DATA_CONTRACT.md`` §6.8 row 26 — the one write an anonymous
-  ``GET`` can cause — and the caller has already charged the
-  ``preauth_global`` budget before reaching it (``ARC-017``(c)).
+  This is the one write an anonymous ``GET`` can cause, and the caller has
+  already charged the ``preauth_global`` budget before reaching it, so it
+  cannot be used to fill the table.
   """
   existing = await read_live(pool, token=token, now=now)
   if existing is not None and existing.kind == KIND_PRE_AUTH and token is not None:
@@ -178,11 +178,11 @@ async def touch_if_stale(pool: Pool, row: SessionRow, *, now: datetime) -> None:
 
   Notes
   -----
-  ``DATA_CONTRACT.md`` §6.8 row 14, and the reason the rule is "only when
-  the clock moved more than 60 s": without it every authenticated request
+  The touch is throttled to "only when the clock moved more than 60 s":
+  without that rule every authenticated request
   would write a row, turning a read-mostly workload into a write-mostly
   one. The threshold is computed here and bound as ``stale_before``,
-  because interval arithmetic in SQL is banned (§9.1).
+  because interval arithmetic in SQL is banned.
 
   A pre-auth row is never touched: its ten minutes are absolute, so a
   login form left open cannot be kept alive by polling.
@@ -218,7 +218,7 @@ async def end_session(pool: Pool, *, session_id: UUID) -> None:
 
   Notes
   -----
-  Sessions are hard-deleted, never flagged (``DATA_CONTRACT.md`` §3.3), so
+  Sessions are hard-deleted, never flagged, so
   "revoked" and "unknown token" are one code path and no dead token hash
   is left behind.
   """

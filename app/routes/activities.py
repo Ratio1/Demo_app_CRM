@@ -1,18 +1,15 @@
 """``POST /activities`` and the ``#timeline`` fragment.
 
-Authority: ``UX_FLOWS.md`` §2 step 5 and §4.6 (the frozen form, its exact
-field set and its ``303`` destination), ``ACCESS_MATRIX.md`` §1.1 (the
-check order), §1.6 (*an activity has no ``GET`` route of its own*), §4.5
-(the deny-audit triples), ``CONTRACTS.md`` §8.3 (``timeline``, frozen).
+An activity has no ``GET`` route of its own: the form lives inside
+``contacts/detail.html``, and so does the timeline it appends to.
 
-The form is the one already shipped in ``contacts/detail.html``: it posts
+The form posts from that page: it posts
 to **``/activities``** with the parent in a hidden ``contact_id`` field, so
 the path carries no id and the body does. That is the one place this
 surface differs from the deal create, and it changes exactly one thing —
 the parent is an **input**, so a non-canonical ``contact_id`` is the
-crafted-request ``400`` of ``ACCESS_MATRIX.md`` §4.5 row 6 rather than a
-path 404, while a well-formed foreign or missing one is the identical
-``404`` the scoped read produces.
+crafted-request ``400`` rather than a path 404, while a well-formed foreign
+or missing one is the identical ``404`` the scoped read produces.
 
 The handler order is ``start_mutation``'s, unchanged: session, body, CSRF,
 content type, budget, forced-reset gate, body allowlist. Nothing on the
@@ -55,17 +52,16 @@ __all__ = ["router"]
 
 router = APIRouter()
 
-#: ``UX_FLOWS.md`` §4.6 / ``contacts/detail.html`` lines 90-113 — the frozen
-#: form's exact accepted set. Anything else in the body is a crafted request
-#: and a ``400`` (``ACC-011``/``ACC-012``), never an ignored field: silence
-#: makes mass assignment untestable. ``created_by_user_id`` is absent because
+#: The form's exact accepted set, matching ``contacts/detail.html``.
+#: Anything else in the body is a crafted request and a ``400``, never an
+#: ignored field: silence makes mass assignment untestable. ``created_by_user_id`` is absent because
 #: the author is the session, and ``id`` because ids are generated server-side.
 _CREATE_FIELDS: Final[frozenset[str]] = frozenset(
   {"csrf_token", "idempotency_key", "contact_id", "kind", "occurred_on", "summary"}
 )
 
 #: The timeline fragment's one allowlisted query key. Every other name is
-#: dropped before any check (H-08); a repeated ``page`` is a ``400``.
+#: dropped before any check; a repeated ``page`` is a ``400``.
 _PAGE_KEY: Final = "page"
 
 
@@ -79,11 +75,11 @@ def _applied_redirect(request: Request, result: Applied) -> Response:
 
   Notes
   -----
-  ``UX_FLOWS.md`` §2 step 5 pins the destination:
+  The destination is fixed:
   ``/contacts/{id}?notice=activity_logged#timeline`` — the workspace, with
   the region anchored, on a first submission and on a replay alike. The URL
   is rebuilt from the route name and the allowlisted notice code; nothing is
-  stored, and no free text travels in it (**R20**).
+  stored, and no free text travels in it.
   """
   return redirect(
     f"{_contact_url(request, result.contact_id)}?notice={result.notice}#timeline", request
@@ -91,7 +87,7 @@ def _applied_redirect(request: Request, result: Applied) -> Response:
 
 
 async def _blocked_response(request: Request, result: Blocked) -> Response:
-  """Render ``errors/409.html`` ``context="archived_parent"`` (``ACC-409``)."""
+  """Render ``errors/409.html`` ``context="archived_parent"``."""
   restore_form = (
     None
     if result.restore_form is None
@@ -110,7 +106,7 @@ async def _blocked_response(request: Request, result: Blocked) -> Response:
         "restore_form": restore_form,
         # Logging against an archived contact is always "restore it first",
         # never "that has already been done" — the same two keys the deal
-        # routes pass (CONTRACTS.md §8.4's Slice B addition).
+        # routes pass.
         "body": "cp_13",
         "state": "archived",
       }
@@ -119,7 +115,7 @@ async def _blocked_response(request: Request, result: Blocked) -> Response:
 
 
 async def _duplicate_response(request: Request, result: Duplicate) -> Response:
-  """Render ``errors/409.html`` ``context="duplicate"`` (``SQL-028``)."""
+  """Render ``errors/409.html`` ``context="duplicate"``."""
   return await conflict(
     request,
     context="duplicate",
@@ -129,13 +125,13 @@ async def _duplicate_response(request: Request, result: Duplicate) -> Response:
 
 @router.post("/activities", name="activity_create")
 async def activity_create(request: Request) -> Response:
-  """Append one activity to one contact's history (``ACC-405``-``ACC-415``).
+  """Append one activity to one contact's history.
 
   Notes
   -----
   A field error re-renders the **workspace**, not a form page of its own:
-  ``ACCESS_MATRIX.md`` §1.6 gives an activity no ``GET`` route, so the form
-  exists only inside ``contacts/detail.html`` and that is where the error
+  an activity has no ``GET`` route, so the form exists only inside
+  ``contacts/detail.html`` and that is where the error
   summary has to appear. The re-render goes through the contact route's own
   context builder, which re-reads the contact under the scope predicate — so
   a bad body against a foreign contact is still the identical 404, and the
@@ -161,7 +157,7 @@ async def activity_create(request: Request) -> Response:
     correlation_id=current_correlation_id(),
   )
   if isinstance(result, Invalid):
-    # ACCESS_MATRIX.md §1.1's order, applied to the one path the service
+    # The pipeline's check order, applied to the one path the service
     # cannot apply it on: validation runs before the transaction opens, so a
     # bad body under an ARCHIVED parent would otherwise re-render a workspace
     # whose add-activity form is hidden — an error summary linking to fields
@@ -193,7 +189,7 @@ async def contact_timeline(request: Request, contact_id: str) -> Response:
   Notes
   -----
   One route, two renderings, exactly as ``GET /contacts`` serves
-  ``#contact-results`` (**PIN 5**, ``CONTRACTS.md`` §8 rule 3): an htmx
+  ``#contact-results``: an htmx
   fragment gets ``partials/timeline.html``, anything else gets the full
   ``contacts/detail.html`` **with the timeline already on the requested
   page**. The full render is what makes ``hx-push-url="true"`` safe — this

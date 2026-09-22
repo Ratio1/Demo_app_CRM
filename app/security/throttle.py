@@ -1,11 +1,8 @@
-"""The login throttle and the four rate budgets (``S6``).
+"""The login throttle and the four rate budgets.
 
-Authority: ``slice-a.md`` §1.1 (``LOGIN_FAILURES``/``LOGIN_WINDOW``/
-``LOGIN_LOCK``, ``account_key``), ``DATA_CONTRACT.md`` §3.4/§3.5 (the two
-tables), §6.8 rows 1 and 2 (both counters commit in their **own** short
-``READ COMMITTED`` transaction), ``THREAT_MODEL.md`` T-01 and §11 (the
-global bucket's accepted residual risk), ruling **R13** (the throttle is
-keyed on a hash, never on an address).
+Both counters commit in their **own** short ``READ COMMITTED``
+transaction, so a refusal is recorded even when the request it refuses
+rolls back.
 
 Three properties worth stating plainly:
 
@@ -21,7 +18,7 @@ and a denial weapon against a shared address.
 
 *A refusal survives the rollback of what it refused.* Both counters commit
 in their own transaction, so a failed login that rolls its own work back
-cannot also erase the failure it just recorded (``SQL-027``).
+cannot also erase the failure it just recorded.
 """
 
 from __future__ import annotations
@@ -65,24 +62,23 @@ LOGIN_FAILURES: Final = 5
 LOGIN_WINDOW: Final = timedelta(minutes=15)
 LOGIN_LOCK: Final = timedelta(minutes=15)
 
-#: Spec §6 S6's "global login/pre-auth budget 120/minute", applied **per
-#: bucket** — the reading ``THREAT_MODEL.md`` §11 pins, so that exhausting
-#: the pre-auth page cannot also deny ``POST /login``.
+#: The global budget, 120 a minute, applied **per bucket** rather than
+#: across both, so that exhausting the pre-auth page cannot also deny
+#: ``POST /login``.
 BUDGET_WINDOW: Final = timedelta(minutes=1)
 PREAUTH_GLOBAL_LIMIT: Final = 120
 LOGIN_GLOBAL_LIMIT: Final = 120
 
-#: The per-account halves of S6's "bounded mutation and query budgets".
-#: ``DATA_CONTRACT.md`` §3.5 fixes the buckets and the shape but names no
-#: figure, so these two are chosen here: a query ceiling equal to the global
-#: one, and a mutation ceiling half of it, since every mutation costs a
+#: The per-account mutation and query budgets. The figures are chosen
+#: here: a query ceiling equal to the global one, and a mutation ceiling
+#: half of it, since every mutation costs a
 #: ``SERIALIZABLE`` transaction and an audit row while a query does not.
 #: Both are per authenticated user per minute; a human never approaches
 #: either, and a runaway client is refused before it can matter.
 ACCOUNT_QUERY_LIMIT: Final = 120
 ACCOUNT_MUTATION_LIMIT: Final = 60
 
-#: ``subject_key`` for the two global buckets (``DATA_CONTRACT.md`` §3.5).
+#: ``subject_key`` for the two global buckets.
 GLOBAL_SUBJECT_KEY: Final = "*"
 
 BUCKET_PREAUTH_GLOBAL: Final = "preauth_global"
@@ -109,13 +105,12 @@ def account_key(identifier: str) -> str:
   Returns
   -------
   str
-    ``sha256(identifier.strip().lower())`` as 64 lowercase hex characters
-    (**R13**).
+    ``sha256(identifier.strip().lower())`` as 64 lowercase hex characters.
 
   Notes
   -----
-  The normalization is byte for byte ``DATA_CONTRACT.md`` §3.2's
-  ``email_norm = email.strip().lower()``, so ``" Ada@Example.test "`` and
+  The normalization is byte for byte the one behind
+  ``users.email_norm``, so ``" Ada@Example.test "`` and
   ``ada@example.test`` count against one row and capitalisation cannot
   multiply an attacker's budget by five.
 
@@ -142,7 +137,7 @@ def window_start_of(now: datetime) -> datetime:
 
   Notes
   -----
-  Floored in Python, never with ``date_trunc`` (``DATA_CONTRACT.md`` §3.5):
+  Floored in Python, never with ``date_trunc``:
   the window boundary must not depend on the engine's date functions or on
   the database's own clock, both of which differ on the portability target.
   """
@@ -175,12 +170,11 @@ class BudgetDecision:
     Whether the request may proceed.
   retry_after_s : int
     Whole seconds until this window rolls — at most the window length, so
-    the advertised recovery matches the real one (``SEC-031``(c)).
+    the advertised recovery matches the real one.
   transitioned : bool
     ``True`` on the single request whose increment crossed the limit. Only
     that one writes a ``budget_denied`` audit row, which is what keeps the
-    deny trail bounded by the budget it records (``DATA_CONTRACT.md``
-    §3.6).
+    deny trail bounded by the budget it records.
   """
 
   allowed: bool
@@ -216,7 +210,7 @@ class ThrottleService:
     lock_for : timedelta, optional
       How long the lock lasts. A temporary backoff, never a permanent
       lockout: an attacker must not be able to lock a known account out of
-      its own service indefinitely (T-56).
+      its own service indefinitely.
     """
     self._pool = pool
     self._clock = clock
@@ -273,7 +267,7 @@ class ThrottleService:
     key : str
       An :func:`account_key` value — for an unknown account too, so that
       the presence of a throttle row is not an account oracle
-      (``DATA_CONTRACT.md`` §3.4).
+     .
     now : datetime
       The instant of the failure.
 
@@ -287,7 +281,7 @@ class ThrottleService:
     -----
     Its own transaction, committed independently of the authentication
     path: a login that fails and rolls back must not also roll back the
-    record of the failure (``SQL-027``).
+    record of the failure.
     """
     window_cutoff = now - self._window
     locked_until = now + self._lock_for
@@ -321,7 +315,7 @@ class ThrottleService:
     Notes
     -----
     An ``UPDATE``, never a ``DELETE``: the runtime role holds no ``DELETE``
-    on ``login_throttle`` (``DATA_CONTRACT.md`` §5.2), so a delete would
+    on ``login_throttle``, so a delete would
     fail with a privilege error on the happy path of the hottest route.
     """
 
@@ -374,7 +368,7 @@ class BudgetService:
     -----
     Charged **before** the handler runs and, on the login path, **before**
     the Argon2 gate is entered, so a flood costs one indexed counter update
-    rather than a 19 MiB hash arena (``SEC-031``(e)).
+    rather than a 19 MiB hash arena.
     """
     limit = _BUCKET_LIMITS[bucket]
     window_start = window_start_of(now)

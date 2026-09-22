@@ -1,20 +1,12 @@
-"""The Slice C route table: deals, the pipeline, the forms and the stage control.
-
-Authority: ``contracts/slice-c.md`` §2(c) (the table itself — method, path,
-name, CSRF, idempotency, template, context, success and error statuses),
-§2(d) (the stage control's exact fields), §2(e) (the fragment predicate and
-the focus rule), §1(e) (which transaction each call opens),
-``ACCESS_MATRIX.md`` §1.1 (the check order), §1.2 (the status policy and
-the H-08 unknown-parameter rule), §3.3/§3.4 (every cell), §4.5 rows 1, 2
-and 7 (the deny-audit triples), §5.1-§5.3 (the field allowlists),
-``CONTRACTS.md`` §8 (every context key, frozen).
+"""The deal routes: the list, the pipeline, the forms and the stage control.
 
 Every handler runs :mod:`app.routes.pipeline`'s order — the **shipped**
 one, not a copy — and a refusal is raised rather than rendered here, with
 the one deliberate exception the contact table already makes: the ``400``
 of a crafted request is returned from
-:func:`~app.routes.pipeline.reject_input`, because it also writes §4.5 row
-7 and that row belongs beside the decision that produced it.
+:func:`~app.routes.pipeline.reject_input`, because it also writes the
+``input_rejected`` row and that row belongs beside the decision that
+produced it.
 
 Four rules are worth reading before changing anything here.
 
@@ -25,20 +17,20 @@ answered ``404``.
 
 *A deal id and a parent id are refused differently, on purpose.* A deal id
 is the **object being addressed**: non-canonical is the identical ``404``
-of ``ACC-202``, with no read. A parent id on the two create surfaces is an
-**input being validated**: non-canonical is ``400`` + §4.5 row 7, which is
-``ACC-231`` verbatim. So ``/contacts/<garbage>`` is 404 while
-``/contacts/<garbage>/deals/new`` is 400 — surface-dependent, no read
-either way, and recorded as finding F-6 for the council.
+404 a foreign or missing deal gets, with no read. A parent id on the two
+create surfaces is an **input being validated**: non-canonical is ``400``
+plus an ``input_rejected`` row. So ``/contacts/<garbage>`` is 404 while
+``/contacts/<garbage>/deals/new`` is 400 — surface-dependent, and no read
+either way.
 
 *Nothing on these pages is authorization.* ``can.edit``,
 ``can.change_stage``, the absence of a stage control and the omission of
 the current stage from the ``<select>`` are **UI hiding**; every one is
 re-decided inside the transaction, and a crafted ``POST`` meets 409
 ``archived_parent``, 409 ``stage_terminal`` or 400 all the same
-(``ACCESS_MATRIX.md`` §1.4).
+.
 
-*No mutation is ever enhanced* (**R15**). There is no ``hx-post`` anywhere
+*No mutation is ever enhanced*. There is no ``hx-post`` anywhere
 in this slice: every create, edit and stage move is a plain form ``POST``
 answered with a ``303``, and only the two list ``GET``s have an htmx path.
 """
@@ -119,13 +111,13 @@ router = APIRouter()
 DEALS_URL: Final = "/deals"
 PIPELINE_URL: Final = "/deals/pipeline"
 
-#: ``ACCESS_MATRIX.md`` §5.2, deals row. Every other parameter **name** is
-#: ignored, dropped before duplicates are counted (H-08); a repeated one of
-#: these is a ``400`` (``SEC-076``).
+#: The allowlisted query keys. Every other parameter **name** is
+#: ignored, dropped before duplicates are counted; a repeated one of
+#: these is a ``400``.
 _LIST_KEYS: Final[tuple[str, ...]] = ("q", "stage", "status", "sort", "dir", "page", "per_page")
 
-#: The pipeline allowlists ``status`` **only** — §5.2 gives that surface no
-#: sort key and no pager — so ``?sort=x`` there is an unknown name and is
+#: The pipeline allowlists ``status`` **only** — that surface has no sort
+#: key and no pager — so ``?sort=x`` there is an unknown name and is
 #: ignored rather than rejected.
 _PIPELINE_KEYS: Final[tuple[str, ...]] = ("status",)
 
@@ -136,23 +128,23 @@ _DIRECTIONS: Final[frozenset[str]] = frozenset({"asc", "desc"})
 _STATUSES: Final[frozenset[str]] = frozenset({"active", "archived", "all"})
 _STAGES: Final[frozenset[str]] = frozenset(STAGE_LABELS)
 
-#: §5.2: the deal list's default sort is ``created_at`` — the contact
-#: list's is ``updated_at``, and the difference is in the matrix, not a slip.
+#: The deal list's default sort is ``created_at``; the contact list's is
+#: ``updated_at``. The difference is deliberate.
 _DEFAULT_SORT: Final = "created_at"
 _DEFAULT_DIRECTION: Final = "desc"
 _DEFAULT_STATUS: Final = "active"
 
-#: §2(c). The deal search reads ``title_lower`` alone, whose CHECK bounds it
+#: The deal search reads ``title_lower`` alone, whose CHECK bounds it
 #: at 160, so a longer prefix could match nothing storable. The contacts
 #: bound is 254 for the same reason, computed from a different column.
 _MAX_TERM_LENGTH: Final = TITLE_MAX
 
-#: §2(d). ``csrf_token`` and ``idempotency_key`` are on **every** form, are
+#: ``csrf_token`` and ``idempotency_key`` are on **every** form, are
 #: never writable business fields and are never accepted from a query
 #: string. **No ``contact_id``** on create — the parent is the path, and
-#: submitting one is a crafted-request ``400``; no ``stage`` (``ACC-211``);
-#: no ``contact_id`` on edit (``ACC-217``); no ``owner_id`` anywhere, which
-#: ``deals`` has no column for at all (``ACC-212``).
+#: submitting one is a crafted-request ``400``; no ``stage``;
+#: no ``contact_id`` on edit; no ``owner_id`` anywhere, which
+#: ``deals`` has no column for at all.
 _CREATE_FIELDS: Final[frozenset[str]] = frozenset(
   {"csrf_token", "idempotency_key", "title", "amount", "close_date"}
 )
@@ -160,7 +152,7 @@ _EDIT_FIELDS: Final[frozenset[str]] = _CREATE_FIELDS | {"version"}
 _TERMINAL_FIELDS: Final[frozenset[str]] = frozenset({"csrf_token", "idempotency_key", "version"})
 _STAGE_FIELDS: Final[frozenset[str]] = _TERMINAL_FIELDS | {"to_stage"}
 
-#: ``UX_FLOWS.md`` §6.7 ``CP-127`` — the labels the 409-stale comparison
+#: The labels the 409-stale comparison
 #: panels use, in :data:`app.services.deals.DEAL_FIELDS` order.
 _FIELD_LABELS: Final[tuple[tuple[str, str], ...]] = (
   ("title", "Title"),
@@ -169,23 +161,23 @@ _FIELD_LABELS: Final[tuple[tuple[str, str], ...]] = (
 )
 _STAGE_LABEL: Final = "Stage"
 
-#: ``UX_FLOWS.md`` §6.5. ``CP-41`` is the count announcement every list swap
-#: makes; ``CP-102`` and ``CP-48`` are the deal list's own two states.
-_CP_102_NO_RESULTS: Final = "No deals match these filters."
-_CP_48_EMPTY: Final = "No deals yet. Open a contact and add the first deal."
+#: The deal list's two empty states; the third announcement a swap can
+#: make is the result count itself.
+_DEALS_NO_RESULTS_MESSAGE: Final = "No deals match these filters."
+_DEALS_EMPTY_MESSAGE: Final = "No deals yet. Open a contact and add the first deal."
 
 #: The field limit ``deals/form.html`` renders as ``maxlength``
-#: (``CONTRACTS.md`` §8.2). A progressive convenience only: the
-#: server-rendered error summary stays authoritative (**R28**, **R31**).
+#:. A progressive convenience only: the
+#: server-rendered error summary stays authoritative.
 _FORM_LIMITS: Final[dict[str, int]] = {"title": TITLE_MAX}
 
-#: The two paging control ids §2(e) pins. ``HX-Trigger`` is client-supplied,
+#: The two paging control ids. ``HX-Trigger`` is client-supplied,
 #: so it is matched against exactly these, never echoed, and decides focus
 #: only — never authorization.
 _PAGER_PREV: Final = "page-prev"
 _PAGER_NEXT: Final = "page-next"
 
-#: ``UX_FLOWS.md`` §4.7 — the breadcrumb label of the list every deal
+#: The breadcrumb label of the list every deal
 #: belongs under. A constant, never derived from a request.
 _BREADCRUMB_CONTACTS: Final = "Contacts"
 
@@ -204,7 +196,7 @@ class _ListQuery:
 
 
 def _parse_list_query(request: Request) -> _ListQuery | None:
-  """Validate the deal list's query string (``ACC-307``-``ACC-309``).
+  """Validate the deal list's query string.
 
   Returns
   -------
@@ -213,7 +205,7 @@ def _parse_list_query(request: Request) -> _ListQuery | None:
     outside an allowlist, a ``page`` or ``per_page`` that is not a positive
     integer, or a ``q`` longer than :data:`_MAX_TERM_LENGTH`. A ``page``
     **beyond the last** is not an error — it is an ordinary empty result —
-    and a ``per_page`` above 100 is **clamped**, not refused (``ACC-309``).
+    and a ``per_page`` above 100 is **clamped**, not refused.
   """
   raw: dict[str, str | None] = {}
   for key in _LIST_KEYS:
@@ -265,7 +257,7 @@ def _parse_pipeline_status(request: Request) -> str | None:
   str | None
     The status, or ``None`` for the ``400`` of a repeated key or a value
     outside the three. The pipeline takes no ``sort``, ``dir``, ``page`` or
-    ``q``, so those names are simply unknown here and are ignored (H-08).
+    ``q``, so those names are simply unknown here and are ignored.
   """
   for key in _PIPELINE_KEYS:
     ok, value = query_value(request, key)
@@ -352,23 +344,23 @@ def _list_url(query: _ListQuery, *, page: int) -> str:
 
 
 def _announce(view: DealListView) -> str:
-  """Return the live-region text for a swapped list (``CP-41``/``CP-102``/``CP-48``)."""
+  """Return the live-region text a swapped list announces."""
   if view.result_state == "ok":
     return f"{view.total} results. Page {view.page} of {view.pages}."
   if view.result_state == "no_results":
-    return _CP_102_NO_RESULTS
-  return _CP_48_EMPTY
+    return _DEALS_NO_RESULTS_MESSAGE
+  return _DEALS_EMPTY_MESSAGE
 
 
 def _results(request: Request, view: DealListView, query: _ListQuery) -> View:
-  """Build ``CONTRACTS.md`` §8.3's ``results`` from the service's view model.
+  """Build the ``results`` context from the service's view model.
 
   Notes
   -----
   ``prev_url``/``next_url`` are ``None`` **exactly** when the matching
   ``has_*`` is false, which is the template's instruction to render
-  **R24**'s inert ``<span aria-disabled="true">`` carrying the same visible
-  label — not to omit the control.
+  an inert ``<span aria-disabled="true">`` carrying the same visible label
+  — not to omit the control.
   """
   return View(
     items=[deal_card_context(request, row) for row in view.items],
@@ -395,9 +387,9 @@ def _stages(request: Request, view: PipelineView) -> list[dict[str, Any]]:
   Notes
   -----
   ``count`` and ``amount`` come from the engine's aggregate and **not** from
-  ``len(deals)`` or a Python sum (**PIN C6**, ``ACC-302``), so a column
+  ``len(deals)`` or a Python sum, so a column
   whose card list is capped still reports the true total. The card carries
-  no stage control on this surface (**R22**).
+  no stage control on this surface.
   """
   return [
     {
@@ -412,7 +404,7 @@ def _stages(request: Request, view: PipelineView) -> list[dict[str, Any]]:
 
 
 def _deal_context(view: DealView) -> dict[str, Any]:
-  """Build ``CONTRACTS.md`` §8.2's ``deal`` — and nothing beyond it."""
+  """Build the ``deal`` context — and nothing beyond it."""
   return {
     "id": str(view.id),
     "title": view.title,
@@ -428,13 +420,13 @@ def _deal_context(view: DealView) -> dict[str, Any]:
 
 
 def _contact_context(view: DealView) -> dict[str, Any]:
-  """Build ``deals/detail.html``'s frozen ``contact`` sub-context.
+  """Build ``deals/detail.html``'s ``contact`` sub-context.
 
   Notes
   -----
-  Five keys and no ``owner_id``: §8's rule 1 keeps a foreign row's owner id
-  out of every template, and ``is_archived`` is here because the deal的
-  archived state **is** its parent's.
+  Five keys and no ``owner_id``: a foreign row's owner id stays out of
+  every template, and ``is_archived`` is here because a deal's archived
+  state **is** its parent's.
   """
   return {
     "id": str(view.contact_id),
@@ -465,7 +457,7 @@ def _form_context(
   errors: dict[str, list[str]],
   idempotency_key: UUID,
 ) -> dict[str, Any]:
-  """Build the whole frozen context of ``deals/form.html`` (§8.2).
+  """Build the whole frozen context of ``deals/form.html``.
 
   Notes
   -----
@@ -503,8 +495,8 @@ def _submitted_deal(
 
   Notes
   -----
-  The **raw** strings, not the parsed values: ``UX_FLOWS.md`` §3.13
-  preserves what was typed, so an amount the parser refused comes back
+  The **raw** strings, not the parsed values: a refused submission comes
+  back with what was typed, so an amount the parser refused comes back
   exactly as it was entered rather than as a ``€`` rendering of something
   the user did not write.
   """
@@ -525,7 +517,7 @@ def _stored_deal(view: DealView) -> dict[str, Any]:
   ``amount`` is the **canonical** ``1250.00`` and never the ``€`` string:
   the field is a ``type="text" inputmode="decimal"`` input whose value is
   re-parsed by the same strict pattern on submit. ``close_date`` is ISO,
-  which is what ``<input type="date">`` puts on the wire (**R31**).
+  which is what ``<input type="date">`` puts on the wire.
   """
   return {
     "id": str(view.id),
@@ -541,11 +533,11 @@ def _applied_to_contact(request: Request, result: Applied) -> Response:
 
   Notes
   -----
-  ``UX_FLOWS.md`` §2 step 6 and §4.8 pin one destination for every create
-  and every stage move, from either screen:
+  One destination for every create and every stage move, from either
+  screen:
   ``/contacts/{contact_id}?notice=…#deal-{deal_id}``. Not "back where you
-  came from" — that needs a ``return_to`` field, which is in no allowlist
-  (``ACC-011``), and ``Referer`` is never trusted (``SEC-041``).
+  came from" — that needs a ``return_to`` field, which is in no allowlist,
+  and ``Referer`` is never trusted.
   """
   target = contact_url(request, result.contact_id)
   return redirect(f"{target}?notice={result.notice}#deal-{result.deal_id}", request)
@@ -563,7 +555,7 @@ def _stale_fields(result: Stale) -> list[dict[str, Any]]:
   -------
   list[dict[str, Any]]
     One row per writable field for an edit, or the single ``Stage`` row for
-    a stage change (``UX_FLOWS.md`` §3.9). ``differs`` is computed on the
+    a stage change. ``differs`` is computed on the
     **canonical** values — the quantized amount string, the ISO date, the
     stage token — so a difference is a difference in the record and never
     in how it was spelled or displayed.
@@ -620,15 +612,15 @@ def _stale_fields(result: Stale) -> list[dict[str, Any]]:
 
 
 async def _stale_response(request: Request, result: Stale, *, action_url: str) -> Response:
-  """Render ``errors/409.html`` ``context="stale"`` (**PIN 3**, ``ACC-215``).
+  """Render ``errors/409.html`` ``context="stale"``.
 
   Notes
   -----
   ``keep_form.values`` carries the **normalized** submitted values, because
   "Keep my changes" re-posts them verbatim against the **current** version
-  with a **fresh** key. ``body`` is **R69**'s shared predicate: the generic
+  with a **fresh** key. ``body`` follows the shared predicate: the generic
   sentence whenever no rendered field differs — which for a stage change is
-  the "someone already made this move" case ``UX_FLOWS.md`` §3.9 calls out.
+  the "someone already made this move" case.
   """
   fields = _stale_fields(result)
   return await conflict(
@@ -653,13 +645,13 @@ async def _stale_response(request: Request, result: Stale, *, action_url: str) -
 
 
 async def _blocked_response(request: Request, result: Blocked) -> Response:
-  """Render ``errors/409.html`` ``context="archived_parent"`` (``ACC-208``/``216``/``222``).
+  """Render ``errors/409.html`` with ``context="archived_parent"``.
 
   Notes
   -----
-  The payload is the parent's: ``ACC-224`` gives a deal no archive state of
-  its own, so the only thing that can unblock the write is restoring the
-  **contact**, and the primary action is that real ``POST`` form.
+  The payload is the parent's: a deal has no archive state of its own, so
+  the only thing that can unblock the write is restoring the **contact**,
+  and the primary action is that real ``POST`` form.
   """
   restore_form = (
     None
@@ -677,9 +669,9 @@ async def _blocked_response(request: Request, result: Blocked) -> Response:
         "contact_id": str(result.contact_id),
         "contact_name": result.contact_name,
         "restore_form": restore_form,
-        # The two keys Slice B added to §8.4's frozen row so `CP-23` is
-        # reachable. A deal write under an archived parent is always
-        # "restore it first", never "that has already been done".
+        # The same two keys the contact routes pass. A deal write under an
+        # archived parent is always "restore it first", never "that has
+        # already been done".
         "body": "cp_13",
         "state": "archived",
       }
@@ -688,7 +680,7 @@ async def _blocked_response(request: Request, result: Blocked) -> Response:
 
 
 async def _duplicate_response(request: Request, result: Duplicate) -> Response:
-  """Render ``errors/409.html`` ``context="duplicate"`` (``ACC-226``, ``SQL-028``)."""
+  """Render ``errors/409.html`` ``context="duplicate"``."""
   return await conflict(
     request,
     context="duplicate",
@@ -697,14 +689,14 @@ async def _duplicate_response(request: Request, result: Duplicate) -> Response:
 
 
 async def _stage_terminal_response(request: Request, result: StageTerminal) -> Response:
-  """Render ``errors/409.html`` ``context="stage_terminal"`` (``ACC-220``).
+  """Render ``errors/409.html`` ``context="stage_terminal"``.
 
   Notes
   -----
-  ``CP-35`` — *"{Won|Lost} deals cannot be moved to another stage"* — is the
-  page's sentence, and ``stage_label`` is the substitution it takes from the
+  *"{Won|Lost} deals cannot be moved to another stage"* is the page's
+  sentence, and ``stage_label`` is the substitution it takes from the
   row this transaction read. Reachable only by a crafted request: the
-  control is **absent** on a terminal deal, not disabled (**R22**).
+  control is **absent** on a terminal deal, not disabled.
   """
   return await conflict(
     request,
@@ -720,21 +712,20 @@ async def _stage_terminal_response(request: Request, result: StageTerminal) -> R
 
 @router.get("/deals", name="deals")
 async def deals_page(request: Request) -> Response:
-  """List, filter and search deals — one route, two renderings (**PIN 5**).
+  """List, filter and search deals — one route, two renderings.
 
   Returns
   -------
   Response
     ``200`` with ``partials/deal_results.html`` for an htmx fragment and
     ``deals/list.html`` otherwise, from the **same** query handling: one
-    route, two renderings, no second route table (``CONTRACTS.md`` §8 rule
-    3).
+    route, two renderings, no second route table.
 
   Notes
   -----
   ``can_create`` is ``false`` here and says so in the frozen context: a deal
   is always created **under a contact**, so the entry point is the
-  workspace's "New deal" action and never this page (``UX_FLOWS.md`` §4.7).
+  workspace's "New deal" action and never this page.
   """
   principal = await start_read(request)
   parsed = _parse_list_query(request)
@@ -757,7 +748,7 @@ async def deals_page(request: Request) -> Response:
   )
   results = _results(request, view, parsed)
   fragment = is_fragment_request(request)
-  # R24's focus rule: the container takes focus only when the control that
+  # The focus rule: the container takes focus only when the control that
   # triggered the request has disappeared. `HX-Trigger` is client-supplied,
   # so it is matched against exactly the two pager ids, never echoed, and
   # decides focus only. A full page load is not a swap, so it is never set.
@@ -794,7 +785,7 @@ async def deals_page(request: Request) -> Response:
 
 @router.get("/deals/pipeline", name="deals_pipeline")
 async def deals_pipeline(request: Request) -> Response:
-  """Render the five-column pipeline — read-only (**R22**, ``ACC-302``).
+  """Render the five-column pipeline — read-only.
 
   Notes
   -----
@@ -805,7 +796,7 @@ async def deals_pipeline(request: Request) -> Response:
   The columns come from one ``SERIALIZABLE, READ ONLY`` snapshot, so a
   header and its cards cannot disagree, and **no stage control renders on
   a pipeline card** — the pipeline is a report, and the control lives on
-  the workspace card and the deal detail (**R22**).
+  the workspace card and the deal detail.
   """
   principal = await start_read(request)
   status = _parse_pipeline_status(request)
@@ -822,8 +813,8 @@ async def deals_pipeline(request: Request) -> Response:
     private=True,
     nav_active="deals",
     # The pipeline has no pager and no sort, so nothing can disappear under
-    # the control that triggered a swap: §2(e) makes its announcement and
-    # its focus move unconditionally absent.
+    # the control that triggered a swap, so its announcement and its focus
+    # move are unconditionally absent.
     announce=None,
     scope_label=scope_label_for(principal),
     notice=None if fragment else notice_for(request),
@@ -835,17 +826,17 @@ async def deals_pipeline(request: Request) -> Response:
 
 @router.get("/contacts/{contact_id}/deals/new", name="deal_new")
 async def deal_new(request: Request, contact_id: str) -> Response:
-  """Render the empty create form for one contact (``ACC-228``-``ACC-231``).
+  """Render the empty create form for one contact.
 
   Notes
   -----
-  The parent id is an **input**, so a non-canonical one is ``400`` + §4.5
-  row 7 (``ACC-231``) and never a 404: a syntactically invalid id carries
-  no information about what exists, and answering 400 keeps ``ACC-228``'s
-  404 reserved for well-formed ids.
+  The parent id is an **input**, so a non-canonical one is ``400`` plus an
+  ``input_rejected`` row and never a 404: a syntactically invalid id
+  carries no information about what exists, which keeps the 404 reserved
+  for well-formed ids.
 
-  ``stage`` is not a field — a new deal is always ``new`` (``ACC-211``), and
-  ``CP-33`` says so on the page — and there is no ``contact_id`` input
+  ``stage`` is not a field — a new deal is always ``new``, and the page
+  says so — and there is no ``contact_id`` input
   either: the parent is the path, and the ``POST`` re-resolves it inside
   the transaction.
   """
@@ -877,7 +868,7 @@ async def deal_new(request: Request, contact_id: str) -> Response:
 
 @router.post("/contacts/{contact_id}/deals", name="deal_create")
 async def deal_create(request: Request, contact_id: str) -> Response:
-  """Create one deal under one contact (``ACC-205``-``ACC-211``)."""
+  """Create one deal under one contact."""
   started = await start_mutation(request, _CREATE_FIELDS, object_type=OBJECT_DEAL)
   if isinstance(started, Response):
     return started
@@ -901,8 +892,8 @@ async def deal_create(request: Request, contact_id: str) -> Response:
   if isinstance(result, Invalid):
     # The parent is re-resolved before the field errors are rendered, so a
     # foreign parent is the same 404 with a bad body as with a good one and
-    # an archived one is the same 409 (ACCESS_MATRIX.md §1.1's order: scope,
-    # then archived state, then the fields).
+    # an archived one is the same 409 — the pipeline's order applied here:
+    # scope, then archived state, then the fields.
     parent = await parent_for_form(context.runner, scope, contact_id=parent_id)
     if isinstance(parent, Blocked):
       return await _blocked_response(request, parent)
@@ -931,13 +922,13 @@ async def deal_create(request: Request, contact_id: str) -> Response:
 
 @router.get("/deals/{deal_id}", name="deal_detail")
 async def deal_detail(request: Request, deal_id: str) -> Response:
-  """Render one deal, with its stage control (``ACC-201``-``ACC-204``).
+  """Render one deal, with its stage control.
 
   Notes
   -----
   Readable under an archived parent, with ``can.edit`` and
-  ``can.change_stage`` false and the control therefore absent (ask
-  **A-8**): the archive hides a contact's deals from the **lists**, and
+  ``can.change_stage`` false and the control therefore absent: the archive
+  hides a contact's deals from the **lists**, and
   making the record itself disappear would turn an archive into an erasure.
   """
   principal = await start_read(request)
@@ -971,14 +962,14 @@ async def deal_edit(request: Request, deal_id: str) -> Response:
 
   Notes
   -----
-  Ask **A-8**: rendering a form whose ``POST`` could only ever answer 409
-  ``archived_parent`` (``ACC-216``) invites a submission with one possible
-  outcome, so the ``GET`` answers that 409 directly and offers the action
-  that can actually unblock it — restoring the parent.
+  Rendering a form whose ``POST`` could only ever answer 409
+  ``archived_parent`` invites a submission with one possible outcome, so
+  the ``GET`` answers that 409 directly and offers the action that can
+  actually unblock it — restoring the parent.
 
   The refusal sits **after** the scoped read, so the scope predicate still
   decides first and a foreign deal under an archived contact stays the
-  ordinary ``404`` (``ACC-214``).
+  ordinary ``404``.
   """
   principal = await start_read(request)
   identifier = _deal_id(deal_id)
@@ -1008,7 +999,7 @@ async def deal_edit(request: Request, deal_id: str) -> Response:
 
 @router.post("/deals/{deal_id}", name="deal_update")
 async def deal_update(request: Request, deal_id: str) -> Response:
-  """Edit one deal's three writable fields (``ACC-213``-``ACC-217``)."""
+  """Edit one deal's three writable fields."""
   started = await start_mutation(request, _EDIT_FIELDS, object_type=OBJECT_DEAL)
   if isinstance(started, Response):
     return started
@@ -1034,7 +1025,7 @@ async def deal_update(request: Request, deal_id: str) -> Response:
   if isinstance(result, Invalid):
     # Re-read first, for the same reason the create does: the scope
     # predicate and the parent's archive state both rank above a field
-    # error (ACCESS_MATRIX.md §1.1).
+    # error.
     view = await get_for_detail(context.runner, scope, deal_id=identifier)
     if view.contact_is_archived:
       return await _blocked_response(
@@ -1081,7 +1072,7 @@ async def _move(
     against the five; the literal target on ``/won`` and ``/lost``, where it
     is in the **path** — so a terminal move cannot be produced by editing a
     lateral form's hidden input, and those two routes have nothing to
-    validate beyond the version and the key (§2(d)).
+    validate beyond the version and the key.
   action_url_name : str
     The route name "Keep my changes" re-posts to on a 409 ``stale``.
 
@@ -1100,7 +1091,8 @@ async def _move(
   target = to_stage if to_stage is not None else body["to_stage"]
   if version is None or version < 1 or key is None or target not in _STAGES:
     # An out-of-enum `to_stage` is an allowlist rejection, not a graph
-    # decision: §4.5 row 7, and the 400 never reaches the service.
+    # decision: an ``input_rejected`` row, and the 400 never reaches the
+    # service.
     return await reject_input(request, principal, object_type=OBJECT_DEAL)
 
   context = context_of(request)
@@ -1115,9 +1107,9 @@ async def _move(
     correlation_id=current_correlation_id(),
   )
   if isinstance(result, SameStage):
-    # ACC-219: a no-op is not a mutation and gets no receipt — and no deny
-    # row either, because it is a conflict decision about a row this actor
-    # may see and not an input the allowlist refused (§2(a) note 7).
+    # A no-op is not a mutation and gets no receipt — and no deny row
+    # either, because it is a conflict decision about a row this actor may
+    # see and not an input the allowlist refused.
     return await bad_request(request)
   if isinstance(result, StageTerminal):
     return await _stage_terminal_response(request, result)
@@ -1133,14 +1125,13 @@ async def _move(
 
 @router.post("/deals/{deal_id}/stage", name="deal_stage")
 async def deal_stage(request: Request, deal_id: str) -> Response:
-  """Move one deal to another stage (``ACC-218``-``ACC-223``).
+  """Move one deal to another stage.
 
   Notes
   -----
-  ``to_stage`` accepts **all five** values (``ACC-218``: *"``to_stage`` from
-  the enum"*): ``won``/``lost`` posted here behave exactly as the dedicated
-  routes do. Narrowing the enum would make matrix-derived tests fail and
-  buy nothing, because a crafted ``POST`` bypasses the ``<details>``
+  ``to_stage`` accepts **all five** values: ``won``/``lost`` posted here
+  behave exactly as the dedicated routes do. Narrowing the enum would buy
+  nothing, because a crafted ``POST`` bypasses the ``<details>``
   confirmation either way — the real control is the server-side graph.
   """
   return await _move(request, deal_id, to_stage=None, action_url_name="deal_stage")
@@ -1148,11 +1139,11 @@ async def deal_stage(request: Request, deal_id: str) -> Response:
 
 @router.post("/deals/{deal_id}/won", name="deal_won")
 async def deal_won(request: Request, deal_id: str) -> Response:
-  """Mark one deal won — a terminal move behind ``CP-28``'s confirmation (**R22**)."""
+  """Mark one deal won — a terminal move behind a confirmation step."""
   return await _move(request, deal_id, to_stage="won", action_url_name="deal_won")
 
 
 @router.post("/deals/{deal_id}/lost", name="deal_lost")
 async def deal_lost(request: Request, deal_id: str) -> Response:
-  """Mark one deal lost — a terminal move behind ``CP-29``'s confirmation (**R22**)."""
+  """Mark one deal lost — a terminal move behind a confirmation step."""
   return await _move(request, deal_id, to_stage="lost", action_url_name="deal_lost")

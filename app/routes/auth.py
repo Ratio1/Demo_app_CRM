@@ -1,10 +1,8 @@
-"""The Slice A route table: root, login, change password, logout.
+"""The authentication routes: root, login, change password, logout.
 
-Authority: ``slice-a.md`` §4 (the table itself — method, path, name, auth,
-CSRF, template, context, success and error statuses), §2.4 (the ordered
-stages of each mutation), §2.7 (the ``?notice=`` enum), ``R15`` (every
-mutation is a plain form ``POST`` answered with ``303``), ``R28`` (no
-``autofocus`` on a failed ``POST``).
+Every mutation here is a plain form ``POST`` answered with a ``303``, and a
+failed ``POST`` never re-renders with ``autofocus``, which would move a
+screen reader past the error summary.
 
 Every handler follows the same shape, in the same order: resolve the
 session, check CSRF on an unsafe method, charge the budget, apply the
@@ -12,11 +10,10 @@ forced-reset gate, then do the work. A refusal is **raised**, never
 rendered here — :mod:`app.routes.errors` owns every status page, so two
 routes cannot answer the same denial differently.
 
-``ARC-003``: the three ``GET`` handlers call nothing from
-``app.services``. The pre-auth row ``GET /login`` creates is a session-layer
-write (``DATA_CONTRACT.md`` §6.8 row 26), reached through
+The three ``GET`` handlers call nothing from ``app.services``. The pre-auth
+row ``GET /login`` creates is a session-layer write, reached through
 :mod:`app.security.session_store` and admitted only after the
-``preauth_global`` budget (``ARC-017``(c)).
+``preauth_global`` budget has been charged.
 """
 
 from __future__ import annotations
@@ -67,10 +64,10 @@ __all__ = ["MAX_PASSWORD_LENGTH", "MIN_PASSWORD_LENGTH", "router"]
 
 router = APIRouter()
 
-#: ``UX_FLOWS.md`` §6.1 ``CP-01`` — one message for every login failure, so
+#: One message for every login failure, so
 #: nothing distinguishes a missing account from a wrong password or a
-#: disabled one (``SEC-032``).
-CP_01_LOGIN_FAILED: Final = (
+#: disabled one.
+LOGIN_FAILED_MESSAGE: Final = (
   "We could not sign you in. Check the email address and password, then try again."
 )
 
@@ -94,7 +91,7 @@ def _validated_next(raw: str | None) -> str | None:
   str | None
     The path, or ``None`` — which the caller turns into the default
     destination rather than into an error, because a hostile ``next`` is
-    not worth telling an attacker about (``SEC-042``).
+    not worth telling an attacker about.
   """
   if raw is None or not is_safe_relative(raw) or raw == LOGIN_URL:
     return None
@@ -110,7 +107,7 @@ def _login_context(
   next_path: str | None = None,
   retry_after_seconds: int | None = None,
 ) -> dict[str, Any]:
-  """Build ``auth/login.html``'s full context (``slice-a.md`` §4).
+  """Build ``auth/login.html``'s full context.
 
   Parameters
   ----------
@@ -121,12 +118,12 @@ def _login_context(
   email : str, optional
     Echoed back so a mistyped password does not cost the address too.
   errors : dict[str, list[str]] | None, optional
-    Non-empty renders the single ``CP-01`` message; the template never
+    Non-empty renders the single failure message; the template never
     enumerates which field was wrong.
   next_path : str | None, optional
     An already-validated path.
   retry_after_seconds : int | None, optional
-    Set only on a throttled attempt (``CP-02``).
+    Set only on a throttled attempt.
 
   Returns
   -------
@@ -244,7 +241,7 @@ async def login_page(request: Request) -> Response:
   Response
     ``200`` with ``auth/login.html``. The ``preauth_global`` budget is
     charged **before** the pre-auth row is created, so an over-budget
-    request inserts nothing (``ARC-017``(c), ``SEC-031``(e)).
+    request inserts nothing.
   """
   context = context_of(request)
   now = context.clock.now()
@@ -272,17 +269,17 @@ async def login_submit(request: Request) -> Response:
   -------
   Response
     ``303`` to ``/account/password`` when the account must change its
-    password — that destination **outranks** ``next`` (**R55**) — otherwise
-    to the validated ``next``, else to ``/dashboard``. ``401`` with
-    ``CP-01`` on any authentication failure, ``429`` with ``CP-02`` when
-    the account is throttled.
+    password — that destination **outranks** ``next`` — otherwise
+    to the validated ``next``, else to ``/dashboard``. ``401`` with the
+    one failure message on any authentication failure, ``429`` with the
+    throttle message when the account is locked out.
 
   Notes
   -----
   The ``401`` carries **no** ``WWW-Authenticate``: the only scheme a
   browser would act on is ``Basic``, whose credential dialog would break
-  this form flow. A deliberate deviation from RFC 9110 §15.5.2, recorded
-  in ``slice-a.md`` §2.4 for the review council.
+  this form flow. RFC 9110 expects the header on a ``401``; omitting it is
+  deliberate, and documented here because it is a deviation.
   """
   context = context_of(request)
   form = await read_form(request)
@@ -334,12 +331,12 @@ async def login_submit(request: Request) -> Response:
       request,
       csrf_token=csrf_token,
       email=email,
-      errors={"credentials": [CP_01_LOGIN_FAILED]},
+      errors={"credentials": [LOGIN_FAILED_MESSAGE]},
       next_path=next_path,
     )
     return render(request, "auth/login.html", page, status_code=401)
 
-  # R55: the forced-reset destination outranks ``next``. An account that
+  # The forced-reset destination outranks ``next``. An account that
   # must change its password may not be steered past that screen by a
   # ``next`` an attacker (or the user's own stale bookmark) supplied —
   # every other route would refuse it at step 2 anyway, so honouring
@@ -415,19 +412,18 @@ async def logout_submit(request: Request) -> Response:
   -------
   Response
     ``303 /login?notice=signed_out`` carrying ``Clear-Site-Data`` and the
-    expired cookie (``SEC-029``). Allowed on the forced-reset path: a user
+    expired cookie. Allowed on the forced-reset path: a user
     who cannot use the application must still be able to leave it.
 
   Notes
   -----
   This is the one mutation that does **not** charge the
-  ``account_mutation`` budget, and the deviation from ``slice-a.md`` §2.1
-  is deliberate rather than an omission. Logout is self-limiting: the
+  ``account_mutation`` budget, deliberately rather than by omission.
+  Logout is self-limiting: the
   session row is gone once it succeeds, so a repeat is refused at step 1
   before it reaches any write. Charging it would buy no bound and would
   create a real failure mode — a user whose budget is exhausted being
-  unable to sign out, which is precisely when they most want to. Recorded
-  for the review council.
+  unable to sign out, which is precisely when they most want to.
   """
   context = context_of(request)
   principal = await require_session(request)

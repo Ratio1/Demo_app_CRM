@@ -1,4 +1,4 @@
-"""The response header set, applied to every response (``slice-a.md`` §2.6).
+"""The response header set, applied to every response.
 
 One table, one middleware, no per-route exceptions: a header that is only
 set on the routes someone remembered is not a control. ``Cache-Control`` is
@@ -6,9 +6,9 @@ the single value that varies, and it varies on one visible axis — static
 assets are public and cacheable, everything else is ``no-store``.
 
 There is no CORS middleware anywhere in this application and no
-``Access-Control-*`` header is ever emitted (``SEC-043``); the browser's
-same-origin policy is the boundary, and the ``Origin`` check of §2.1 is what
-enforces it server-side.
+``Access-Control-*`` header is ever emitted; the browser's
+same-origin policy is the boundary, and the exact ``Origin`` check on every
+unsafe request is what enforces it server-side.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ __all__ = [
   "apply_security_headers",
 ]
 
-#: ``img-src`` is ``'self'`` with **no** ``data:`` (**R49**): nothing in the
+#: ``img-src`` is ``'self'`` with **no** ``data:``: nothing in the
 #: design set uses a ``data:`` image, and the source is re-added only with a
 #: named consumer. The cross-file ``<use href="/static/img/icons.svg#…">``
 #: sprite fetch is not an image-class request and falls to ``default-src``,
@@ -55,13 +55,13 @@ PERMISSIONS_POLICY: Final = (
 SECURITY_HEADERS: Final[dict[str, str]] = {
   "Content-Security-Policy": CONTENT_SECURITY_POLICY,
   "X-Content-Type-Options": "nosniff",
-  # R50: `same-origin`, never `no-referrer`. Per the Fetch standard a browser
+  # `same-origin`, never `no-referrer`. Per the Fetch standard a browser
   # serializes `Origin: null` on a non-GET/HEAD request whose referrer policy
-  # is `no-referrer`, so every real-browser form POST was refused by the
-  # exact-`Origin` check of §2.1 step 0a — httpx-driven tests never saw it,
+  # is `no-referrer`, so with `no-referrer` every real-browser form POST is
+  # refused by the exact-`Origin` check — httpx-driven tests never see it,
   # because httpx sets `Origin` itself. `same-origin` keeps the full `Origin`
   # on same-origin POSTs and sends nothing cross-origin, so the CSRF control
-  # and the privacy goal both hold (SEC-027, T-44).
+  # and the privacy goal both hold.
   "Referrer-Policy": "same-origin",
   "Permissions-Policy": PERMISSIONS_POLICY,
   "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
@@ -110,7 +110,7 @@ def apply_security_headers(response: Response, *, path: str) -> Response:
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
   """Apply :func:`apply_security_headers` to every response.
 
-  Second in the middleware order (``slice-a.md`` §1.1), so everything below
+  Second in the middleware order, so everything below
   it — the body-size limit, the ``Host``/``Origin`` check, the router, every
   error page and both health endpoints — is covered.
   """

@@ -7,13 +7,13 @@ role holds neither privilege. There is no ``StageTerminal`` and no
 ``SameStage`` either — an append has no graph.
 
 What is unchanged, deliberately: ownership lives on the **parent**
-(``PIN C8``), so ``insert_activity`` has no ``owner_id`` parameter and the
+, so ``insert_activity`` has no ``owner_id`` parameter and the
 author is the session's own actor; the order inside the transaction is
 receipt lookup → scoped parent read → archived parent → receipt insert →
-business write → audit (``§1(e)``), so a 409 can never become an existence
-oracle; and a foreign or missing parent raises
-:class:`~app.security.failures.ContactNotFound`, because
-``ACCESS_MATRIX.md`` §4.5 rule 2 says the denied object is the contact.
+business write → audit, so a 409 can never become an existence oracle; and
+a foreign or missing parent raises
+:class:`~app.security.failures.ContactNotFound`, because a denial on a
+reference used as a parent names the parent.
 """
 
 from __future__ import annotations
@@ -88,7 +88,7 @@ SUMMARY_MAX: Final[int] = activities_repo.SUMMARY_MAX
 #: runs, and no ``created_by_user_id`` because the author is the session.
 ACTIVITY_FIELDS: Final[tuple[str, ...]] = ("kind", "occurred_on", "summary")
 
-#: ``UX_FLOWS.md`` §4.6's four labels, in the radio quad's order.
+#: The four kind labels, in the radio group's order.
 KIND_LABELS: Final[dict[str, str]] = {
   "note": "Note",
   "call": "Call",
@@ -96,24 +96,24 @@ KIND_LABELS: Final[dict[str, str]] = {
   "meeting": "Meeting",
 }
 
-#: ``UX_FLOWS.md`` §6.6 — the ``?notice=`` code and its ``CP-52`` copy.
+#: The ``?notice=`` code a successful append redirects with.
 NOTICE_LOGGED: Final = "activity_logged"
 
-#: ``UX_FLOWS.md`` §6.7, named for their copy ids.
-CP_76_KIND_MISSING: Final = "Choose a type."
-CP_77_SUMMARY_EMPTY: Final = "Write a short summary."
-CP_77_SUMMARY_LONG: Final = "Use 1000 characters or fewer."
-CP_75_DATE_MALFORMED: Final = "Enter a date as YYYY-MM-DD."
+#: The field errors this form can produce.
+ACTIVITY_KIND_REQUIRED_MESSAGE: Final = "Choose a type."
+SUMMARY_REQUIRED_MESSAGE: Final = "Write a short summary."
+SUMMARY_TOO_LONG_MESSAGE: Final = "Use 1000 characters or fewer."
+DATE_MALFORMED_MESSAGE: Final = "Enter a date as YYYY-MM-DD."
 
 OP_CREATE: Final[Operation] = "activity_create"
 
 #: ``unique_violation``. Classified by SQLSTATE and never by an exception
-#: class name (``DECISIONS.md`` §3). ``activities`` carries no UNIQUE
+#: class name. ``activities`` carries no UNIQUE
 #: constraint besides its primary key on an application-generated UUID, so a
 #: ``23505`` inside this transaction *is* ``uq_mutation_receipts_key``.
 _UNIQUE_VIOLATION: Final = "23505"
 
-#: ``CP-75``'s shape. ``date.fromisoformat`` accepts week dates, ordinal
+#: The accepted date shape. ``date.fromisoformat`` accepts week dates, ordinal
 #: dates and a compact ``yyyymmdd`` that ``<input type="date">`` never
 #: produces, so the pattern runs first and the constructor second.
 _ISO_DATE_RE: Final = re.compile(r"\A\d{4}-\d{2}-\d{2}\Z")
@@ -121,7 +121,7 @@ _ISO_DATE_RE: Final = re.compile(r"\A\d{4}-\d{2}-\d{2}\Z")
 
 @dataclass(frozen=True, slots=True)
 class ActivityItemView:
-  """One timeline entry, as ``CONTRACTS.md`` §8.3's ``timeline.items`` freezes it."""
+  """One timeline entry, in the shape ``timeline.items`` renders."""
 
   id: UUID
   kind: str
@@ -133,7 +133,7 @@ class ActivityItemView:
 
 @dataclass(frozen=True, slots=True)
 class TimelineView:
-  """The non-URL half of ``CONTRACTS.md`` §8.3's ``timeline`` sub-context."""
+  """The non-URL half of the ``timeline`` sub-context."""
 
   items: tuple[ActivityItemView, ...]
   total: int
@@ -148,7 +148,7 @@ class TimelineView:
 
 @dataclass(frozen=True, slots=True)
 class RecentItemView:
-  """One dashboard recent-activity row (``CONTRACTS.md`` §8.2)."""
+  """One dashboard recent-activity row."""
 
   id: UUID
   contact_id: UUID
@@ -181,10 +181,10 @@ class Invalid:
 
 @dataclass(frozen=True, slots=True)
 class Duplicate:
-  """``409`` ``context="duplicate"`` — same key, different payload (``SQL-028``).
+  """``409`` ``context="duplicate"`` — same key, different payload.
 
   Carries the **contact**, not the activity: an activity has no page of its
-  own (``ACCESS_MATRIX.md`` §1.6 gives it no ``GET`` route at all), so the
+  own — it has no ``GET`` route at all — so the
   409's "see the record" link can only point at the workspace that holds it.
   """
 
@@ -209,12 +209,12 @@ class _Normalized:
 
 
 def _validate(submitted: Mapping[str, str]) -> Invalid | _Normalized:
-  """Normalize and check the three writable fields (``UX_FLOWS.md`` §6.7).
+  """Normalize and check the three writable fields.
 
   Notes
   -----
   ``summary`` is stripped before it is measured, so a textarea holding
-  nothing but whitespace is ``CP-77``'s "empty" rather than a row of blanks
+  nothing but whitespace is "empty" rather than a row of blanks
   in somebody's history. The length bound is checked **after** stripping and
   against the same 1000 as ``ck_activities_summary``, which stays the second
   line of defence.
@@ -223,23 +223,23 @@ def _validate(submitted: Mapping[str, str]) -> Invalid | _Normalized:
 
   kind = submitted.get("kind", "").strip()
   if kind not in KIND_LABELS:
-    errors["kind"] = [CP_76_KIND_MISSING]
+    errors["kind"] = [ACTIVITY_KIND_REQUIRED_MESSAGE]
 
   raw_date = submitted.get("occurred_on", "").strip()
   occurred_on: date | None = None
   if _ISO_DATE_RE.match(raw_date) is None:
-    errors["occurred_on"] = [CP_75_DATE_MALFORMED]
+    errors["occurred_on"] = [DATE_MALFORMED_MESSAGE]
   else:
     try:
       occurred_on = date.fromisoformat(raw_date)
     except ValueError:
-      errors["occurred_on"] = [CP_75_DATE_MALFORMED]
+      errors["occurred_on"] = [DATE_MALFORMED_MESSAGE]
 
   summary = submitted.get("summary", "").strip()
   if not summary:
-    errors["summary"] = [CP_77_SUMMARY_EMPTY]
+    errors["summary"] = [SUMMARY_REQUIRED_MESSAGE]
   elif len(summary) > SUMMARY_MAX:
-    errors["summary"] = [CP_77_SUMMARY_LONG]
+    errors["summary"] = [SUMMARY_TOO_LONG_MESSAGE]
 
   values = {"kind": kind, "occurred_on": raw_date, "summary": summary}
   if errors or occurred_on is None:
@@ -298,7 +298,7 @@ def _timeline(page: ActivityPage) -> TimelineView:
 async def timeline_for_contact(
   runner: TransactionRunner, scope: Scope, *, contact_id: UUID, page: int, per_page: int
 ) -> TimelineView:
-  """Read one page of a contact's timeline (``ACC-401``-``ACC-404``).
+  """Read one page of a contact's timeline.
 
   Notes
   -----
@@ -370,7 +370,7 @@ async def _parent_state(
 
   ``deals.parent_state`` is deliberately reused rather than copied: one
   statement means ``POST /activities`` and ``POST /contacts/{id}/deals``
-  cannot 404 differently for the same parent (``PIN C3``, ``ACC-407``).
+  cannot 404 differently for the same parent.
   """
   return await deals_repo.parent_state(conn, scope, contact_id=contact_id)
 
@@ -396,13 +396,13 @@ async def log_activity(
   key: UUID,
   correlation_id: str,
 ) -> Applied | Invalid | Blocked | Duplicate:
-  """Append one activity to one contact's history (``ACC-405``-``ACC-415``).
+  """Append one activity to one contact's history.
 
   Parameters
   ----------
   contact_id : UUID
     The parent, from the form's hidden field — the frozen form posts to
-    ``/activities`` and carries it in the body (``UX_FLOWS.md`` §4.6). It is
+    ``/activities`` and carries it in the body. It is
     re-resolved **inside** the ``SERIALIZABLE`` transaction under the scope
     predicate, so a body naming somebody else's contact is the identical
     404 and never a write.
@@ -414,13 +414,13 @@ async def log_activity(
   Raises
   ------
   ContactNotFound
-    For a foreign parent and for a missing one alike (``ACC-407``).
+    For a foreign parent and for a missing one alike.
 
   Notes
   -----
   Validation runs first, but the **parent** is what decides: a field error
   under a foreign parent still answers 404, because the route re-resolves
-  the parent before it renders the errors (``ACCESS_MATRIX.md`` §1.1).
+  the parent before it renders the errors.
 
   The id and the instant are generated before the transaction, so every
   ``40001`` retry writes the same row and the receipt's

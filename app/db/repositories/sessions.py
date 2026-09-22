@@ -5,7 +5,7 @@ binds the digest. Nothing here mints a token, sets a cookie or decides
 whether a principal may proceed — those belong to ``app/security/**``.
 
 The one design decision worth restating is :func:`read_live_session`'s
-**LEFT JOIN** (amendment **A4**). An INNER JOIN cannot see a pre-auth row,
+**LEFT JOIN**. An INNER JOIN cannot see a pre-auth row,
 whose ``user_id`` is ``NULL`` by construction, and ``POST /login`` has to
 read exactly that row for its CSRF digest. Expiry and account state are
 filtered **in SQL**, so no service bug can treat a dead row as live.
@@ -45,23 +45,23 @@ SELECT s.id, s.kind, s.user_id, s.csrf_sha256, s.created_at, s.last_seen_at,
    AND (s.kind = 'pre_auth' OR u.is_active)
 """
 
-#: Ruling **R48**. How many expired pre-auth rows one ``GET /login`` may
+#: How many expired pre-auth rows one ``GET /login`` may
 #: reclaim. Bounded so the login path's cost cannot grow with the size of the
 #: backlog, and a single home for the number so the statement and any test
 #: that asserts the bound read the same constant. ``manage cleanup`` remains
 #: the full sweep.
 PREAUTH_PURGE_LIMIT: Final[int] = 100
 
-#: **R48**, issued in the same transaction as — and immediately before — the
-#: pre-auth INSERT.
+#: The purge, issued in the same transaction as — and immediately before —
+#: the pre-auth INSERT.
 #:
-#: The bounded single-column ``IN (SELECT … LIMIT n)`` is §8.1's sanctioned
-#: portable idiom: ``DELETE … LIMIT`` is banned outright by §9.1 and is not an
-#: option. ``kind = 'pre_auth'`` is not in the predicate because
+#: The bounded single-column ``IN (SELECT … LIMIT n)`` is the portable idiom
+#: for a capped delete: ``DELETE … LIMIT`` is a vendor extension and is not
+#: an option here. ``kind = 'pre_auth'`` is not in the predicate because
 #: ``ck_sessions_kind_user`` makes ``user_id IS NULL`` and that kind the same
-#: set (§3.3), and adding the redundant conjunct would suggest the CHECK might
+#: set, and adding the redundant conjunct would suggest the CHECK might
 #: not hold. The cutoff is a bound parameter from the injected clock — never
-#: ``now()``, never interval arithmetic (§2.3 rule 2).
+#: ``now()``, never interval arithmetic.
 _PURGE_EXPIRED_PREAUTH_SQL: Final[LiteralString] = """
 DELETE FROM public.sessions
  WHERE id IN (SELECT id
@@ -174,7 +174,7 @@ async def read_live_session(
     The SHA-256 of the cookie value, 64 lowercase hex characters.
   now : datetime
     The instant expiry is judged against, supplied by the caller's clock —
-    which is what lets a test move time instead of sleeping (§7.3).
+    which is what lets a test move time instead of sleeping.
 
   Returns
   -------
@@ -245,16 +245,14 @@ async def create_preauth_session(
   ``kind`` is the literal ``'pre_auth'`` and ``user_id`` the literal ``NULL``
   in the statement, not parameters. A pre-auth row that could be handed a
   ``user_id`` would defeat ``ck_sessions_kind_user``, whose whole purpose is
-  to make this row structurally identity-free (§3.3).
+  to make this row structurally identity-free.
 
-  This is ``DATA_CONTRACT.md`` §6.8 row 26 — the one write an anonymous
-  ``GET`` can cause — and the caller has already charged the
-  ``preauth_global`` budget before reaching it (``ARC-017``(c)). Under
-  **R48** that write set is now a bounded DELETE beside the INSERT, which is
-  the edit §6.8 row 26 and ``ARC-003``'s note are owed.
+  This is the one write an anonymous ``GET`` can cause, and the caller has
+  already charged the ``preauth_global`` budget before reaching it. The
+  write set is an INSERT plus a bounded DELETE.
 
-  **R48, and why it lives here rather than in a function of its own.** The
-  ruling binds the purge to *each* pre-auth INSERT. A separate
+  **Why the purge lives here rather than in a function of its own.** It is
+  bound to *each* pre-auth INSERT. A separate
   ``purge_expired_preauth`` would be easier to test in isolation and exactly
   as easy for a future caller to forget, and a forgotten purge is an unbounded
   table; :func:`promote_session` is the shipped precedent for two statements
@@ -323,7 +321,7 @@ async def promote_session(
     The account this session now carries.
   token_sha256 : str
     The digest of the **new** cookie value. The cookie's *name* never
-    changes; what rotates is the value (``SEC-011``, ``SEC-012``).
+    changes; what rotates is the value.
   csrf_sha256 : str
     The digest of the new CSRF token.
   now : datetime
@@ -377,7 +375,7 @@ async def touch_session(
   ----------
   conn : PoolConnection
     A connection inside the caller's short ``READ COMMITTED`` transaction,
-    deliberately outside every business transaction (§6.8 row 14).
+    deliberately outside every business transaction.
   session_id : UUID
     The row to touch.
   now : datetime
@@ -385,9 +383,9 @@ async def touch_session(
   idle_expires_at : datetime
     ``now + 30 min``.
   stale_before : datetime
-    ``now - 60 s``, computed in Python (amendment **A5**): the ">60 s" rule
+    ``now - 60 s``, computed in Python: the ">60 s" rule
     cannot be ``now() - interval`` in SQL, because interval arithmetic and
-    server clocks are both banned (§9.1).
+    server clocks are both banned.
 
   Returns
   -------
@@ -421,8 +419,8 @@ async def delete_session(conn: PoolConnection, *, session_id: UUID) -> None:
   Parameters
   ----------
   conn : PoolConnection
-    A connection inside the caller's transaction. ``slice-a.md`` §10(b)
-    tables this under ``run_read_committed`` for the bare delete; logout
+    A connection inside the caller's transaction. A bare delete runs under
+    ``run_read_committed``; logout
     runs it inside ``run_serializable`` instead, because its audit row must
     ride the transaction of the mutation it describes.
   session_id : UUID
@@ -430,7 +428,7 @@ async def delete_session(conn: PoolConnection, *, session_id: UUID) -> None:
 
   Notes
   -----
-  Sessions are hard-deleted, never flagged (§3.3): no ``revoked_at`` column
+  Sessions are hard-deleted, never flagged: no ``revoked_at`` column
   exists, so a deleted row leaves no token hash behind and "revoked" and
   "unknown token" are one code path. Deleting a row that is already gone is
   not an error and is not reported — there is nothing a caller could do

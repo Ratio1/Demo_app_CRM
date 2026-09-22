@@ -1,7 +1,7 @@
 """``activities`` — append-only child rows, authorized entirely by the parent.
 
 The conventions are ``deals.py``'s, unchanged: ``conn`` first and ``scope``
-second on every public function (``ARC-001``/``SQL-032``), the ownership
+second on every public function, the ownership
 predicate written on the **parent** through
 ``JOIN public.contacts c ON c.id = a.contact_id``, one ``WHERE`` builder
 shared by a page and its count, and a tagged outcome rather than a status
@@ -12,8 +12,8 @@ statement anywhere in this module**, because the runtime role holds neither
 privilege (``migrations/0005_activities`` step 03): immutability is a grant,
 not a missing function. And the author column is nullable, so every read
 reaches it through ``LEFT JOIN public.users`` — an inner join would make an
-activity vanish from the timeline the moment its author was erased, which is
-exactly the row ``D-H`` requires to outlive them.
+activity vanish from the timeline the moment its author was erased. An
+activity must outlive the account that logged it.
 """
 
 from __future__ import annotations
@@ -54,12 +54,12 @@ __all__ = [
 #: The timeline's page size. Smaller than the 25 of the contact and deal
 #: lists: the timeline is a region inside a workspace, not a page of its own.
 DEFAULT_PER_PAGE: Final[int] = 10
-#: ``ACC-309``'s hard clamp, the value every list surface shares: a larger
-#: ``per_page`` is reduced, never refused.
+#: The hard clamp every list surface shares: a larger ``per_page`` is
+#: reduced, never refused.
 MAX_PER_PAGE: Final[int] = 100
-#: ``DATA_CONTRACT.md`` §6.6's server-side offset clamp.
+#: The server-side offset clamp: a page past it repeats the last page.
 MAX_OFFSET: Final[int] = 10_000
-#: The dashboard's recent-activity list (``CONTRACTS.md`` §8.2, ``R16``).
+#: The dashboard's recent-activity list.
 RECENT_LIMIT: Final[int] = 10
 #: ``ck_activities_summary``'s upper bound, mirrored in Python so the CHECK is
 #: the second line of defence and never the first.
@@ -109,7 +109,7 @@ SELECT count(*)
    {scope}
 """)
 
-#: The dashboard's recent list (``CONTRACTS.md`` §8.2). It carries the parent's
+#: The dashboard's recent list. It carries the parent's
 #: name and its owner's name, both of which the caller could already read at
 #: ``GET /contacts/{id}`` under this same predicate — and **only** activities
 #: whose parent is visible **and not archived**, so an archived contact's
@@ -170,7 +170,7 @@ class RecentRow:
 
 @dataclass(frozen=True, slots=True)
 class ActivityFields:
-  """The three writable fields — the dataclass IS the allowlist (``ACC-217``)."""
+  """The three writable fields — the dataclass IS the allowlist."""
 
   kind: str
   occurred_on: date
@@ -303,8 +303,9 @@ async def insert_activity(
   -----
   The parent is resolved by ``deals.parent_state`` — the **same** statement
   ``POST /contacts/{id}/deals`` uses, so a foreign or missing parent cannot
-  answer differently on the two surfaces (``PIN C3``: scope first, archived
-  state second). This call is the transaction-local **guard**; the service's
+  answer differently on the two surfaces: the scope predicate decides
+  first, the archived state second. This call is the transaction-local
+  **guard**; the service's
   own earlier call is the **decision**, taken before any receipt is written.
 
   ``author_id`` is the actor's own id, never a submitted field: there is no

@@ -1,10 +1,11 @@
 """Step 1 of the pipeline: cookie to principal, or to nothing.
 
-Authority: ``slice-a.md`` §2.1 step 1 — "session cookie → ``sha256`` →
-``sessions`` row joined to ``users``; live, within idle 30 min and absolute
-8 h, ``users.is_active = TRUE``, **role re-read now**".
+The cookie's token is hashed, the ``sessions`` row is joined to ``users``,
+and the row counts only when it is live: within the 30-minute idle window,
+within the 8-hour absolute window, and on an account with
+``is_active = TRUE``. The **role is re-read on every request**.
 
-The last clause is the one that matters most: the role, the active flag and
+That last part is the one that matters most: the role, the active flag and
 the forced-reset flag are read from ``users`` on **every** request through
 the join, never carried in the cookie and never cached in the process. A
 disabled account therefore stops working on its next request rather than
@@ -88,9 +89,9 @@ class Scope:
   Notes
   -----
   Defined here because the identity that produces it is defined here.
-  Slice B's business repositories take it as a mandatory argument — the
-  first *business* one, after the connection (``ARC-001``,
-  ``contracts/slice-b.md`` §1(b) B1).
+  Every business repository takes it as a mandatory argument, the first one
+  after the connection, so a query cannot be written without deciding what
+  the caller is allowed to see.
   """
 
   actor_id: UUID
@@ -162,9 +163,9 @@ async def resolve_session(request: Request) -> SessionRow | None:
 
   Notes
   -----
-  A full session is touched here, at most once a minute
-  (``DATA_CONTRACT.md`` §6.8 row 14). The touch is the only write this
-  step performs and it happens before the handler runs, so a handler that
+  A full session is touched here, at most once a minute. The touch is the
+  only write this step performs and it happens before the handler runs,
+  so a handler that
   fails still leaves the idle window extended — which is correct: the user
   *was* active.
   """

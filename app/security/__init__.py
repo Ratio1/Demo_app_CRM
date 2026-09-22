@@ -1,7 +1,6 @@
 """Authentication, sessions, CSRF, authorization, throttling and audit.
 
-Owned by the ``backend-security`` lane (``contracts/slice-a.md`` §1.1). The
-package is deliberately split into two layers:
+The package is deliberately split into two layers:
 
 *Pure modules* — :mod:`app.security.clock`, :mod:`app.security.passwords`,
 :mod:`app.security.sessions` and :mod:`app.security.csrf` — import nothing
@@ -14,11 +13,11 @@ at all.
 :mod:`app.security.origin`, :mod:`app.security.throttle`,
 :mod:`app.security.audit`, :mod:`app.security.principal` and
 :mod:`app.security.authz` — compose those primitives with the repository
-surface of ``slice-a.md`` §10(b). ``app/routes/**`` reaches the database
-only through this layer or through ``app/services/**`` (``ARC-008``).
+layer. ``app/routes/**`` reaches the database only through this layer or
+through ``app/services/**``.
 
-Nothing here reads the process environment (``ARC-009``) and nothing calls a
-wall-clock function outside :mod:`app.security.clock` (``ARC-019``).
+Nothing here reads the process environment and nothing calls a
+wall-clock function outside :mod:`app.security.clock`.
 """
 
 from __future__ import annotations

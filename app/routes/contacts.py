@@ -1,22 +1,14 @@
-"""The Slice B route table: contacts, their forms, and the four mutations.
-
-Authority: ``contracts/slice-b.md`` §2(c) (the table itself — method, path,
-name, CSRF, idempotency, template, context, success and error statuses),
-§2(d) (the ``409`` renders), §2(e) (the fragment predicate and the focus
-rule), §2(f) (every form's exact accepted field set), §1(d) (which
-transaction each call opens), ``ACCESS_MATRIX.md`` §1.1 (the check order),
-§1.2 (the status policy and the H-08 unknown-parameter rule), §4.5 (the
-deny-audit triples), §5.1-§5.3 (the field allowlists), ``CONTRACTS.md`` §8
-(every context key, frozen).
+"""The contact routes: the list, the forms, and the four mutations.
 
 Each handler follows the one shape, in the one order: resolve the session,
 read and check CSRF on an unsafe method, charge the budget, apply the
 forced-reset gate, check the role where there is one, then do the work. A
 refusal is **raised**, never rendered here — :mod:`app.routes.errors` owns
 every status page — with one deliberate exception: the ``400`` of a
-crafted request is returned from :func:`~app.routes.pipeline.reject_input`, because it also
-writes ``ACCESS_MATRIX.md`` §4.5 row 6 and that row belongs beside the
-decision that produced it.
+crafted request is returned from
+:func:`~app.routes.pipeline.reject_input`, because it also writes the
+``input_rejected`` row and that row belongs beside the decision that
+produced it.
 
 Three rules are worth reading before changing anything here.
 
@@ -24,20 +16,19 @@ Three rules are worth reading before changing anything here.
 ``can.reassign`` and the absence of a panel are **UI hiding**; every one
 of them is re-decided server-side by the route's own guards and by the
 scope predicate inside the statement. Hiding a control is never a
-substitute (``ACCESS_MATRIX.md`` §1.4).
+substitute.
 
 *An empty query value means the parameter was not supplied.* A
 ``<select>`` always submits something, so ``?kind=`` is the filter bar's
 "any" option and not a value outside the enum; a **non-empty** value
-outside an allowlist is the ``400`` of ``ACC-109``/``ACC-110``/``ACC-111``.
+outside an allowlist is a crafted-request ``400``.
 One rule for ``q``, ``kind``, ``status``, ``sort``, ``dir``, ``page`` and
 ``per_page`` alike.
 
 *A fragment is decided by two headers, not one.* htmx 2.0.10 sends
 ``HX-Request: true`` on a Back-button history restore as well, and swaps
 that response into the history element with ``innerHTML`` — so a bare
-``HX-Request`` check would swap a fragment in as the whole document
-(§2(e), measured in §2(j) probe 1).
+``HX-Request`` check would swap a fragment in as the whole document.
 """
 
 from __future__ import annotations
@@ -84,7 +75,7 @@ from app.services.activities import (
   timeline_for_contact,
 )
 from app.services.contacts import (
-  CP_25_BAD_TARGET,
+  BAD_OWNER_TARGET_MESSAGE,
   DEFAULT_PER_PAGE,
   KIND_LABELS,
   MAX_PER_PAGE,
@@ -117,9 +108,9 @@ __all__ = ["detail_page_context", "router"]
 
 router = APIRouter()
 
-#: ``ACCESS_MATRIX.md`` §5.2. Every other parameter **name** is ignored,
-#: dropped before any other check (H-08); a repeated one of these is a
-#: ``400`` (``SEC-076``).
+#: The allowlisted query keys. Every other parameter **name** is ignored,
+#: dropped before any other check; a repeated one of these is a
+#: ``400``.
 _LIST_KEYS: Final[tuple[str, ...]] = ("q", "status", "kind", "sort", "dir", "page", "per_page")
 
 _SORT_KEYS: Final[frozenset[str]] = frozenset(
@@ -132,7 +123,7 @@ _DEFAULT_SORT: Final = "updated_at"
 _DEFAULT_DIRECTION: Final = "desc"
 _DEFAULT_STATUS: Final = "active"
 
-#: §2(c). 254 is ``ck_contacts_email``'s upper bound and therefore the
+#: 254 is ``ck_contacts_email``'s upper bound and therefore the
 #: longest **searched** column of the three, so a longer prefix can match
 #: nothing that could ever be stored. 160 — the ``full_name``/``company``
 #: bound — would wrongly refuse a legitimate long-email prefix.
@@ -140,12 +131,11 @@ _MAX_TERM_LENGTH: Final = 254
 
 _DIGITS: Final = re.compile(r"\A[0-9]+\Z")
 
-#: §2(f). ``csrf_token`` and ``idempotency_key`` are on **every** form, are
+#: ``csrf_token`` and ``idempotency_key`` are on **every** form, are
 #: never writable business fields, and are never accepted from a query
 #: string. Anything outside a row's set — and any of ``id``, ``owner_id``,
 #: ``archived_at``, ``created_at``, ``updated_at``, ``role`` — is a
-#: crafted-request ``400``, rejected and never ignored (``ACC-011``,
-#: ``ACC-012``, ``ACC-019``).
+#: crafted-request ``400``, rejected and never ignored.
 _CREATE_FIELDS: Final[frozenset[str]] = frozenset(
   {"csrf_token", "idempotency_key", "name", "company", "email", "phone", "kind"}
 )
@@ -155,9 +145,8 @@ _VERSION_ONLY_FIELDS: Final[frozenset[str]] = frozenset(
 )
 _REASSIGN_FIELDS: Final[frozenset[str]] = _VERSION_ONLY_FIELDS | {"owner_id"}
 
-#: ``UX_FLOWS.md`` §6.7 ``CP-127`` — the form labels the 409-stale
-#: comparison panels use, in :data:`app.services.contacts.CONTACT_FIELDS`
-#: order.
+#: The form labels the 409-stale comparison panels use, in
+#: :data:`app.services.contacts.CONTACT_FIELDS` order.
 _FIELD_LABELS: Final[tuple[tuple[str, str], ...]] = (
   ("name", "Full name"),
   ("company", "Company"),
@@ -167,24 +156,23 @@ _FIELD_LABELS: Final[tuple[tuple[str, str], ...]] = (
 )
 _OWNER_LABEL: Final = "Owner"
 
-#: ``UX_FLOWS.md`` §6.3 ``CP-32`` — *"Owner: you · Owner: {name}"*. The
+#: *"Owner: you"* or *"Owner: {name}"*. The
 #: template renders ``Owner: {{ owner_label }}``, so the **value** is
 #: pre-formatted here: a record of one's own reads "you", never the
 #: viewer's own display name repeated back at them.
-_CP_32_SELF: Final = "you"
+_OWNER_SELF_LABEL: Final = "you"
 
-#: ``UX_FLOWS.md`` §6.5 ``CP-41``/``CP-42``/``CP-43``.
-_CP_42_NO_RESULTS: Final = "No contacts match this search."
-_CP_43_EMPTY: Final = (
+#: The two empty states of the contact list.
+_CONTACTS_NO_RESULTS_MESSAGE: Final = "No contacts match this search."
+_CONTACTS_EMPTY_MESSAGE: Final = (
   "No contacts yet. Add your first contact to start tracking deals and activity."
 )
 
-#: ``UX_FLOWS.md`` §6.3 ``CP-38`` — the label for an owner id that names no
+#: The label for an owner id that names no
 #: active user, which a 409-stale reassign panel can legitimately hold.
-_CP_38_UNKNOWN_USER: Final = "removed user"
+_UNKNOWN_USER_LABEL: Final = "removed user"
 
-#: **R64** (**R31**, ``UX_FLOWS.md`` §4.5 *"Type (radio pair, ``lead``
-#: default)"*, §2(f)). The create form renders this value pre-selected, so
+#: The create form renders this value pre-selected, so
 #: the pair a user never touches still submits one — which is what makes
 #: "the form never answers 400 for an untouched radio pair" true of the
 #: shipped form rather than of the validator. The **value**, not a label:
@@ -193,8 +181,8 @@ _CP_38_UNKNOWN_USER: Final = "removed user"
 _DEFAULT_KIND: Final = "lead"
 
 #: The field limits ``contacts/form.html`` renders as ``maxlength``
-#: (``CONTRACTS.md`` §8.2). A progressive convenience only: the
-#: server-rendered error summary stays authoritative (**R28**, **R31**).
+#:. A progressive convenience only: the
+#: server-rendered error summary stays authoritative.
 _FORM_LIMITS: Final[dict[str, int]] = {
   "full_name": 160,
   "company": 160,
@@ -202,7 +190,7 @@ _FORM_LIMITS: Final[dict[str, int]] = {
   "phone": 32,
 }
 
-#: The two paging control ids §2(e) pins. ``HX-Trigger`` is
+#: The two paging control ids. ``HX-Trigger`` is
 #: client-supplied, so it is matched against exactly these, never echoed,
 #: and decides focus only — never authorization.
 _PAGER_PREV: Final = "page-prev"
@@ -223,7 +211,7 @@ class _ListQuery:
 
 
 def _parse_list_query(request: Request) -> _ListQuery | None:
-  """Validate the contact list's query string (**PIN 6**, ``ACC-109``-``ACC-112``).
+  """Validate the contact list's query string.
 
   Returns
   -------
@@ -232,7 +220,7 @@ def _parse_list_query(request: Request) -> _ListQuery | None:
     outside an allowlist, a ``page`` or ``per_page`` that is not a positive
     integer, or a ``q`` longer than :data:`_MAX_TERM_LENGTH`. A ``page``
     **beyond the last** is not an error — it is an ordinary empty result
-    (``ACC-112``) — and a ``per_page`` above 100 is **clamped**, not
+    — and a ``per_page`` above 100 is **clamped**, not
     refused.
   """
   raw: dict[str, str | None] = {}
@@ -284,7 +272,7 @@ def _contact_id(raw: str) -> UUID:
   -----
   No database read happens for a non-canonical segment, and the answer is
   the **same** body as a foreign or missing contact with ``object_id``
-  ``NULL`` in the deny row (§2(c)). A non-canonical id must not be a
+  ``NULL`` in the deny row. A non-canonical id must not be a
   cheaper 404 than a canonical one.
   """
   parsed = parse_canonical(raw)
@@ -325,7 +313,7 @@ def _applied_redirect(request: Request, result: Applied) -> Response:
   -----
   The ``Location`` is rebuilt here from the outcome's object id and its
   allowlisted ``?notice=`` code — the same route-name function on the first
-  submission and on a replay, because no URL is ever stored (§1(b)).
+  submission and on a replay, because no URL is ever stored.
   """
   return redirect(f"{_detail_url(request, result.contact_id)}?notice={result.notice}", request)
 
@@ -358,24 +346,24 @@ def _list_url(query: _ListQuery, *, page: int) -> str:
 
 
 def _announce(view: ContactListView) -> str:
-  """Return the live-region text for a swapped list (``CP-41``/``CP-42``/``CP-43``)."""
+  """Return the live-region text a swapped list announces."""
   if view.result_state == "ok":
     return f"{view.total} results. Page {view.page} of {view.pages}."
   if view.result_state == "no_results":
-    return _CP_42_NO_RESULTS
-  return _CP_43_EMPTY
+    return _CONTACTS_NO_RESULTS_MESSAGE
+  return _CONTACTS_EMPTY_MESSAGE
 
 
 def _results(request: Request, view: ContactListView, query: _ListQuery) -> View:
-  """Build ``CONTRACTS.md`` §8.3's ``results`` from the service's view model.
+  """Build the ``results`` context from the service's view model.
 
   Notes
   -----
   ``prev_url``/``next_url`` are ``None`` **exactly** when the matching
   ``has_*`` is false, which is the template's instruction to render
-  **R24**'s inert ``<span aria-disabled="true">`` carrying the same visible
-  label — not to omit the control, which would shift the layout at the
-  first and last page.
+  an inert ``<span aria-disabled="true">`` carrying the same visible label
+  — not to omit the control, which would shift the layout at the first and
+  last page.
   """
   return View(
     items=[
@@ -413,17 +401,17 @@ def _results(request: Request, view: ContactListView, query: _ListQuery) -> View
 
 
 def _owner_label(owner_name: str, *, is_own: bool) -> str:
-  """Return ``CP-32``'s owner value: "you" for one's own record, else the name."""
-  return _CP_32_SELF if is_own else owner_name
+  """Return the owner value: "you" for one's own record, else the name."""
+  return _OWNER_SELF_LABEL if is_own else owner_name
 
 
 def _contact_context(view: ContactView) -> dict[str, Any]:
-  """Build ``CONTRACTS.md`` §8.2's ``contact`` — and nothing beyond it.
+  """Build the ``contact`` context — and nothing beyond it.
 
   Notes
   -----
-  ``owner_id`` is deliberately absent: §8's rule 1 keeps a foreign row's
-  owner id out of every template, and the one screen that needs it gets it
+  ``owner_id`` is deliberately absent: a foreign row's owner id stays out
+  of every template, and the one screen that needs it gets it
   as ``reassign.current_owner_id`` instead.
   """
   return {
@@ -458,12 +446,12 @@ def _timeline_url(request: Request, contact_id: UUID, *, page: int) -> str:
 
 
 def _timeline(request: Request, contact_id: UUID, view: TimelineView) -> View:
-  """Build ``CONTRACTS.md`` §8.3's frozen ``timeline`` sub-context.
+  """Build the ``timeline`` sub-context.
 
   Notes
   -----
   ``prev_url``/``next_url`` are ``None`` **exactly** when the matching
-  ``has_*`` is false — the template's instruction to render **R24**'s inert
+  ``has_*`` is false — the template's instruction to render an inert
   ``<span aria-disabled="true">`` with the same visible label, not to omit
   the control. The rule, the macro and the markup are the list region's;
   only the URL builder differs.
@@ -503,19 +491,19 @@ async def _detail_context(
   activity_values: dict[str, str] | None = None,
   timeline_page: int = 1,
 ) -> dict[str, Any]:
-  """Build the whole frozen context of ``contacts/detail.html`` (§8.2).
+  """Build the whole frozen context of ``contacts/detail.html``.
 
   Parameters
   ----------
   reassign_errors : dict[str, list[str]] | None, optional
-    ``{"owner_id": [CP-25]}`` when re-rendering after a bad reassign
-    target, which is a ``400`` on this page and never a 409 (``ACC-032``).
+    ``{"owner_id": [...]}`` when re-rendering after a bad reassign
+    target, which is a ``400`` on this page and never a 409.
   activity_errors : dict[str, list[str]] | None, optional
     Field errors from a refused ``POST /activities``; the form is on this
-    page, so its ``400`` re-renders this page (``ACCESS_MATRIX.md`` §1.6).
+    page, so its ``400`` re-renders this page.
   activity_values : dict[str, str] | None, optional
     What was submitted, echoed back so a rejected 1000-character summary is
-    not lost (``UX_FLOWS.md`` §2 step 5, "with the text preserved").
+    not lost: a refused submission always comes back with its text.
   timeline_page : int, optional
     Which page of the ``#timeline`` region to render; 1 on every render but
     the paging one.
@@ -524,25 +512,25 @@ async def _detail_context(
   -----
   Four idempotency keys are minted per render — archive, restore, reassign
   and the activity form — **plus one per deal**, because a page with N
-  mutation forms carries N keys (``CONTRACTS.md`` §8 rule 2) and each deal
-  card draws its own stage control. ``deal_forms`` is that per-deal half
-  (finding F-4: one key per *control render*, shared by the three forms the
-  partial draws, only one of which can be submitted).
+  mutation forms carries N keys and each deal
+  card draws its own stage control. ``deal_forms`` is that per-deal half:
+  one key per *control render*, shared by the three forms the partial
+  draws, only one of which can be submitted.
 
-  The ``#deals`` region is a **full page render only** (``slice-c.md``
-  §2(e)): it carries no ``hx-*`` attribute and has no fragment route, because
-  §8.3 defines exactly four swap targets and none of them is this one. Every
+  The ``#deals`` region is a **full page render only**: it carries no
+  ``hx-*`` attribute and has no fragment route, because there are exactly
+  four swap targets on this page and none of them is this one. Every
   deal mutation already lands on ``303 /contacts/{id}…#deal-{id}``, a full
   server render, so the region has nothing to swap.
 
-  The reassign panel is built only for an admin on an **active** contact
-  (**R25**): while the contact is archived it does not render at all, and a
-  crafted POST then answers 409 ``archived_parent``.
+  The reassign panel is built only for an admin on an **active** contact:
+  while the contact is archived it does not render at all, and a crafted
+  POST then answers 409 ``archived_parent``.
   """
   context = context_of(request)
   scope = scope_of(principal)
   can_reassign = principal.is_admin and not view.is_archived
-  # No archive clause on this read (slice-c.md §1(b) function 5): the parent
+  # No archive clause on this read: the parent
   # read above has already decided whether this contact is viewable, and an
   # archived contact's workspace must still show what its owner is about to
   # restore. The stage controls are absent on every card while it is
@@ -585,7 +573,7 @@ async def _detail_context(
       "reassign": can_reassign,
       "add_deal": not view.is_archived,
       # UI hiding only, and false for exactly the reason `add_deal` is: an
-      # archived contact accepts no new history (ACC-409). A crafted POST
+      # archived contact accepts no new history. A crafted POST
       # still meets 409 `archived_parent`, decided inside the transaction.
       "add_activity": not view.is_archived,
     },
@@ -599,9 +587,9 @@ async def _detail_context(
     timeline=_timeline(request, view.id, timeline),
     activity_form=View(
       # The submitted values on a re-render, the defaults otherwise: `note`
-      # pre-selected so an untouched radio quad still submits one (R64's
-      # rule, applied to the second radio group on the page), and today's
-      # UTC date, which is the clock of record (UX_FLOWS.md §4.6).
+      # pre-selected so an untouched radio quad still submits one — the
+      # same rule the contact form's type pair follows — and today's
+      # UTC date, which is the clock of record.
       values=activity_values
       or {
         "kind": "note",
@@ -631,7 +619,7 @@ def _form_context(
   errors: dict[str, list[str]],
   idempotency_key: UUID,
 ) -> dict[str, Any]:
-  """Build the whole frozen context of ``contacts/form.html`` (§8.2).
+  """Build the whole frozen context of ``contacts/form.html``.
 
   Notes
   -----
@@ -686,8 +674,8 @@ def _stale_fields(result: Stale, owner_names: dict[str, str] | None) -> list[dic
     The service's outcome; ``submitted`` holds the **normalized** values.
   owner_names : dict[str, str] | None
     Display names by user id, for a reassign. Both sides of the ``Owner``
-    row are display names — never raw ids (§2(d)) — and an id that names no
-    active user renders ``CP-38``'s "removed user", which is the honest
+    row are display names, never raw ids, and an id that names no active
+    user renders "removed user", which is the honest
     label for a target that has since been disabled.
 
   Returns
@@ -697,8 +685,7 @@ def _stale_fields(result: Stale, owner_names: dict[str, str] | None) -> list[dic
     whitespace is never reported as a change, and on the owner **id** for a
     reassign, so two users sharing a display name are still two values.
     Archive and restore produce an **empty** list: their form has no data
-    field, only a version (§5.1), and ``UX_FLOWS.md`` §3.9 never requires
-    at least one.
+    field, only a version, and nothing requires at least one.
   """
   if not result.submitted:
     return []
@@ -708,7 +695,7 @@ def _stale_fields(result: Stale, owner_names: dict[str, str] | None) -> list[dic
     return [
       {
         "label": _OWNER_LABEL,
-        "submitted": names.get(submitted_owner, _CP_38_UNKNOWN_USER),
+        "submitted": names.get(submitted_owner, _UNKNOWN_USER_LABEL),
         "current": result.current.owner_name,
         "differs": submitted_owner != str(result.current.owner_id),
       }
@@ -743,7 +730,7 @@ async def _stale_response(
   action_url: str,
   owner_names: dict[str, str] | None = None,
 ) -> Response:
-  """Render ``errors/409.html`` ``context="stale"`` (**PIN 3**, ``ACC-017``).
+  """Render ``errors/409.html`` ``context="stale"``.
 
   Notes
   -----
@@ -751,11 +738,11 @@ async def _stale_response(
   *id* for a reassign, not the display name — because "Keep my changes"
   re-posts them verbatim. Only the comparison panel renders names.
 
-  ``body`` is **R63**'s zero-field copy, and is always present so the
-  template can read it under ``StrictUndefined``: ``None`` on a panel that
-  has fields to compare (the screen keeps ``UX_FLOWS.md`` §3.9's own
-  orientation sentence), and :data:`~app.routes.pipeline.CP_OWED_ZERO_FIELD_STALE`
-  on one in which **nothing** differs (**R69**).
+  ``body`` is the zero-field copy, and is always present so the template
+  can read it under ``StrictUndefined``: ``None`` on a panel that has
+  fields to compare (the screen keeps its ordinary orientation sentence),
+  and :data:`~app.routes.pipeline.ZERO_FIELD_STALE_MESSAGE` on one in which
+  **nothing** differs.
   """
   fields = _stale_fields(result, owner_names)
   return await conflict(
@@ -780,15 +767,14 @@ async def _stale_response(
 
 
 async def _blocked_response(request: Request, result: Blocked) -> Response:
-  """Render ``errors/409.html`` ``context="archived_parent"`` (``ACC-018``/``023``/``028``).
+  """Render ``errors/409.html`` with ``context="archived_parent"``.
 
   Notes
   -----
-  ``body`` and ``state`` select ``CP-13`` ("restore it first") from
-  ``CP-23`` ("that has already been done; the contact is {state} now").
-  The two keys are additions to ``CONTRACTS.md`` §8.4's frozen
-  ``archived_parent`` row, without which ``CP-23`` is unreachable —
-  recorded for the contract step rather than assumed.
+  ``body`` and ``state`` choose between "restore it first" and "that has
+  already been done; the contact is {state} now". Without both keys the
+  second sentence would be unreachable, and an archive of an
+  already-archived contact would read as an error the user could fix.
   """
   restore_form = (
     None
@@ -820,8 +806,8 @@ def _archived_block(view: ContactView) -> Blocked:
   -----
   The route refuses a reassign against an archived contact itself, before
   the service is reached, on the one path that cannot get there: a
-  non-canonical ``owner_id``, which is a ``CP-25`` 400 on an **active**
-  contact (§2(f)) but must still be **R25**'s 409 on an archived one —
+  non-canonical ``owner_id``, which is a field-error 400 on an **active**
+  contact but must still be the archived-parent 409 on an archived one —
   restore first, then reassign.
   """
   return Blocked(
@@ -834,7 +820,7 @@ def _archived_block(view: ContactView) -> Blocked:
 
 
 async def _duplicate_response(request: Request, result: Duplicate) -> Response:
-  """Render ``errors/409.html`` ``context="duplicate"`` (``SQL-028``, ``ACC-226``)."""
+  """Render ``errors/409.html`` ``context="duplicate"``."""
   return await conflict(
     request,
     context="duplicate",
@@ -844,15 +830,14 @@ async def _duplicate_response(request: Request, result: Duplicate) -> Response:
 
 @router.get("/contacts", name="contacts")
 async def contacts_page(request: Request) -> Response:
-  """List, filter and search contacts — one route, two renderings (**PIN 5**).
+  """List, filter and search contacts — one route, two renderings.
 
   Returns
   -------
   Response
     ``200`` with ``partials/contact_results.html`` for an htmx fragment and
     ``contacts/list.html`` otherwise, from the **same** query handling: one
-    route, two renderings, no second route table (``CONTRACTS.md`` §8 rule
-    3).
+    route, two renderings, no second route table.
   """
   principal = await start_read(request)
   parsed = _parse_list_query(request)
@@ -875,7 +860,7 @@ async def contacts_page(request: Request) -> Response:
   )
   results = _results(request, view, parsed)
   fragment = is_fragment_request(request)
-  # R24's focus rule: the container takes focus only when the control that
+  # The focus rule: the container takes focus only when the control that
   # triggered the request has disappeared. `HX-Trigger` is client-supplied,
   # so it is matched against exactly the two pager ids, never echoed, and
   # decides focus only. A full page load is not a swap, so it is never set.
@@ -915,7 +900,7 @@ async def contacts_page(request: Request) -> Response:
 
 @router.get("/contacts/new", name="contact_new")
 async def contact_new(request: Request) -> Response:
-  """Render the empty create form, with ``kind`` pre-selected (**R64**).
+  """Render the empty create form, with ``kind`` pre-selected.
 
   Notes
   -----
@@ -925,13 +910,12 @@ async def contact_new(request: Request) -> Response:
 
   ``kind`` is the one field that arrives pre-filled:
   :data:`_DEFAULT_KIND` selects the ``Lead`` radio, because an unselected
-  radio pair submits **no** field at all and would meet ``CP-66`` on a
-  form the user never touched (**R64**). Every other field is empty — a
-  default a user did not choose is a value nobody typed, and only this one
-  is pinned by ``UX_FLOWS.md`` §4.5. The re-render after a failed ``POST``
-  deliberately does **not** apply it: there the echo is what was
-  submitted, so ``CP-66`` still reaches anyone who cleared the pair by
-  hand.
+  radio pair submits **no** field at all and would meet its field error on
+  a form the user never touched. Every other field is empty — a default a
+  user did not choose is a value nobody typed. The re-render after a failed
+  ``POST`` deliberately does **not** apply it: there the echo is what was
+  submitted, so the field error still reaches anyone who cleared the pair
+  by hand.
   """
   principal = await start_read(request)
   return render(
@@ -944,7 +928,7 @@ async def contact_new(request: Request) -> Response:
       action_url=CONTACTS_URL,
       cancel_url=CONTACTS_URL,
       contact=_submitted_contact({"kind": _DEFAULT_KIND}, contact_id=None, version=None),
-      owner_label=_CP_32_SELF,
+      owner_label=_OWNER_SELF_LABEL,
       errors={},
       idempotency_key=mint_key(),
     ),
@@ -953,7 +937,7 @@ async def contact_new(request: Request) -> Response:
 
 @router.post("/contacts", name="contact_create")
 async def contact_create(request: Request) -> Response:
-  """Create one contact owned by the actor (``ACC-007``)."""
+  """Create one contact owned by the actor."""
   started = await start_mutation(request, _CREATE_FIELDS)
   if isinstance(started, Response):
     return started
@@ -982,7 +966,7 @@ async def contact_create(request: Request) -> Response:
         action_url=CONTACTS_URL,
         cancel_url=CONTACTS_URL,
         contact=_submitted_contact(body, contact_id=None, version=None),
-        owner_label=_CP_32_SELF,
+        owner_label=_OWNER_SELF_LABEL,
         errors=result.errors,
         idempotency_key=mint_key(),
       ),
@@ -1014,8 +998,7 @@ async def detail_page_context(
   dict[str, Any]
     The frozen ``contacts/detail.html`` context — which is also the
     ``partials/timeline.html`` context, because the partial's keys are a
-    subset of the page's (``CONTRACTS.md`` §8 rule 3: one route, two
-    renderings, from one context).
+    subset of the page's: one route, two renderings, from one context.
 
   Raises
   ------
@@ -1044,7 +1027,7 @@ async def detail_page_context(
 
 @router.get("/contacts/{contact_id}", name="contact_detail")
 async def contact_detail(request: Request, contact_id: str) -> Response:
-  """Render one contact's workspace (``ACC-001``-``ACC-006``)."""
+  """Render one contact's workspace."""
   principal = await start_read(request)
   identifier = _contact_id(contact_id)
   page = await detail_page_context(request, principal, contact_id=identifier)
@@ -1053,22 +1036,22 @@ async def contact_detail(request: Request, contact_id: str) -> Response:
 
 @router.get("/contacts/{contact_id}/edit", name="contact_edit")
 async def contact_edit(request: Request, contact_id: str) -> Response:
-  """Render the edit form for one contact — ``303`` when it is archived (**R63**).
+  """Render the edit form for one contact — ``303`` when it is archived.
 
   Notes
   -----
   An archived contact has no editable state to render: its detail page
-  offers **restore only** (``ACC-006``), and the matching ``POST`` stays
-  409 ``archived_parent`` (``ACC-018``). Sending the form anyway would
+  offers **restore only**, and the matching ``POST`` stays
+  409 ``archived_parent``. Sending the form anyway would
   invite a submission whose only possible answer is that 409, so the
   ``GET`` answers ``303`` to the detail instead — the screen that carries
   the one action left.
 
   The redirect sits **after** :func:`get_for_detail`, so the scope
   predicate still decides first: a foreign archived contact is the
-  ordinary ``404`` and this ``303`` can never become an existence oracle
-  (``ACC-020``). It carries no ``?notice=`` — nothing happened, and a code
-  outside the allowlist would be copy invented here (**R20**).
+  ordinary ``404`` and this ``303`` can never become an existence oracle.
+  It carries no ``?notice=`` — nothing happened, and a code outside the
+  allowlist would be copy invented here.
   """
   principal = await start_read(request)
   identifier = _contact_id(contact_id)
@@ -1104,7 +1087,7 @@ async def contact_edit(request: Request, contact_id: str) -> Response:
 
 @router.post("/contacts/{contact_id}", name="contact_update")
 async def contact_update(request: Request, contact_id: str) -> Response:
-  """Edit one contact's five writable fields (``ACC-014``-``ACC-020``)."""
+  """Edit one contact's five writable fields."""
   started = await start_mutation(request, _EDIT_FIELDS)
   if isinstance(started, Response):
     return started
@@ -1132,7 +1115,7 @@ async def contact_update(request: Request, contact_id: str) -> Response:
     # the editor's: an admin editing an agent's contact must not read as
     # its owner. Re-reading here also puts the scope predicate in front of
     # the field errors, so a foreign contact with a bad body is the same
-    # 404 as a foreign contact with a good one (§1.1, ACC-015).
+    # 404 as a foreign contact with a good one.
     view = await get_for_detail(context.runner, scope_of(principal), contact_id=identifier)
     return render(
       request,
@@ -1161,7 +1144,7 @@ async def contact_update(request: Request, contact_id: str) -> Response:
 
 @router.post("/contacts/{contact_id}/archive", name="contact_archive")
 async def contact_archive(request: Request, contact_id: str) -> Response:
-  """Archive one active contact (``ACC-021``-``ACC-025``)."""
+  """Archive one active contact."""
   started = await start_mutation(request, _VERSION_ONLY_FIELDS)
   if isinstance(started, Response):
     return started
@@ -1187,7 +1170,7 @@ async def contact_archive(request: Request, contact_id: str) -> Response:
 
 @router.post("/contacts/{contact_id}/restore", name="contact_restore")
 async def contact_restore(request: Request, contact_id: str) -> Response:
-  """Restore one archived contact (``ACC-026``-``ACC-030``)."""
+  """Restore one archived contact."""
   started = await start_mutation(request, _VERSION_ONLY_FIELDS)
   if isinstance(started, Response):
     return started
@@ -1213,7 +1196,7 @@ async def contact_restore(request: Request, contact_id: str) -> Response:
 
 @router.post("/contacts/{contact_id}/reassign", name="contact_reassign")
 async def contact_reassign(request: Request, contact_id: str) -> Response:
-  """Move one contact to another active owner — admin only (``ACC-031``-``ACC-034``)."""
+  """Move one contact to another active owner — admin only."""
   started = await start_mutation(request, _REASSIGN_FIELDS, admin_for=contact_id)
   if isinstance(started, Response):
     return started
@@ -1228,14 +1211,14 @@ async def contact_reassign(request: Request, contact_id: str) -> Response:
   scope = scope_of(principal)
   new_owner_id = parse_canonical(body["owner_id"])
   if new_owner_id is None:
-    # ACC-032 with a malformed target: the contact is still resolved under
+    # A malformed target: the contact is still resolved under
     # the scope predicate first, so a foreign one answers 404 and never
     # this 400 — the 409/400 ordering rule applied to a bad owner id.
     view = await get_for_detail(context.runner, scope, contact_id=identifier)
     if view.is_archived:
       return await _blocked_response(request, _archived_block(view))
     page = await _detail_context(
-      request, principal, view, reassign_errors={"owner_id": [CP_25_BAD_TARGET]}
+      request, principal, view, reassign_errors={"owner_id": [BAD_OWNER_TARGET_MESSAGE]}
     )
     return render(request, "contacts/detail.html", page, status_code=400)
 

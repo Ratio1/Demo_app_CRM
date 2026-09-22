@@ -1,20 +1,20 @@
 """``deals`` — the first child repository, authorized entirely by the parent.
 
-``contracts/slice-c.md`` §1(b) and §1(d). Everything the ``contacts``
-repository does holds here unchanged — one ``WHERE`` builder shared by a list
-and its count, ownership in the SQL and never in Python, versioned writes that
-return ``None`` rather than choosing a status — and three things are new,
-because ``deals`` is the first table with a parent:
+Everything the ``contacts`` repository does holds here unchanged — one
+``WHERE`` builder shared by a list and its count, ownership in the SQL and
+never in Python, versioned writes that return ``None`` rather than choosing
+a status — and three things are new, because ``deals`` is the first table
+with a parent:
 
 *The ownership predicate is on the parent.* ``deals`` carries **no**
-``owner_id`` and **no** ``archived_at`` (``PIN C8``, ``DATA_CONTRACT.md``
-§3.10). Every statement here reaches its owner through
+``owner_id`` and **no** ``archived_at``. Every statement here reaches its
+owner through
 ``JOIN public.contacts c ON c.id = d.contact_id`` and filters on
 ``c.owner_id`` — which is what makes owner injection on a child structurally
 impossible rather than allowlisted, and what makes an admin reassignment one
-``UPDATE`` of one row that moves every child with it (``SQL-023``).
+``UPDATE`` of one row that moves every child with it.
 
-*Money is :class:`decimal.Decimal` end to end* (``PIN C1``). ``amount`` is
+*Money is :class:`decimal.Decimal` end to end*. ``amount`` is
 ``DECIMAL(12,2)``; psycopg returns it as a :class:`~decimal.Decimal`, every row
 mapper in this module **asserts** that at the boundary, and the pipeline's per
 stage total is the engine's ``SUM`` — never a Python sum, never a float. No
@@ -24,14 +24,14 @@ zero-fill constants the pipeline needs.
 
 *The stage graph is deliberately absent.* :data:`STAGE_ORDER` is the column's
 vocabulary and the pipeline's column order, nothing more. The legal-transition
-sets belong to the service (``PIN C2``), which is where the 400/409 answers are
+sets belong to the service, which is where the 400/409 answers are
 chosen; a repository that knew the graph would be a repository that could
 refuse a write, and no function in ``app/db/**`` decides anything.
 
 ``Scope`` is imported under ``TYPE_CHECKING`` only, so ``app/db/**`` keeps no
-runtime import of ``app/security/**`` (``slice-b.md`` §1(b) B3), and every
-public function takes one as its second positional argument — the first
-*business* argument, which is where ``ARC-001``/``SQL-032``'s ast gate looks.
+runtime import of ``app/security/**``, and every public function takes one as
+its second positional argument — the first *business* argument, which is
+where the test suite's own check looks for it.
 """
 
 from __future__ import annotations
@@ -78,12 +78,12 @@ __all__ = [
   "update_deal_versioned",
 ]
 
-#: ``UX_FLOWS.md`` §4.7's pinned page size — 25 for contacts **and** deals.
+#: The page size — 25 for contacts **and** deals.
 DEFAULT_PER_PAGE: Final[int] = 25
-#: ``ACC-309``'s hard clamp, the same value ``ACC-112`` clamps the contact list
-#: to: a larger ``per_page`` is reduced, never refused.
+#: The hard clamp, the same value the contact list uses: a larger
+#: ``per_page`` is reduced, never refused.
 MAX_PER_PAGE: Final[int] = 100
-#: ``DATA_CONTRACT.md`` §6.6's server-side offset clamp. A page past it repeats
+#: The server-side offset clamp. A page past it repeats
 #: the last reachable window rather than making the database skip unboundedly.
 MAX_OFFSET: Final[int] = 10_000
 #: The per-stage card cap of the pipeline. Each column gets its own bound, so a
@@ -95,25 +95,23 @@ PIPELINE_CARDS_PER_STAGE: Final[int] = 50
 type DealStage = Literal["new", "qualified", "proposal", "won", "lost"]
 STAGE_ORDER: Final[tuple[DealStage, ...]] = ("new", "qualified", "proposal", "won", "lost")
 
-#: The five sort keys ``ACCESS_MATRIX.md`` §5.2 allows on the deal list,
-#: default ``created_at``. The contact list's default is ``updated_at``; they
-#: differ, and the difference is in the matrix, not a slip.
+#: The five sort keys the deal list allows, default ``created_at``. The
+#: contact list's default is ``updated_at``; they differ deliberately.
 type DealSortKey = Literal["title", "amount", "close_date", "stage", "created_at"]
 type SortDir = Literal["asc", "desc"]
 #: The archive filter. On **every** deal surface it filters the PARENT
-#: contact's ``archived_at`` through the join (§5.5): ``status`` is never a
+#: contact's ``archived_at`` through the join: ``status`` is never a
 #: column, and ``deals`` has none.
 type StatusFilter = Literal["active", "archived", "all"]
 
 #: What :func:`parent_state` answers. ``missing`` covers foreign **and**
-#: missing — one code path, ``PIN 8`` — and the caller maps it to the identical
-#: 404 (``R27``).
+#: missing — one code path — and the caller maps it to the identical 404.
 type ParentState = Literal["missing", "archived", "active"]
 #: What :func:`insert_deal` answers. The repository never chooses a status.
 type CreateOutcome = Literal["created", "parent_missing", "parent_archived"]
 
 #: The ownership conjunct of a **read**, aliased on the parent, as
-#: ``P-DEAL-SCOPE-AGENT`` writes it (``DATA_CONTRACT.md`` §6.6). Its admin twin
+#: ``P-DEAL-SCOPE-AGENT`` writes it. Its admin twin
 #: is the *absence* of a conjunct, not a widened one. The same pair is composed
 #: into the correlated ``EXISTS`` of both versioned writes, where the alias is
 #: also ``c``.
@@ -127,9 +125,9 @@ _VISIBLE_STAGE: Final = sql.SQL("d.stage = %(stage)s")
 #: One column and one comparison make the parentheses redundant *today*; they
 #: are written anyway, inside the constant, so that a second searchable column
 #: can never be added beside an unparenthesised ``OR`` next to the ownership
-#: conjunct — the classic scope bypass (``ACC-103``, ``SQL-032``). No leading
-#: ``%``, no ``ILIKE``, no ``~``, no ``SIMILAR TO``, no ``COLLATE`` (§6.6,
-#: §9.1); the service escapes ``!``, ``%`` and ``_`` in that order and appends
+#: conjunct — the classic scope bypass. No leading
+#: ``%``, no ``ILIKE``, no ``~``, no ``SIMILAR TO``, no ``COLLATE``; the
+#: service escapes ``!``, ``%`` and ``_`` in that order and appends
 #: the single trailing ``%``.
 _VISIBLE_SEARCH: Final = sql.SQL("(d.title_lower LIKE %(term)s ESCAPE '!')")
 
@@ -140,9 +138,9 @@ _VISIBLE_SEARCH: Final = sql.SQL("(d.title_lower LIKE %(term)s ESCAPE '!')")
 #: ``.get``-ed, so a value outside the enum raises ``KeyError`` — a programming
 #: error, exactly as an out-of-allowlist sort key is — instead of silently
 #: reading as ``all`` and widening the result to the deals of archived
-#: contacts. ``active`` being the default is what makes ``ACC-306``'s "deals
-#: under archived contacts are hidden by default" the absence of an input
-#: rather than a branch a caller can forget.
+#: contacts. ``active`` being the default is what makes "deals under
+#: archived contacts are hidden by default" the absence of an input rather
+#: than a branch a caller can forget.
 _ARCHIVE_FRAGMENTS: Final[dict[StatusFilter, sql.SQL | None]] = {
   "active": sql.SQL("c.archived_at IS NULL"),
   "archived": sql.SQL("c.archived_at IS NOT NULL"),
@@ -153,7 +151,7 @@ _ARCHIVE_FRAGMENTS: Final[dict[StatusFilter, sql.SQL | None]] = {
 #: tiebreaker on ``d.id``. The submitted ``sort``/``dir`` strings only *look
 #: up* a fragment; no request text ever reaches an ``ORDER BY``, and a
 #: ``KeyError`` here is a programming error — the service has already answered
-#: 400 for a value outside the allowlist (``ACC-307``).
+#: 400 for a value outside the allowlist.
 #:
 #: The tiebreaker follows the sort direction, for the reason ``contacts.py``
 #: gives: a mixed-direction tiebreaker forbids a backwards index walk for no
@@ -162,8 +160,8 @@ _ARCHIVE_FRAGMENTS: Final[dict[StatusFilter, sql.SQL | None]] = {
 #: ``title`` orders by the normalized ``title_lower`` rather than by the raw
 #: column, which is the choice ``contacts.py`` made for ``name``: the raw
 #: column's order is collation-dependent, the normalized one is not, and
-#: neither is index-served in agent scope anyway (``DATA_CONTRACT.md`` §3.10 —
-#: every agent-scope deal ordering is a sort above a join, by construction).
+#: neither is index-served in agent scope anyway: every agent-scope deal
+#: ordering is a sort above a join, by construction.
 _ORDER_BY: Final[dict[tuple[DealSortKey, SortDir], sql.SQL]] = {
   ("title", "asc"): sql.SQL("d.title_lower ASC, d.id ASC"),
   ("title", "desc"): sql.SQL("d.title_lower DESC, d.id DESC"),
@@ -179,7 +177,7 @@ _ORDER_BY: Final[dict[tuple[DealSortKey, SortDir], sql.SQL]] = {
 
 #: Every row-returning statement spells its column list out in full rather than
 #: sharing a fragment — the package convention ``users.py`` set, for the reason
-#: it gives: every SELECT names its columns (``ARC-011``) and SQL assembled
+#: it gives: every SELECT names its columns and SQL assembled
 #: from pieces is exactly the shape a reviewer should not have to think about.
 #: :func:`_row_to_deal` unpacks all four of them, so the four lists must stay
 #: identical; they are adjacent here so a drift is visible.
@@ -187,9 +185,9 @@ _ORDER_BY: Final[dict[tuple[DealSortKey, SortDir], sql.SQL]] = {
 #: Alias discipline is absolute — ``d.`` for deal columns, ``c.`` for contact
 #: columns, ``u.`` for the owner — because ``kind`` is a name that exists on
 #: three tables and an unqualified column in a joined statement is an
-#: ambiguous-column error waiting for the next table (§5.5).
+#: ambiguous-column error waiting for the next table.
 #:
-#: The ``u`` join carries ``deal_card.owner_name`` (``CONTRACTS.md`` §8.3).
+#: The ``u`` join carries ``deal_card.owner_name``.
 #: Both joins are over ``NOT NULL`` foreign keys, so neither can change a row
 #: count, which is why the list and its count may both carry ``u`` — they must
 #: be the same statement but for the select list — and why the pipeline's
@@ -259,8 +257,8 @@ SELECT count(*)
    {scope}
 """)
 
-#: ``PIN C6``: the count and the € total per stage are computed **in SQL**,
-#: under the predicate, never summed in Python. ``COALESCE(SUM(...), CAST(0 AS
+#: The count and the € total per stage are computed **in SQL**, under the
+#: predicate, never summed in Python. ``COALESCE(SUM(...), CAST(0 AS
 #: DECIMAL(12,2)))`` so an empty set renders ``0.00`` and not blank; psycopg
 #: returns both the ``SUM`` and the coalesced empty case as
 #: :class:`~decimal.Decimal`. No ``u`` join: the statement returns no user
@@ -274,16 +272,16 @@ SELECT d.stage, count(*) AS deal_count,
  GROUP BY d.stage
 """)
 
-#: The dashboard aggregate (Slice D), **one statement for all four numbers**.
-#: Every count and every sum is the engine's under the one predicate: nothing
-#: on this path is summed, filtered or bucketed in Python (``PIN C6``,
-#: ``ACC-302``). ``SUM(CASE ...)`` rather than ``count(*) FILTER (WHERE ...)``
-#: because §9.2's portable set has no ``FILTER`` clause, and rather than a
+#: The dashboard aggregate, **one statement for all four numbers**. Every
+#: count and every sum is the engine's under the one predicate: nothing on
+#: this path is summed, filtered or bucketed in Python. ``SUM(CASE ...)``
+#: rather than ``count(*) FILTER (WHERE ...)`` because the portable SQL
+#: subset has no ``FILTER`` clause, and rather than a
 #: ``GROUP BY d.stage`` whose five rows Python would then have to add up.
 #:
 #: The archive conjunct is written in, not selected: an archived contact's
 #: deals are off the dashboard exactly as they are off the default lists
-#: (``ACC-306``). The ownership conjunct is on the **parent**, like every other
+#:. The ownership conjunct is on the **parent**, like every other
 #: statement in this module.
 _DASHBOARD_TOTALS_SQL: Final = sql.SQL("""
 SELECT COALESCE(SUM(CASE WHEN d.stage IN ('new', 'qualified', 'proposal')
@@ -303,7 +301,7 @@ SELECT COALESCE(SUM(CASE WHEN d.stage IN ('new', 'qualified', 'proposal')
 
 #: ``P-CONTACT-SCOPE-*`` with the select list narrowed to the one fact the
 #: caller may learn. **No archive clause, by design**: the archive state is the
-#: ANSWER, not a filter, and ``PIN C3`` fixes the order — scope predicate first
+#: ANSWER, not a filter, and the order is fixed — scope predicate first
 #: (0 rows -> ``missing`` -> the identical 404), archived state second
 #: (-> ``archived`` -> 409 ``archived_parent``). The statement returns one
 #: boolean and no other column — not the owner, not the name, not a count — so
@@ -317,7 +315,7 @@ SELECT (c.archived_at IS NOT NULL) AS parent_archived
 """)
 
 #: ``stage`` is the **literal** ``'new'`` and ``version`` the literal ``1``:
-#: ``ACC-211`` says stage is not accepted on create, and putting it in the
+#: a stage is never accepted on create, and putting it in the
 #: statement rather than in a parameter means there is no parameter through
 #: which a request value could arrive. ``contact_id`` is bound from the
 #: argument :func:`parent_state` has just resolved under the scope predicate,
@@ -332,16 +330,17 @@ VALUES
 """
 
 #: The ``SET`` list is fixed literal text and carries neither ``contact_id``
-#: nor ``stage`` (``ACC-217``, §5.3). ``version = version + 1`` rides the same
-#: statement (§4.1); no trigger, ever.
+#: nor ``stage``. ``version = version + 1`` rides the same
+#: statement; no trigger, ever.
 #:
 #: The ownership predicate is a correlated ``EXISTS`` and not ``UPDATE … FROM``,
-#: which is a PostgreSQL extension §9.1's portability rules do not admit. The
+#: which is a PostgreSQL extension this codebase's portability rules do not
+#: admit. The
 #: ``UPDATE`` is aliased (``AS d``) so ``d.contact_id`` inside the subquery is
 #: explicit; the unaliased form resolves correctly too, but relies on a scoping
 #: rule a reviewer should not have to know.
 #:
-#: ``c.archived_at IS NULL`` is belt-and-braces for ``ACC-216``: editing a deal
+#: ``c.archived_at IS NULL`` is belt-and-braces: editing a deal
 #: under an archived parent matches zero rows, and the service's re-read is
 #: what turns that into the **409 ``archived_parent``** context rather than 409
 #: ``stale``.
@@ -363,15 +362,15 @@ UPDATE public.deals AS d
 """)
 
 #: ``AND d.stage = %(from_stage)s`` is the graph's guard rail in the statement.
-#: The service checked ``ACCESS_MATRIX.md`` §5.4 against the stage it **read in
-#: this transaction**; this conjunct means the write can only land on that same
+#: The service checked the move against the stage it **read in this
+#: transaction**; this conjunct means the write can only land on that same
 #: stage. It is redundant with the version guard today and is kept for the
 #: reason ``archived_at IS NULL`` is kept above: a statement should be correct
 #: on its own terms, not only in the presence of a correct caller.
 #:
-#: Won and Lost are this same statement. They differ only in ``new_stage`` and
-#: in ``R22``'s confirmation on the way in; there is no second SQL shape, no
-#: ``won_at`` column and no ``is_won`` flag.
+#: Won and Lost are this same statement. They differ only in ``new_stage``
+#: and in the confirmation step on the way in; there is no second SQL shape,
+#: no ``won_at`` column and no ``is_won`` flag.
 _CHANGE_STAGE_SQL: Final = sql.SQL("""
 UPDATE public.deals AS d
    SET stage            = %(new_stage)s,
@@ -400,13 +399,13 @@ class DealRow:
   contact_id : UUID
     The parent. Present on every row because every render links to it, and
     **absent from** :class:`DealFields`, because that dataclass's field list is
-    the writable-field allowlist (``ACC-217``).
+    the writable-field allowlist.
   contact_name : str
     ``contacts.full_name`` of the parent, from the join — ``deal_card``'s
-    ``contact_name`` (``CONTRACTS.md`` §8.3).
+    ``contact_name``.
   owner_id : UUID
     ``contacts.owner_id``: the **only** ownership column, and it is on the
-    parent. ``deals`` has none (``PIN C8``).
+    parent. ``deals`` has none.
   owner_name : str
     ``users.display_name`` of the owner. ``is_own`` is derived by the service.
   parent_archived_at : datetime | None
@@ -419,7 +418,7 @@ class DealRow:
     returns.
   amount : Decimal
     Always a :class:`~decimal.Decimal`, asserted at this boundary. Never a
-    float, at any point on any money path (``PIN C1``).
+    float, at any point on any money path.
   close_date : date | None
     The only nullable column on ``deals``.
   stage : str
@@ -455,11 +454,12 @@ class DealRow:
 class DealFields:
   """The three writable fields, with the normalized companion of the searchable one.
 
-  ``ACCESS_MATRIX.md`` §5.1 allows ``title``, ``amount`` and ``close_date`` on
-  create and on edit, and nothing else. **This dataclass's field list is the
+  ``title``, ``amount`` and ``close_date`` are writable on create and on
+  edit, and nothing else is. **This dataclass's field list is the
   allowlist**: the ``SET`` list is fixed literal text and there is no parameter
   anywhere in this module through which a request could change a deal's parent
-  or its stage, which is ``ACC-217``'s 400 made structural.
+  or its stage — a submitted ``contact_id`` is a crafted-request ``400``,
+  and here it is structurally impossible as well.
 
   Attributes
   ----------
@@ -471,7 +471,7 @@ class DealFields:
     Non-negative, at most two decimal places. The column's CHECK is the second
     line for the **sign** only: ``DECIMAL(12,2)`` *rounds* a third decimal
     rather than refusing it, so the service's strict pattern is the only
-    control for scale (``contracts/slice-c.md`` §1(g) probe 6, ask A-6).
+    control for scale.
   close_date : date | None
     ``None`` is a real value here, not "unset".
   """
@@ -550,7 +550,7 @@ class DealTotals:
     The three non-terminal stages (``new``, ``qualified``, ``proposal``).
   won_count, won_amount : int, Decimal
     Stage ``won``. ``lost`` is on neither tile and is not returned at all:
-    ``CONTRACTS.md`` §8.2 freezes three tiles and ``R16`` forbids a fourth.
+    the dashboard has three tiles and a fourth was deliberately not added.
   """
 
   open_count: int
@@ -599,9 +599,9 @@ def _as_decimal(value: object, *, column: str) -> Decimal:
   ------
   TypeError
     If the driver ever hands back anything else — a float, a string, ``None``.
-    This is ``ARC-021``'s runtime half at the repository boundary: the static
-    gate proves no float is *constructed* on a money path, and this proves none
-    *arrives* on one. It cannot be a :func:`typing.cast`, because a cast
+    This is the runtime half of the no-float rule, at the repository
+    boundary: the test suite proves no float is *constructed* on a money
+    path, and this proves none *arrives* on one. It cannot be a :func:`typing.cast`, because a cast
     asserts to the type checker exactly the thing that would be false.
   """
   if not isinstance(value, Decimal):
@@ -622,7 +622,7 @@ def _row_to_deal(row: tuple[object, ...]) -> DealRow:
   DealRow
     The row with its ``TEXT`` ids converted back to :class:`uuid.UUID`. This is
     the module's single conversion point in that direction
-    (``DATA_CONTRACT.md`` §2.2), and the reason the list, the detail read, the
+   , and the reason the list, the detail read, the
     per-contact region, the pipeline cards and every mutation's read-back
     cannot disagree about a column's meaning.
 
@@ -664,13 +664,14 @@ def _read_scope(scope: Scope) -> sql.SQL:
   sql.SQL
     ``AND c.owner_id = %(actor_id)s`` for an agent; the empty fragment for an
     admin, whose scope is unfiltered. Never a single fragment parameterized by
-    an ``is_admin`` boolean (§6.6).
+    an ``is_admin`` boolean.
 
   Notes
   -----
   The same pair serves the reads *and* the correlated ``EXISTS`` of both
   versioned writes, because the parent is aliased ``c`` in each — which is the
-  whole of ``PIN C8``: there is no deal-side ownership conjunct to get wrong.
+  the whole point of keeping ownership on the parent: there is no
+  deal-side ownership conjunct to get wrong.
   """
   return _READ_ANY if scope.is_admin else _READ_OWNED
 
@@ -702,7 +703,7 @@ def _visible_where(scope: Scope, query: DealQuery) -> tuple[sql.Composed, dict[s
   Notes
   -----
   This is the single place a deal predicate is built, which is what makes
-  §6.6's "a count can never see a row the list cannot" a property of the code:
+  "a count can never see a row the list cannot" a property of the code:
   :func:`list_deals` hands the very same object to both of its statements, and
   the pipeline's aggregate and its five card statements are fed from it too.
 
@@ -740,8 +741,8 @@ def _pipeline_query(*, status: StatusFilter, stage: DealStage | None) -> DealQue
   Parameters
   ----------
   status : StatusFilter
-    The parent's archive filter — the pipeline's only input (§5.2 allows no
-    ``sort``, no ``dir`` and no ``page`` on that surface).
+    The parent's archive filter — the pipeline's only input; that surface
+    allows no ``sort``, no ``dir`` and no ``page``.
   stage : DealStage | None
     The column being read, or ``None`` for the aggregate, which groups.
 
@@ -784,7 +785,7 @@ def _paging(page: int, per_page: int) -> tuple[int, int, int]:
   -------
   tuple[int, int, int]
     ``(page, per_page, offset)`` after the clamps: ``per_page`` to
-    :data:`MAX_PER_PAGE` (``ACC-309`` reduces, never refuses) and ``offset`` to
+    :data:`MAX_PER_PAGE` (reduced, never refused) and ``offset`` to
     :data:`MAX_OFFSET`, so a page past the end repeats the last reachable
     window rather than making the database skip unboundedly.
   """
@@ -826,7 +827,7 @@ async def list_deals(conn: PoolConnection, scope: Scope, *, query: DealQuery) ->
     whole list would make every concurrent deal edit a ``40001`` candidate for
     no benefit.
   scope : Scope
-    The caller's authorization scope, mandatory (``PIN C8``, ``ARC-001``).
+    The caller's authorization scope, mandatory.
   query : DealQuery
     The already-validated request.
 
@@ -839,9 +840,9 @@ async def list_deals(conn: PoolConnection, scope: Scope, *, query: DealQuery) ->
   Notes
   -----
   Two statements, not one, and they share the **same fragment object**: a
-  ``count(*)`` can therefore never see a row the page's predicate excludes
-  (``ACC-301``, ``ACC-302``, ``ACC-306``). ``count(*) OVER ()`` would make it
-  one round trip, but a window function is absent from §9.2's portable set.
+  ``count(*)`` can therefore never see a row the page's predicate excludes.
+  ``count(*) OVER ()`` would make it one round trip, but a window function
+  is outside the portable SQL subset this codebase keeps to.
 
   The honest consequence, stated rather than hidden: at ``READ COMMITTED`` the
   two statements are two snapshots, so a row committed between them can make
@@ -887,7 +888,7 @@ async def pipeline(
   -----
   One ``GROUP BY d.stage`` statement with ``count(*)`` and
   ``COALESCE(SUM(d.amount), CAST(0 AS DECIMAL(12,2)))`` under the shared
-  predicate (``PIN C6``, ``ACC-302``). ``GROUP BY`` omits a stage that holds
+  predicate. ``GROUP BY`` omits a stage that holds
   nothing, so the missing columns are zero-filled here from
   :data:`STAGE_ORDER` — bucket fill from a code constant, **not** a Python sum.
   A stage's ``amount`` is therefore either the engine's ``SUM`` or the constant
@@ -939,22 +940,23 @@ async def pipeline_cards(
   Returns
   -------
   tuple[DealRow, ...]
-    In ``amount DESC, id ASC`` — ``UX_FLOWS.md`` S8's fixed order. The pipeline
-    surface allows no ``sort``, no ``dir`` and no ``page`` (§5.2), so the order
+    In ``amount DESC, id ASC``, a fixed order. The pipeline
+    surface allows no ``sort``, no ``dir`` and no ``page``, so the order
     is literal text and nothing selects it.
 
   Notes
   -----
   One statement per stage, and five calls rather than one statement: top-N-per
-  group needs a window function or ``LATERAL``, and §9.2's portable set has
-  neither. A single rows statement with a global ``LIMIT`` would let a busy
+  group needs a window function or ``LATERAL``, and the portable SQL subset
+  this codebase keeps to has neither. A single rows statement with a global
+  ``LIMIT`` would let a busy
   column eat the budget and render its neighbours empty beside a non-zero
   header — a *visibly* wrong screen. Each column gets its own bound and uses
   ``ix_deals_stage_close``'s leading column.
 
   The cap makes a column's card list a **bounded** view of an **exact** header:
-  the aggregate is authoritative (``ACC-302``), and a capped column is the
-  template's to say so (``contracts/slice-c.md`` §1(h) ask A-4).
+  the aggregate is authoritative, and saying a column is capped is the
+  template's job.
   """
   where, params = _visible_where(scope, _pipeline_query(status=status, stage=stage))
   cursor = await conn.execute(
@@ -981,13 +983,13 @@ async def get_deal(conn: PoolConnection, scope: Scope, *, deal_id: UUID) -> Deal
   DealRow | None
     ``None`` for a foreign deal **and** for a missing one: the two are one code
     path, which is what makes the 404 byte-identical for the same principal,
-    modulo the correlation id (``ACC-202``, ``PIN 8``, ``R27``).
+    modulo the correlation id.
 
   Notes
   -----
   There is deliberately **no archive clause**. This read is also the re-read
   every deal mutation branches on, and it must *see* the parent's archived
-  state rather than be filtered by it (§4.3): it is what turns a zero-row
+  state rather than be filtered by it: it is what turns a zero-row
   ``UPDATE`` into the right answer — 404, 409 ``stale`` or 409
   ``archived_parent``.
   """
@@ -1032,7 +1034,7 @@ async def list_for_contact(
   **No archive clause either.** The parent read has already decided whether
   this contact is viewable, and an archived contact's detail must still show
   what its owner is about to restore — exactly the rule
-  ``P-ACTIVITY-TIMELINE-AGENT`` states for the timeline (§6.6).
+  ``P-ACTIVITY-TIMELINE-AGENT`` states for the timeline.
   """
   scope_fragment = _read_scope(scope)
   clamped_page, clamped_per_page, offset = _paging(page, per_page)
@@ -1060,7 +1062,7 @@ async def parent_state(conn: PoolConnection, scope: Scope, *, contact_id: UUID) 
     A connection inside the caller's transaction — the **same** transaction as
     the write it guards, so a contact archived between the form render and the
     submit is either seen or raises ``40001`` and is seen on the retry
-    (``SQL-029``).
+   .
   scope : Scope
     The caller's authorization scope, mandatory.
   contact_id : UUID
@@ -1070,15 +1072,16 @@ async def parent_state(conn: PoolConnection, scope: Scope, *, contact_id: UUID) 
   -------
   ParentState
     ``missing`` for a foreign **or** absent contact — one code path, which is
-    what makes ``ACC-228``'s 404 byte-identical to ``ACC-207``'s; ``archived``
+    what makes the create form's 404 byte-identical to the submit's;
+    ``archived``
     for an own archived one; ``active`` otherwise.
 
   Notes
   -----
   This is the one function ``GET /contacts/{id}/deals/new`` and
   ``POST /contacts/{id}/deals`` share, so the form's 404 cannot diverge from
-  the submit's. ``PIN C3`` fixes the order the caller then applies: scope
-  first, archived state second.
+  the submit's. The order the caller then applies is fixed: scope first,
+  archived state second.
   """
   cursor = await conn.execute(
     _PARENT_STATE_SQL.format(scope=_read_scope(scope)),
@@ -1122,14 +1125,14 @@ async def insert_deal(
   Returns
   -------
   CreateOutcome
-    ``parent_missing`` (the identical 404 of ``ACC-207``), ``parent_archived``
-    (``ACC-208``'s 409) or ``created``. **Nothing is written** unless the
+    ``parent_missing`` (the identical 404), ``parent_archived`` (a 409) or
+    ``created``. **Nothing is written** unless the
     answer is ``created``.
 
   Raises
   ------
   TypeError
-    If ``fields.amount`` is not a :class:`~decimal.Decimal` (``ARC-021``).
+    If ``fields.amount`` is not a :class:`~decimal.Decimal`.
 
   Notes
   -----
@@ -1207,19 +1210,18 @@ async def update_deal_versioned(
   Raises
   ------
   TypeError
-    If ``fields.amount`` is not a :class:`~decimal.Decimal` (``ARC-021``).
+    If ``fields.amount`` is not a :class:`~decimal.Decimal`.
 
   Notes
   -----
   ``contact_id`` and ``stage`` appear in no ``SET`` list here, and there is no
-  parameter for either: re-parenting is an ownership move by another name
-  (``ACC-217``), and the stage has its own guarded statement.
+  parameter for either: re-parenting is an ownership move by another name,
+  and the stage has its own guarded statement.
 
   The row is read back with the ordinary ``get_deal`` statement inside the same
-  transaction rather than with a ``RETURNING`` clause: §9.2 records
-  ``RETURNING`` as portable and permitted while noting that no statement in
-  this contract uses it, and keeping the tree uniform is what makes the R1DB
-  portability claim one claim instead of two.
+  transaction rather than with a ``RETURNING`` clause: no statement in this
+  codebase uses ``RETURNING``, and keeping the tree uniform is what makes
+  the portability claim one claim instead of two.
   """
   cursor = await conn.execute(
     _UPDATE_DEAL_SQL.format(scope=_read_scope(scope)),
@@ -1267,11 +1269,12 @@ async def change_stage_versioned(
     guard rail.
   new_stage : str
     The target. The graph was checked by the service against ``from_stage``
-    (``PIN C2``); this function enforces neither the graph nor the terminal
+   ; this function enforces neither the graph nor the terminal
     rule, because a repository that could refuse a write would be a repository
     that decides.
   stage_changed_at : datetime
-    The business fact §3.10 requires to be rewritten on every accepted change.
+    Rewritten on every accepted stage change; it is a business fact, not a
+    row-touch timestamp.
   now : datetime
     The caller's instant, written to ``updated_at``.
 
@@ -1292,8 +1295,8 @@ async def change_stage_versioned(
 
   Won and Lost reach this same statement with ``new_stage='won'``/``'lost'``.
   Moving *out of* a terminal stage never reaches SQL at all: the service
-  answers 409 ``stage_terminal`` from the row it read (``ACC-220``), and a move
-  to the current stage answers 400 (``ACC-219``) — a no-op is not a mutation
+  answers 409 ``stage_terminal`` from the row it read, and a move
+  to the current stage answers 400 — a no-op is not a mutation
   and gets no receipt.
   """
   cursor = await conn.execute(
@@ -1320,7 +1323,7 @@ async def dashboard_totals(conn: PoolConnection, scope: Scope) -> DealTotals:
   ------
   TypeError
     If either sum arrives as anything but a :class:`~decimal.Decimal`
-    (``ARC-021``'s runtime half at the repository boundary).
+    (the runtime half of the no-float rule, at the repository boundary).
   """
   cursor = await conn.execute(
     _DASHBOARD_TOTALS_SQL.format(scope=_read_scope(scope)),

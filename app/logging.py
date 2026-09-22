@@ -1,8 +1,4 @@
-r"""One JSON object per request on stdout, and nothing else (``R1``, ``S6``).
-
-Authority: ``slice-a.md`` §1.1 (the record keys, exactly and only), ``R33``
-(``correlation_id`` is a canonical 36-character UUIDv4 string),
-``ACCESS_MATRIX.md`` §7 ``SEC-060``/``SEC-061``/``SEC-062``.
+r"""One JSON object per request on stdout, and nothing else.
 
 The record carries exactly these keys and no others::
 
@@ -14,12 +10,12 @@ typed and **no query string** — ``path`` is ``request.url.path``, which
 stops at the ``?``. That is why ``scripts/start`` and ``scripts/dev-run.sh``
 pass ``--no-access-log``: uvicorn's own access line logs the full target,
 query string included, and would reintroduce the leak this module exists to
-close (delta **D8**).
+close.
 
 Values are serialized with :func:`json.dumps`, so a control character in
 any value — a ``\\r\\n`` pasted into an email field — is escaped inside the
 JSON string rather than starting a line. A forged log record is therefore
-not expressible from request data (``SEC-060``), and in any case no
+not expressible from request data, and in any case no
 request-supplied value reaches a record at all.
 
 The one handler writes to a stream, never to a file: a container's log is
@@ -82,7 +78,7 @@ def new_correlation_id() -> str:
   -------
   str
     A canonical lowercase 36-character UUIDv4 string — ``str(uuid.uuid4())``,
-    hyphenated (**R33**).
+    hyphenated.
 
   Notes
   -----

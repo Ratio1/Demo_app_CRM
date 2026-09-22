@@ -1,12 +1,5 @@
 """Contacts: authorization, version, receipt and audit, inside one transaction.
 
-Authority: ``contracts/slice-b.md`` §2(a) (this surface and its six outcome
-types), §1(b)/§1(c) (the repository signatures and the statements behind
-them), §1(d) (the seven steps of a Slice B mutation and the transaction
-map), ``ACCESS_MATRIX.md`` §1.1 (the check order), §3.1/§3.2 (every cell),
-§5.1-§5.5 (the field, sort and filter allowlists and the token map),
-``UX_FLOWS.md`` §6.7 (every validation string).
-
 This module holds **no SQL and no URL**. It calls the repositories of
 ``app/db/repositories/contacts.py``, decides which of six outcomes a
 submission has, and returns a view model; ``app/routes/contacts.py`` turns
@@ -15,19 +8,19 @@ authorization boundary a property of the code rather than of a review:
 
 *The scope is the only filter.* Every read and every write goes through a
 repository function that takes a mandatory :class:`~app.security.principal.Scope`
-and inlines the ownership predicate in SQL (**PIN 2**, ``ARC-001``). There
+and inlines the ownership predicate in SQL. There
 is no Python post-filter anywhere below, because a post-filter still leaks
 existence through a total.
 
 *404 is raised, not returned.* :class:`app.security.failures.ContactNotFound`
 unwinds the transaction and reaches one handler, so the six contact
 surfaces cannot drift apart and a foreign object stays byte-identical to a
-missing one (**PIN 8**).
+missing one.
 
 *Validation runs before the transaction opens.* Field errors are
 :class:`Invalid`; an unknown or repeated **body field** never reaches this
-module at all — the route rejects it as a crafted request (§2(a) decision
-3), because the two 400s are two different screens.
+module at all — the route rejects it as a crafted request, because the two
+400s are two different screens.
 
 *Nothing here re-derives state from what was submitted.* Every mutation
 re-reads the row it changed, inside the same transaction, so the 303
@@ -115,30 +108,29 @@ __all__ = [
 
 #: Re-exported from the repository so ``app/routes/**`` can read the two
 #: page-size constants without importing ``app.db.repositories`` itself,
-#: which ``ARC-008`` forbids. One definition, in the Data lane's module.
+#: which the layering forbids. One definition, in the repository module.
 DEFAULT_PER_PAGE: Final[int] = contacts_repo.DEFAULT_PER_PAGE
 MAX_PER_PAGE: Final[int] = contacts_repo.MAX_PER_PAGE
 
-#: The five writable fields of ``ACCESS_MATRIX.md`` §5.1, in the order the
-#: digest and the form both use. **The tuple is the allowlist**: unknown or
-#: non-writable is a 400, never a silent ignore.
+#: The five writable fields, in the order the digest and the form both use.
+#: **The tuple is the allowlist**: unknown or non-writable is a 400, never a
+#: silent ignore.
 CONTACT_FIELDS: Final[tuple[str, ...]] = ("name", "company", "email", "phone", "kind")
 
-#: ``UX_FLOWS.md`` §6.7 and §6.2 — the resolved strings, named for their
-#: copy ids. Resolved here rather than passed as ids, which is the shipped
-#: Slice A shape (``app/routes/auth.py``'s ``CP_01_LOGIN_FAILED``).
-CP_60_NAME_REQUIRED: Final = "Enter a name."
-CP_61_TOO_LONG_160: Final = "Use 160 characters or fewer."
-CP_62_EMAIL_REQUIRED: Final = "Enter a work email address."
-CP_63_EMAIL_MALFORMED: Final = "Enter an email address such as name@example.test."
-CP_64_EMAIL_TOO_LONG: Final = "Use 254 characters or fewer."
-CP_65_PHONE_TOO_LONG: Final = "Use 32 characters or fewer."
-CP_66_KIND_REQUIRED: Final = "Choose lead or customer."
-CP_25_BAD_TARGET: Final = "That person cannot own contacts. Choose someone else."
+#: The field errors this form can produce, as resolved strings rather than
+#: codes — the same shape ``app/routes/auth.py``'s ``LOGIN_FAILED_MESSAGE``
+#: uses, because a template renders a message verbatim.
+NAME_REQUIRED_MESSAGE: Final = "Enter a name."
+TOO_LONG_160_MESSAGE: Final = "Use 160 characters or fewer."
+EMAIL_REQUIRED_MESSAGE: Final = "Enter a work email address."
+EMAIL_MALFORMED_MESSAGE: Final = "Enter an email address such as name@example.test."
+EMAIL_TOO_LONG_MESSAGE: Final = "Use 254 characters or fewer."
+PHONE_TOO_LONG_MESSAGE: Final = "Use 32 characters or fewer."
+CONTACT_KIND_REQUIRED_MESSAGE: Final = "Choose lead or customer."
+BAD_OWNER_TARGET_MESSAGE: Final = "That person cannot own contacts. Choose someone else."
 
 #: ``ck_contacts_*``'s bounds, mirrored in Python so the database CHECK is
-#: the second line of defence and never the first (``ACC-210``'s rule,
-#: applied to this object).
+#: the second line of defence and never the first.
 NAME_MAX: Final = 160
 COMPANY_MAX: Final = 160
 EMAIL_MIN: Final = 3
@@ -155,11 +147,11 @@ OP_RESTORE: Final[Operation] = "contact_restore"
 OP_REASSIGN: Final[Operation] = "contact_reassign"
 
 #: ``unique_violation``. Classified by SQLSTATE string and never by a
-#: psycopg exception class name (``DECISIONS.md`` §3): inside a Slice B
-#: business transaction the only reachable UNIQUE constraints are two
-#: primary keys on application-generated UUIDs and
-#: ``uq_mutation_receipts_key``, so a ``23505`` here *is* the receipt key
-#: and needs no constraint-name inspection (§1(d)).
+#: psycopg exception class name: inside one of these business transactions
+#: the only reachable UNIQUE constraints are two primary keys on
+#: application-generated UUIDs and ``uq_mutation_receipts_key``, so a
+#: ``23505`` here *is* the receipt key and needs no constraint-name
+#: inspection.
 _UNIQUE_VIOLATION: Final = "23505"
 
 _KIND_VALUES: Final[frozenset[str]] = frozenset(KIND_LABELS)
@@ -169,17 +161,16 @@ class _ConcurrentStale(Exception):
   """The guarded ``UPDATE`` matched no row although the re-read admitted it.
 
   Raised from inside the transaction body so the transaction **rolls
-  back**: the receipt was already written at §1(d) step 3, and committing
-  it beside a business write that did not happen would make a later replay
-  report a success that never occurred. The caller re-reads in a fresh
-  transaction and answers 409 ``stale`` — §1(d) step 4's belt and braces,
-  with nothing left behind.
+  back**: the receipt was already written before the business write, and
+  committing it beside a business write that did not happen would make a
+  later replay report a success that never occurred. The caller re-reads in
+  a fresh transaction and answers 409 ``stale``, with nothing left behind.
   """
 
 
 @dataclass(frozen=True, slots=True)
 class ContactView:
-  """One contact as a screen renders it (``CONTRACTS.md`` §8.2's ``contact``).
+  """One contact as a screen renders it.
 
   Attributes
   ----------
@@ -187,8 +178,8 @@ class ContactView:
     The record's id.
   owner_id : UUID
     The current owner. **Never rendered as part of ``contact``** — the
-    route puts it only in ``reassign.current_owner_id``, which §8.2 freezes
-    — and present here because that one key has no other source.
+    route puts it only in ``reassign.current_owner_id`` — and present here
+    because that one key has no other source.
   full_name, company, email, phone : str
     The stored display values.
   kind : str
@@ -196,9 +187,9 @@ class ContactView:
   kind_label : str
     The rendered label for ``kind``.
   owner_name : str
-    ``users.display_name`` of the owner (§8 rule 4; amendment **A-8**).
+    ``users.display_name`` of the owner; a person is never named by an id.
   is_own : bool
-    Whether the viewer owns it, for ``CP-32``'s owner line.
+    Whether the viewer owns it, for the owner line.
   is_archived : bool
     Whether ``archived_at`` is set.
   archived_at : datetime | None
@@ -228,7 +219,7 @@ class ContactView:
 
 @dataclass(frozen=True, slots=True)
 class ContactRowView:
-  """One row of a contact list (``CONTRACTS.md`` §8.3's ``contact_row``).
+  """One row of a contact list.
 
   The ``url`` key of that shape is added by the route: this module holds no
   URL.
@@ -249,15 +240,15 @@ class ContactRowView:
 
 @dataclass(frozen=True, slots=True)
 class ContactListView:
-  """The non-URL half of ``CONTRACTS.md`` §8.3's ``results``.
+  """The non-URL half of a list page's ``results``.
 
   Attributes
   ----------
   items : tuple[ContactRowView, ...]
     The page's rows, already scoped.
   total : int
-    The scoped total — the **identical** ``WHERE`` as ``items`` (§1(c)), so
-    a foreign row can never change a total or a page count (``ACC-102``).
+    The scoped total — the **identical** ``WHERE`` as ``items``, so
+    a foreign row can never change a total or a page count.
   page, per_page, pages : int
     The pagination position. ``pages`` is at least one, so an empty result
     still reads "Page 1 of 1".
@@ -265,10 +256,11 @@ class ContactListView:
     1-based inclusive bounds of this page, both ``0`` when it is empty.
   has_prev, has_next : bool
     Whether the two paging controls are live; the route turns ``False``
-    into a ``None`` URL, which is **R24**'s instruction to render the inert
-    ``<span>``.
+    into a ``None`` URL, which is the template's instruction to render the
+    inert ``<span>``.
   result_state : {"ok", "empty", "no_results"}
-    ``UX_FLOWS.md`` §3.22, computed server-side so the two never collapse.
+    "no contacts yet" and "nothing matched this search" are different
+    screens, decided server-side so the two never collapse.
   """
 
   items: tuple[ContactRowView, ...]
@@ -285,7 +277,7 @@ class ContactListView:
 
 @dataclass(frozen=True, slots=True)
 class AssignableUser:
-  """One option of the admin reassign ``<select>`` (``ACC-032``)."""
+  """One option of the admin reassign ``<select>``."""
 
   id: UUID
   display_name: str
@@ -312,7 +304,7 @@ class Applied:
   replayed : bool
     ``True`` when this answer came from a stored receipt rather than from a
     write. The user sees the same page either way — nothing went wrong —
-    and the flag exists so a test can tell the two apart (``SQL-011``).
+    and the flag exists so a test can tell the two apart.
   """
 
   contact_id: UUID
@@ -329,7 +321,7 @@ class Invalid:
 
 @dataclass(frozen=True, slots=True)
 class Stale:
-  """``409`` ``context="stale"`` — the record moved under the editor (**PIN 3**).
+  """``409`` ``context="stale"`` — the record moved under the editor.
 
   Attributes
   ----------
@@ -340,7 +332,7 @@ class Stale:
   submitted : Mapping[str, str]
     The **normalized** submitted values, so trailing whitespace is never
     reported as a change. Empty for archive and restore, whose form has no
-    data field (§5.1).
+    data field.
   version : int
     The **current** version, re-issued in ``keep_form``.
   idempotency_key : UUID
@@ -366,11 +358,11 @@ class Blocked:
   contact_name : str
     Its ``full_name``, for the heading.
   body : {"cp_13", "cp_23"}
-    ``cp_13`` — "restore it first" (``ACC-018``, and a reassign under
-    **R25**). ``cp_23`` — "that has already been done" (``ACC-023``,
-    ``ACC-028``).
+    ``cp_13`` — "restore it first", for a write under an archived contact
+    and for a reassign, which is refused while archived. ``cp_23`` — "that
+    has already been done".
   state : {"archived", "active"}
-    ``CP-23``'s substitution.
+    The substitution that sentence takes.
   restore_form : RestoreForm | None
     The real restore ``POST``'s hidden fields, or ``None`` when the contact
     is already active and there is nothing to restore.
@@ -385,7 +377,7 @@ class Blocked:
 
 @dataclass(frozen=True, slots=True)
 class Duplicate:
-  """``409`` ``context="duplicate"`` — same key, different payload (``SQL-028``)."""
+  """``409`` ``context="duplicate"`` — same key, different payload."""
 
   contact_id: UUID
 
@@ -419,20 +411,21 @@ def _email_shaped(value: str) -> bool:
 
 
 def _validate(submitted: Mapping[str, str]) -> Invalid | _Normalized:
-  """Normalize and check the five writable fields (``UX_FLOWS.md`` §6.7).
+  """Normalize and check the five writable fields.
 
   Parameters
   ----------
   submitted : Mapping[str, str]
     The five wire names of :data:`CONTACT_FIELDS`, each present — the route
     supplies ``""`` for a field the body omitted, because a radio group
-    with nothing selected sends no field at all and that is ``CP-66``.
+    with nothing selected sends no field at all, which is a field error
+    and not a crafted request.
 
   Returns
   -------
   Invalid | _Normalized
     ``Invalid`` carries one list of strings per failing field, keyed by the
-    wire name so the error summary can link to the control (**R28**).
+    wire name so the error summary can link to the control.
 
   Notes
   -----
@@ -454,21 +447,21 @@ def _validate(submitted: Mapping[str, str]) -> Invalid | _Normalized:
   email_lower = email.lower()
 
   if not name:
-    errors["name"] = [CP_60_NAME_REQUIRED]
+    errors["name"] = [NAME_REQUIRED_MESSAGE]
   elif len(name) > NAME_MAX or len(name_lower) > NAME_MAX:
-    errors["name"] = [CP_61_TOO_LONG_160]
+    errors["name"] = [TOO_LONG_160_MESSAGE]
   if len(company) > COMPANY_MAX or len(company_lower) > COMPANY_MAX:
-    errors["company"] = [CP_61_TOO_LONG_160]
+    errors["company"] = [TOO_LONG_160_MESSAGE]
   if not email:
-    errors["email"] = [CP_62_EMAIL_REQUIRED]
+    errors["email"] = [EMAIL_REQUIRED_MESSAGE]
   elif len(email) > EMAIL_MAX or len(email_lower) > EMAIL_MAX:
-    errors["email"] = [CP_64_EMAIL_TOO_LONG]
+    errors["email"] = [EMAIL_TOO_LONG_MESSAGE]
   elif len(email) < EMAIL_MIN or not _email_shaped(email):
-    errors["email"] = [CP_63_EMAIL_MALFORMED]
+    errors["email"] = [EMAIL_MALFORMED_MESSAGE]
   if len(phone) > PHONE_MAX:
-    errors["phone"] = [CP_65_PHONE_TOO_LONG]
+    errors["phone"] = [PHONE_TOO_LONG_MESSAGE]
   if kind not in _KIND_VALUES:
-    errors["kind"] = [CP_66_KIND_REQUIRED]
+    errors["kind"] = [CONTACT_KIND_REQUIRED_MESSAGE]
 
   if errors:
     return Invalid(errors=errors)
@@ -568,7 +561,7 @@ async def _resolve_conflict(
   Parameters
   ----------
   runner : TransactionRunner
-    The process runner (amendment **A-14**); the conflicting transaction
+    The process-wide transaction runner; the conflicting transaction
     has already unwound and released its connection.
   error : psycopg.Error
     The original failure, re-raised if the receipt cannot be found.
@@ -605,7 +598,7 @@ async def _stale_after_race(
   contact_id: UUID,
   submitted: Mapping[str, str],
 ) -> Stale:
-  """Re-read a contact in a fresh transaction to build §1(d) step 4's 409.
+  """Re-read a contact in a fresh transaction to build the 409 ``stale``.
 
   Raises
   ------
@@ -659,22 +652,22 @@ def build_contact_query(
   ----------
   term : str | None
     The raw ``?q=`` value, or ``None``. Normalized and escaped here, which
-    is the one place it happens (§1(c), ``ACCESS_MATRIX.md`` §5.5).
+    is the one place it happens.
   kind : str | None
     ``lead``, ``customer`` or ``None``; the route has already rejected
     anything else with a 400.
   status : str
     ``active``, ``archived`` or ``all``. ``active`` is the default, so
-    **PIN 4**'s "archived contacts hidden by default" is the absence of an
-    input rather than a branch a caller can forget.
+    "archived contacts hidden by default" is the absence of an input
+    rather than a branch a caller can forget.
   sort : str
-    One of ``ACCESS_MATRIX.md`` §5.2's five keys.
+    One of the five allowed sort keys.
   direction : str
     ``asc`` or ``desc``.
   page : int
     A positive integer.
   per_page : int
-    A positive integer; clamped to :data:`MAX_PER_PAGE` here (``ACC-112``).
+    A positive integer; clamped to :data:`MAX_PER_PAGE` here.
 
   Returns
   -------
@@ -687,8 +680,8 @@ def build_contact_query(
   -----
   The escape order is binding and is ``!``, then ``%``, then ``_``: escaping
   ``%`` before ``!`` would double-escape the escape character. A **single
-  trailing** ``%`` and **no leading one** — prefix-only, which ``ACC-103``
-  asserts explicitly with a fixture whose term occurs only mid-string.
+  trailing** ``%`` and **no leading one**: the search is prefix-only, and a
+  test asserts it with a fixture whose term occurs only mid-string.
   The term is lowered in Python, never by a SQL function, because the
   columns it is compared against are the stored ``_lower`` ones.
   """
@@ -717,7 +710,7 @@ async def list_contacts(
   Parameters
   ----------
   runner : TransactionRunner
-    The process runner (amendment **A-14**).
+    The process-wide transaction runner.
   scope : Scope
     The viewer's scope; the repository inlines it in **both** statements.
   query : ContactQuery
@@ -729,7 +722,7 @@ async def list_contacts(
 
   Notes
   -----
-  One short ``READ COMMITTED`` transaction (§1(d) row 6), never a
+  One short ``READ COMMITTED`` transaction, never a
   ``SERIALIZABLE`` one: a list page taking predicate locks would make every
   concurrent contact edit a ``40001`` candidate for no benefit.
 
@@ -784,12 +777,12 @@ async def get_for_detail(
   ------
   ContactNotFound
     For a foreign contact and for a missing one alike — one statement, one
-    code path, one body (**PIN 8**, ``ACC-002``/``ACC-015``).
+    code path, one body.
 
   Notes
   -----
   There is **no archive clause**: an archived contact stays readable to its
-  owner (``ACC-006``), and the screen renders the archived banner and the
+  owner, and the screen renders the archived banner and the
   restore action from ``is_archived``.
   """
 
@@ -803,23 +796,23 @@ async def get_for_detail(
 
 
 async def list_assignable_users(runner: TransactionRunner) -> tuple[AssignableUser, ...]:
-  """Return the active users an admin may reassign a contact to (``ACC-032``).
+  """Return the active users an admin may reassign a contact to.
 
   Parameters
   ----------
   runner : TransactionRunner
-    The process runner (amendment **A-14**).
+    The process-wide transaction runner.
 
   Returns
   -------
   tuple[AssignableUser, ...]
     ``(id, display_name)`` ordered by display name — the only source
-    ``CONTRACTS.md`` §8.2's frozen ``reassign.assignable_users`` has.
+    the reassign panel's ``assignable_users`` has.
 
   Notes
   -----
   Takes no ``Scope``: ``users`` is an identity repository, and the option
-  list is the same for every admin (§1(b) B2, amendment **A-10**). It is
+  list is the same for every admin. It is
   never an authorization input — the reassign target is re-validated
   **inside** the mutation's own transaction by
   :func:`app.db.repositories.users.is_active_user`, so a list that went
@@ -842,18 +835,18 @@ async def create_contact(
   key: UUID,
   correlation_id: str,
 ) -> Applied | Invalid | Duplicate:
-  """Create one contact owned by the actor (``ACC-007``).
+  """Create one contact owned by the actor.
 
   Parameters
   ----------
   runner : TransactionRunner
-    The process runner (amendment **A-14**).
+    The process-wide transaction runner.
   clock : Clock
     The injected time source; every instant below comes from it.
   scope : Scope
     The actor's scope. **The owner is the scope**: ``insert_contact`` has no
-    ``owner_id`` parameter, so ``ACC-012`` — an agent supplying one — is
-    unreachable by construction rather than by allowlist.
+    ``owner_id`` parameter, so an agent supplying one is unreachable by
+    construction rather than by allowlist.
   submitted : Mapping[str, str]
     The five writable fields.
   key : UUID
@@ -916,13 +909,13 @@ async def create_contact(
 
   try:
     return await runner.serializable(_work, op=OP_CREATE)
-  # SQL-013, PIN C5: the commit's outcome is unknown, so the receipt is
-  # re-read in a FRESH transaction. Present -> the transaction landed and
-  # this is the 303 it would have answered; absent -> settle_ambiguous
-  # re-raises and main.py renders CP-19's "do not resubmit" 503. Never a
-  # retry: retrying an ambiguous commit is how one submission becomes two
-  # rows. It is not a psycopg.Error, so this clause is independent of the
-  # one below and is written before it (slice-c.md §2(b) note 4).
+  # The commit's outcome is unknown, so the receipt is re-read in a FRESH
+  # transaction. Present -> the transaction landed and this is the 303 it
+  # would have answered; absent -> settle_ambiguous re-raises and main.py
+  # renders the "do not resubmit" 503. Never a retry: retrying an ambiguous
+  # commit is how one submission becomes two rows. It is not a
+  # psycopg.Error, so this clause is independent of the one below and is
+  # written before it.
   except AmbiguousCommit as error:
     return _applied(
       await settle_ambiguous(
@@ -949,7 +942,7 @@ async def update_contact(
   key: UUID,
   correlation_id: str,
 ) -> Applied | Invalid | Stale | Blocked | Duplicate:
-  """Edit one contact's five writable fields (``ACC-014``-``ACC-020``).
+  """Edit one contact's five writable fields.
 
   Returns
   -------
@@ -960,7 +953,7 @@ async def update_contact(
   ContactNotFound
     Foreign or missing, decided by the scope predicate before the archive
     state is ever consulted — which is the ordering that keeps the 409 from
-    becoming an existence oracle (``ACC-020``).
+    becoming an existence oracle.
   """
   validated = _validate(submitted)
   if isinstance(validated, Invalid):
@@ -1033,13 +1026,13 @@ async def update_contact(
     return await runner.serializable(_work, op=OP_UPDATE)
   except _ConcurrentStale:
     return await _stale_after_race(runner, scope, contact_id=contact_id, submitted=values)
-  # SQL-013, PIN C5: the commit's outcome is unknown, so the receipt is
-  # re-read in a FRESH transaction. Present -> the transaction landed and
-  # this is the 303 it would have answered; absent -> settle_ambiguous
-  # re-raises and main.py renders CP-19's "do not resubmit" 503. Never a
-  # retry: retrying an ambiguous commit is how one submission becomes two
-  # rows. It is not a psycopg.Error, so this clause is independent of the
-  # one below and is written before it (slice-c.md §2(b) note 4).
+  # The commit's outcome is unknown, so the receipt is re-read in a FRESH
+  # transaction. Present -> the transaction landed and this is the 303 it
+  # would have answered; absent -> settle_ambiguous re-raises and main.py
+  # renders the "do not resubmit" 503. Never a retry: retrying an ambiguous
+  # commit is how one submission becomes two rows. It is not a
+  # psycopg.Error, so this clause is independent of the one below and is
+  # written before it.
   except AmbiguousCommit as error:
     return _applied(
       await settle_ambiguous(
@@ -1065,14 +1058,14 @@ async def archive_contact(
   key: UUID,
   correlation_id: str,
 ) -> Applied | Stale | Blocked | Duplicate:
-  """Archive one active contact (``ACC-021``-``ACC-024``).
+  """Archive one active contact.
 
   Notes
   -----
   Archive is not erasure: nothing is deleted, which is why the runtime role
-  holds no ``DELETE`` on ``contacts`` at all (``S7``, §1(a) step 05).
-  Archiving an already-archived contact is ``ACC-023``'s 409 with
-  ``CP-23``, reachable only by a replayed form.
+  holds no ``DELETE`` on ``contacts`` at all (migration ``0003`` step 05).
+  Archiving an already-archived contact is the 409 that reads "that has
+  already been done", reachable only by a replayed form.
   """
   digest = payload_sha256(operation=OP_ARCHIVE, target_id=contact_id, version=expected_version)
   now = clock.now()
@@ -1135,13 +1128,13 @@ async def archive_contact(
     return await runner.serializable(_work, op=OP_ARCHIVE)
   except _ConcurrentStale:
     return await _stale_after_race(runner, scope, contact_id=contact_id, submitted={})
-  # SQL-013, PIN C5: the commit's outcome is unknown, so the receipt is
-  # re-read in a FRESH transaction. Present -> the transaction landed and
-  # this is the 303 it would have answered; absent -> settle_ambiguous
-  # re-raises and main.py renders CP-19's "do not resubmit" 503. Never a
-  # retry: retrying an ambiguous commit is how one submission becomes two
-  # rows. It is not a psycopg.Error, so this clause is independent of the
-  # one below and is written before it (slice-c.md §2(b) note 4).
+  # The commit's outcome is unknown, so the receipt is re-read in a FRESH
+  # transaction. Present -> the transaction landed and this is the 303 it
+  # would have answered; absent -> settle_ambiguous re-raises and main.py
+  # renders the "do not resubmit" 503. Never a retry: retrying an ambiguous
+  # commit is how one submission becomes two rows. It is not a
+  # psycopg.Error, so this clause is independent of the one below and is
+  # written before it.
   except AmbiguousCommit as error:
     return _applied(
       await settle_ambiguous(
@@ -1167,12 +1160,12 @@ async def restore_contact(
   key: UUID,
   correlation_id: str,
 ) -> Applied | Stale | Blocked | Duplicate:
-  """Restore one archived contact (``ACC-026``-``ACC-029``).
+  """Restore one archived contact.
 
   Notes
   -----
-  Restoring an already-active contact is ``ACC-028``'s 409 with ``CP-23``
-  and **no** restore form: there is nothing left to restore, so offering
+  Restoring an already-active contact is the "that has already been done"
+  409 with **no** restore form: there is nothing left to restore, so offering
   the button would be a control that does nothing.
   """
   digest = payload_sha256(operation=OP_RESTORE, target_id=contact_id, version=expected_version)
@@ -1231,13 +1224,13 @@ async def restore_contact(
     return await runner.serializable(_work, op=OP_RESTORE)
   except _ConcurrentStale:
     return await _stale_after_race(runner, scope, contact_id=contact_id, submitted={})
-  # SQL-013, PIN C5: the commit's outcome is unknown, so the receipt is
-  # re-read in a FRESH transaction. Present -> the transaction landed and
-  # this is the 303 it would have answered; absent -> settle_ambiguous
-  # re-raises and main.py renders CP-19's "do not resubmit" 503. Never a
-  # retry: retrying an ambiguous commit is how one submission becomes two
-  # rows. It is not a psycopg.Error, so this clause is independent of the
-  # one below and is written before it (slice-c.md §2(b) note 4).
+  # The commit's outcome is unknown, so the receipt is re-read in a FRESH
+  # transaction. Present -> the transaction landed and this is the 303 it
+  # would have answered; absent -> settle_ambiguous re-raises and main.py
+  # renders the "do not resubmit" 503. Never a retry: retrying an ambiguous
+  # commit is how one submission becomes two rows. It is not a
+  # psycopg.Error, so this clause is independent of the one below and is
+  # written before it.
   except AmbiguousCommit as error:
     return _applied(
       await settle_ambiguous(
@@ -1264,7 +1257,7 @@ async def reassign_contact(
   key: UUID,
   correlation_id: str,
 ) -> Applied | Invalid | Stale | Blocked | Duplicate:
-  """Move one contact to another active owner — admin only (``ACC-031``).
+  """Move one contact to another active owner — admin only.
 
   Parameters
   ----------
@@ -1275,13 +1268,13 @@ async def reassign_contact(
   -------
   Applied | Invalid | Stale | Blocked | Duplicate
     ``Invalid`` — one answer for a missing target and for a disabled one
-    (``ACC-032``), so no admin learns which it was.
+   , so no admin learns which it was.
 
   Notes
   -----
   The role check is the route's, at order step 3, **before** this is
-  reached: ``ACC-033``'s 403 is constant over objects and must not depend
-  on resolving one.
+  reached: the ``403`` for a non-admin is constant over objects and must
+  not depend on resolving one.
 
   The target is validated **inside** this transaction, not before it: a
   concurrent ``disable-user`` writes the row this transaction read,
@@ -1324,7 +1317,7 @@ async def reassign_contact(
         idempotency_key=mint_key(),
       )
     if not await users_repo.is_active_user(conn, user_id=new_owner_id):
-      return Invalid(errors={"owner_id": [CP_25_BAD_TARGET]})
+      return Invalid(errors={"owner_id": [BAD_OWNER_TARGET_MESSAGE]})
     await commit_receipt(
       conn,
       user_id=scope.actor_id,
@@ -1364,13 +1357,13 @@ async def reassign_contact(
     return await _stale_after_race(
       runner, scope, contact_id=contact_id, submitted={"owner_id": str(new_owner_id)}
     )
-  # SQL-013, PIN C5: the commit's outcome is unknown, so the receipt is
-  # re-read in a FRESH transaction. Present -> the transaction landed and
-  # this is the 303 it would have answered; absent -> settle_ambiguous
-  # re-raises and main.py renders CP-19's "do not resubmit" 503. Never a
-  # retry: retrying an ambiguous commit is how one submission becomes two
-  # rows. It is not a psycopg.Error, so this clause is independent of the
-  # one below and is written before it (slice-c.md §2(b) note 4).
+  # The commit's outcome is unknown, so the receipt is re-read in a FRESH
+  # transaction. Present -> the transaction landed and this is the 303 it
+  # would have answered; absent -> settle_ambiguous re-raises and main.py
+  # renders the "do not resubmit" 503. Never a retry: retrying an ambiguous
+  # commit is how one submission becomes two rows. It is not a
+  # psycopg.Error, so this clause is independent of the one below and is
+  # written before it.
   except AmbiguousCommit as error:
     return _applied(
       await settle_ambiguous(

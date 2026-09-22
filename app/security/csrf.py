@@ -1,25 +1,23 @@
-"""The per-session CSRF token (``S3``, ``SEC-020``-``SEC-023``).
+"""The per-session CSRF token.
 
 Pure: no connection, no repository. Only the token's SHA-256 reaches the
 database, in ``sessions.csrf_sha256``, so the token is bound to exactly one
 session row and a token minted for another session is worthless.
 
 Why the token is **derived** from the session token rather than drawn
-independently — a deliberate, recorded deviation from ``slice-a.md`` §1.1's
-``mint_csrf() -> tuple[str, str]``
------------------------------------------------------------------------
+independently
+-------------------------------------------------------------------
 Every page that carries a form must render the *token*, while the database
-holds only its *digest* (``DATA_CONTRACT.md`` §3.3: "Neither raw value ever
-reaches the database"). A token drawn independently at INSERT time is
-therefore unrecoverable on the next request, which leaves three ways out,
-and two of them break a pinned rule:
+holds only its *digest*: neither raw value ever reaches the database. A
+token drawn independently at INSERT time is therefore unrecoverable on the
+next request, which leaves three ways out, and two of them break a rule
+this application keeps everywhere else:
 
-* store the raw token — forbidden by §3.3;
+* store the raw token — then a database read discloses a live credential;
 * re-mint it on each render and ``UPDATE`` the row — a write on a safe
-  method, which ``ARC-017``(a) enumerates and forbids, and a repository
-  function that does not exist;
-* re-mint it and insert a new row — forbidden by ``ARC-017``(b), which
-  requires a still-valid pre-auth cookie to **reuse** its row.
+  method, which no ``GET`` here performs;
+* re-mint it and insert a new row — a second pre-auth row per render,
+  where a still-valid pre-auth cookie must instead **reuse** its row.
 
 So the token is a one-way function of the session token:
 ``sha256("crm-csrf-v1:" + session_token)``. The security properties that
@@ -32,7 +30,8 @@ another session fails. And the derivation is one-way, so the CSRF token —
 which appears in HTML, in page caches and in browser history — never leaks
 the session token back.
 
-Recorded for the review council rather than taken silently.
+The derivation is documented here because it is the one place where a
+reader might expect an independently drawn secret and find a derived one.
 """
 
 from __future__ import annotations
@@ -88,7 +87,7 @@ def verify_csrf(submitted: str | None, stored_sha256: str | None) -> bool:
   bool
     ``True`` only when both are present and the digests match. A missing
     field, a missing row and a wrong token are one outcome — the caller
-    answers all three with the same ``403`` body (``R27``).
+    answers all three with the same ``403`` body.
 
   Notes
   -----

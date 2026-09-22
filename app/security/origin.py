@@ -1,7 +1,7 @@
 """The stored public origin, the ``Host``/``Origin`` check and ``next`` safety.
 
-Spec §4 keeps the public HTTPS origin **in the database**, never in an
-environment variable and never derived from a request header: a header is
+The public HTTPS origin lives **in the database**, never in an environment
+variable and never derived from a request header: a header is
 attacker-controlled, and an application that believes ``Host`` will happily
 mint a password-reset link pointing at the attacker's server.
 
@@ -12,8 +12,8 @@ Two consequences this module implements:
 read per five seconds instead of one per request.
 
 *A redirect target is validated, never trusted.* :func:`is_safe_relative`
-is the whole of ``SEC-042``: the ``next`` parameter is a path on this
-origin or it is dropped.
+admits the ``next`` parameter only as a path on this origin; anything else
+is dropped.
 """
 
 from __future__ import annotations
@@ -87,7 +87,7 @@ def is_safe_relative(path: str) -> bool:
 
   Notes
   -----
-  ``SEC-042``'s four hostile shapes and why each is refused:
+  The four hostile shapes, and why each is refused:
 
   * ``//evil.example.test`` — a protocol-relative URL: browsers read the
     part after ``//`` as an authority, so it leaves this origin.
@@ -170,8 +170,8 @@ class ReadinessCache:
   """The ``/health/ready`` verdict, re-computed at most every ``ttl_s`` seconds.
 
   The probe walks the migration journal and three provisioning predicates.
-  That is cheap, but a readiness endpoint is polled by an orchestrator
-  every few seconds and there is no reason to spend a connection per poll.
+  That is cheap, but a readiness endpoint is polled every few seconds and
+  there is no reason to spend a connection per poll.
   """
 
   def __init__(self, pool: Pool, clock: Clock, *, ttl_s: float = READINESS_TTL_S) -> None:
@@ -199,7 +199,7 @@ class ReadinessCache:
     -------
     ReadyReport
       ``ready`` plus fixed condition names for the log. The names never
-      reach the HTTP body, which is fixed text (``H-09``).
+      reach the HTTP body, which is fixed text.
     """
     now = self._clock.monotonic()
     cached = self._value

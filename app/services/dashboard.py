@@ -1,15 +1,14 @@
 """The dashboard: three tiles and a recent list, from one read-only snapshot.
 
-``CONTRACTS.md`` §8.2 freezes the context — ``totals``,
-``recent_activities``, ``is_empty`` — and **R16** fixes the screen at three
-tiles with no fourth.
+The context is ``totals``, ``recent_activities`` and ``is_empty``, and the
+screen is three tiles with no fourth.
 
 Two properties carry this module.
 
 *Every number is the engine's.* ``contacts.count_visible``,
 ``deals.dashboard_totals`` and ``activities.recent_for_dashboard`` are three
 statements under the same ownership predicate; nothing here counts a list,
-sums an amount or filters a stage in Python (``PIN C6``, ``ACC-302``). An
+sums an amount or filters a stage in Python. An
 agent's tiles are their own records, an admin's are unfiltered, and the
 difference is a SQL conjunct that is present or absent — never a boolean
 passed into one statement.
@@ -45,7 +44,7 @@ __all__ = ["DashboardView", "Totals", "dashboard"]
 
 @dataclass(frozen=True, slots=True)
 class Totals:
-  """``CONTRACTS.md`` §8.2's ``totals`` — five numbers, three tiles."""
+  """The dashboard's ``totals`` — five numbers, three tiles."""
 
   visible_contacts: int
   open_count: int

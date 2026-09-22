@@ -1,4 +1,4 @@
-"""Session tokens, their digests and the one cookie (``S2``, ``R10`` / ``D7``).
+"""Session tokens, their digests and the one cookie.
 
 Pure: this module opens no connection and imports no repository, so
 ``from app.security.sessions import PREAUTH_TTL`` works on a machine with no
@@ -7,7 +7,7 @@ database. The database-facing half of the session layer lives in
 
 What the wire carries and what the database carries are deliberately
 different values: the cookie holds an opaque CSPRNG token, the ``sessions``
-row holds only its SHA-256 (``SEC-010``). A read of the table therefore
+row holds only its SHA-256. A read of the table therefore
 cannot produce a usable cookie.
 """
 
@@ -35,12 +35,12 @@ __all__ = [
 ]
 
 #: ``__Host-`` binds the cookie to this exact origin with no ``Domain`` and
-#: ``Path=/``, which a subdomain cannot overwrite (ruling R10 / delta D7).
+#: ``Path=/``, which a subdomain cannot overwrite.
 COOKIE_NAME: Final = "__Host-crm_session"
 
-#: Random bytes per token. ``SEC-010`` pins a **256-bit floor**; 40 bytes is
-#: 320 bits, above it. The surplus is deliberate and is explained in
-#: :func:`mint_token`.
+#: Random bytes per token. The floor this application holds itself to is
+#: 256 bits; 40 bytes is 320 bits, above it. The surplus is deliberate and
+#: is explained in :func:`mint_token`.
 TOKEN_BYTES: Final = 40
 
 PREAUTH_TTL: Final = timedelta(minutes=10)
@@ -70,8 +70,7 @@ def sha256_hex(value: str) -> str:
   a single place to read what "the hash" means in this application. It is a
   plain, unsalted SHA-256 by design in all three cases: the inputs are
   either high-entropy random tokens (where a salt adds nothing) or must be
-  recomputable from the plaintext by ``manage erase-subject``
-  (``DATA_CONTRACT.md`` §3.4).
+  recomputable from the plaintext by ``manage erase-subject``.
   """
   return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
@@ -91,10 +90,10 @@ def mint_token() -> tuple[str, str]:
   :func:`secrets.token_hex` draws from the operating system CSPRNG
   (``os.urandom``), never from :mod:`random`.
 
-  **Why 320 bits rather than exactly 256.** ``SEC-010`` requires *at least*
-  256 bits, and the natural 256-bit spelling — 32 bytes as 64 hexadecimal
+  **Why 320 bits rather than exactly 256.** The floor is *at least* 256
+  bits, and the natural 256-bit spelling — 32 bytes as 64 hexadecimal
   characters — clears that floor with nothing to spare: a conservative
-  reader (and ``SEC-010``'s own estimator) measures a token's strength as
+  reader measures a token's strength as
   ``len(token) * log2(len(set(token)))``, and about one in four 64-character
   hexadecimal draws happens to omit one of the sixteen digits, which makes
   that estimate read ~250 bits for a value that really carries 256. Minting
@@ -118,7 +117,7 @@ def set_cookie(response: Response, token: str) -> None:
   Notes
   -----
   ``Secure; HttpOnly; SameSite=Lax; Path=/``, **no** ``Domain`` and **no**
-  ``Max-Age``/``Expires`` (``slice-a.md`` §2.2): a browser-session cookie
+  ``Max-Age``/``Expires``: a browser-session cookie
   whose real lifetime is the server-side row, so a stolen cookie cannot
   outlive the row and clearing the row ends the session everywhere.
   """

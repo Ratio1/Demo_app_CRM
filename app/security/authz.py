@@ -1,9 +1,5 @@
 """Steps 0b, 2 and 3 of the pipeline, as awaited guards.
 
-Authority: ``slice-a.md`` §2.1 (the ordered steps and their exact
-statuses), §2.3 (content type and the body's shape), ``ACCESS_MATRIX.md``
-§1.1.
-
 Each guard raises one of :mod:`app.security.failures`' decisions and
 renders nothing: the mapping from a decision to a page, a status and a
 shell lives in :mod:`app.routes.errors`, in one place, so two routes cannot
@@ -89,7 +85,7 @@ async def require_session(request: Request) -> Principal:
   NoSession
     When there is no live full session. The caller decides the shape of
     the answer — ``303`` for a private ``GET``, ``403`` for an unsafe
-    method, ``401`` + ``HX-Redirect`` for a fragment (**R26**) — because
+    method, ``401`` + ``HX-Redirect`` for a fragment — because
     only the caller knows which it is.
   """
   principal = await resolve_principal(request)
@@ -99,7 +95,7 @@ async def require_session(request: Request) -> Principal:
 
 
 async def deny_forced_reset(request: Request, principal: Principal) -> NoReturn:
-  """Record the step-2 block, then refuse the request (**R67**).
+  """Record the step-2 block, then refuse the request.
 
   Parameters
   ----------
@@ -107,7 +103,7 @@ async def deny_forced_reset(request: Request, principal: Principal) -> NoReturn:
     The inbound request, for the application context.
   principal : Principal
     The resolved actor, whose ``must_change_password`` is set. The deny row
-    names **the actor as the object** — ``ACCESS_MATRIX.md`` §4.5 row 5 is
+    names **the actor as the object** — the triple is
     ``(user, forced_reset_blocked, denied)`` with the actor's own user id,
     which is always a canonical UUID — because the denial is about the
     account's state and not about whatever it was reaching for.
@@ -115,10 +111,9 @@ async def deny_forced_reset(request: Request, principal: Principal) -> NoReturn:
   Raises
   ------
   ForcedResetRequired
-    Always. The function exists to make the row and the refusal one thing:
-    **R67** records that ``forced_reset_blocked`` had no emitter at all
-    until now, and a per-site write would have left three of the four raise
-    sites silent (``slice-c.md`` §2(j) probe 1).
+    Always. The function exists to make the row and the refusal one
+    thing: writing the row at each raise site instead would have left
+    three of the four sites silent, as an earlier revision did.
 
   Notes
   -----
@@ -129,8 +124,8 @@ async def deny_forced_reset(request: Request, principal: Principal) -> NoReturn:
   because the principal is the row's subject and is in hand here; the
   handler would have to re-derive it.
 
-  ``ACCESS_MATRIX.md`` §4.5's set-equality then holds in the direction it
-  could not hold before: every triple the CHECK admits has an emitter.
+  Every denial triple the CHECK admits therefore has an emitter, which is
+  what makes the vocabulary an exact description of what the code writes.
   """
   context = context_of(request)
   await record_denial(
@@ -163,7 +158,7 @@ async def require_active_session(request: Request) -> Principal:
     As :func:`require_session`.
   ForcedResetRequired
     When the account must change its password, through
-    :func:`deny_forced_reset` so the denial is audited (**R67**). Only
+    :func:`deny_forced_reset` so the denial is audited. Only
     ``GET``/``POST /account/password`` and ``POST /logout`` proceed; every
     other route is refused, so a forced account can neither read nor write
     anything else.
@@ -190,9 +185,8 @@ def require_admin(principal: Principal) -> None:
 
   Notes
   -----
-  Slice A registers no admin-only route; the guard exists so that Slice B's
-  first one cannot be written without it. Hiding a control in the UI is
-  never a substitute for this check.
+  Every admin-only route awaits this guard before it reads anything.
+  Hiding a control in the UI is never a substitute for this check.
   """
   if not principal.is_admin:
     raise RoleRequired
@@ -244,9 +238,9 @@ async def read_form(request: Request) -> FormData:
 
   Notes
   -----
-  ``max_fields`` and ``max_part_size`` are passed explicitly
-  (``slice-a.md`` §2.3): Starlette's defaults are 1000 fields and a 1 MiB
-  part, and a bound that is never reached is not a bound.
+  ``max_fields`` and ``max_part_size`` are passed explicitly: Starlette's
+  defaults are 1000 fields and a 1 MiB part, and a bound that is never
+  reached is not a bound.
   """
   return await request.form(max_fields=MAX_FORM_FIELDS, max_part_size=MAX_FORM_PART_BYTES)
 
@@ -268,7 +262,7 @@ async def require_csrf(request: Request, submitted: str | None) -> None:
     When there is no session row at all, when the field is missing, or
     when the token does not match. One outcome, one body: a mutation
     carrying no session and a mutation carrying a stale token are
-    indistinguishable in the response (``R27``).
+    indistinguishable in the response.
 
   Notes
   -----
@@ -292,7 +286,7 @@ async def charge_account_budget(request: Request, principal: Principal, *, safe:
     The inbound request, for the application context.
   principal : Principal
     The resolved actor; the budget is keyed on their user id, never on an
-    address or a header (``ARC-016``).
+    address or a header.
   safe : bool
     ``True`` for ``GET``/``HEAD`` (the ``account_query`` bucket), ``False``
     for a mutation (``account_mutation``).
@@ -309,7 +303,7 @@ async def charge_account_budget(request: Request, principal: Principal, *, safe:
   The request that *crosses* the limit also writes one ``budget_denied``
   audit row, inside the counter's own transaction, and no later refusal in
   the same window writes another — which is what keeps the deny trail
-  bounded by the very budget it records (``DATA_CONTRACT.md`` §3.6).
+  bounded by the very budget it records.
   """
   context = context_of(request)
   now = context.clock.now()

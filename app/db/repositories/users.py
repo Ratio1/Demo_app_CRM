@@ -1,22 +1,21 @@
 """``users`` — the account row, and the one file allowed to deactivate one.
 
-``ARC-018``, in the form the Slice A contract step settled (``slice-a.md``
-§10(b), ruling **R39**):
+Two rules confine who may change an account's role or enabled state:
 
 * **(a)** no ``UPDATE users`` statement anywhere under ``app/`` or
   ``scripts/`` names ``role`` in its ``SET`` list. ``users.role`` is written
-  by :func:`insert_user` and by nothing else, ever (``H-07``). A role change
-  in this MVP is ``create-user`` plus ``disable-user``, two audited
-  operations.
+  by :func:`insert_user` and by nothing else, ever. A role change is
+  ``create-user`` plus ``disable-user``, two audited operations.
 * **(b)** exactly one file may name ``is_active`` in an ``UPDATE users``
   ``SET`` list, and it is **this one** (:func:`set_active`). ``app/routes/**``
   and ``app/services/**`` except ``app/services/accounts.py`` may not import
-  this module. The by-name exemption is the honest form: the statement has to
-  live in the Data lane like every other statement, so the gate confines
-  *who may reach it* rather than pretending no repository holds it.
+  this module. Naming the one file is the honest form of the rule: the
+  statement has to live in a repository like every other statement, so what
+  is confined is *who may reach it*, not the pretence that it does not
+  exist. The test suite asserts both halves.
 
 Every editable write carries ``WHERE id = %(id)s AND version = %(version)s``
-and sets ``version = version + 1`` in the same statement (§4.1). Zero rows
+and sets ``version = version + 1`` in the same statement. Zero rows
 updated is a **stale edit**, reported as ``False``, and never a retry: the
 caller re-reads and decides.
 """
@@ -49,7 +48,7 @@ __all__ = [
 #: The two reads select the same eight columns, in the same order, and
 #: :func:`_row_to_user` unpacks both. The list is written out in each
 #: statement rather than composed from a shared fragment: every SELECT names
-#: its columns (``ARC-011``), and an f-string assembling SQL is exactly the
+#: its columns, and an f-string assembling SQL is exactly the
 #: shape a reviewer — and ``ruff`` ``S608`` — must not have to think about.
 #: ``email`` is deliberately absent from both: nothing in the auth path
 #: displays the address as typed, and the normalized form is the key.
@@ -106,15 +105,15 @@ _COUNT_ACTIVE_ADMINS_SQL: Final[LiteralString] = """
 SELECT count(*) FROM public.users WHERE role = 'admin' AND is_active = true
 """
 
-#: Slice B, ``PIN 9``. Deliberately not :func:`read_user`, which would answer
+#: Deliberately not :func:`read_user`, which would answer
 #: the same question while pulling ``password_hash`` into memory to decide a
 #: reassignment — a widening for no gain.
 _IS_ACTIVE_USER_SQL: Final[LiteralString] = """
 SELECT count(*) FROM public.users WHERE id = %(id)s AND is_active = true
 """
 
-#: Slice B, amendment **A-10**. The source of ``contacts/detail.html``'s frozen
-#: ``reassign.assignable_users``. Ordered by the displayed column with an ``id``
+#: The source of ``contacts/detail.html``'s ``reassign.assignable_users``.
+#: Ordered by the displayed column with an ``id``
 #: tiebreaker, so two people sharing a display name still order deterministically.
 _LIST_ACTIVE_USERS_SQL: Final[LiteralString] = """
 SELECT id, display_name
@@ -171,9 +170,9 @@ class UserOptionRow:
   id : UUID
     ``users.id``, the value the ``owner_id`` field posts back.
   display_name : str
-    What the option reads. ``CONTRACTS.md`` §8 rule 4 pins person names to
-    ``users.display_name``; no address is exposed by this read, because an
-    admin choosing an owner never needs one.
+    What the option reads. A person is named by ``users.display_name``
+    everywhere in this application; no address is exposed by this read,
+    because an admin choosing an owner never needs one.
   """
 
   id: UUID
@@ -193,7 +192,7 @@ def _row_to_user(row: tuple[object, ...]) -> UserAuthRow:
   UserAuthRow
     The row with its ``TEXT`` id converted back to :class:`uuid.UUID`. This
     is the module's single conversion point in that direction
-    (``DATA_CONTRACT.md`` §2.2).
+   .
   """
   return UserAuthRow(
     id=UUID(str(row[0])),
@@ -216,7 +215,7 @@ async def find_user_for_auth(conn: PoolConnection, *, email_norm: str) -> UserAu
     A connection inside the caller's transaction.
   email_norm : str
     ``submitted.strip().lower()``, computed in Python — the identical
-    normalization ``users.email_norm`` is written with (§3.2), so a known
+    normalization ``users.email_norm`` is written with, so a known
     account is always found.
 
   Returns
@@ -224,12 +223,12 @@ async def find_user_for_auth(conn: PoolConnection, *, email_norm: str) -> UserAu
   UserAuthRow | None
     ``None`` when no account has that address. The caller must treat that
     exactly as it treats a wrong password: it still runs the dummy hash, in
-    the same semaphore slot (``SEC-032``, ``SEC-033``).
+    the same semaphore slot.
 
   Notes
   -----
   This read runs **before** Argon2 and outside every business transaction,
-  with no connection held during the hash (§6.1). The value it returns is a
+  with no connection held during the hash. The value it returns is a
   snapshot; the ``SERIALIZABLE`` transaction that follows re-reads the row by
   id under its ``version`` (:func:`read_user`).
   """
@@ -255,13 +254,13 @@ async def read_user(conn: PoolConnection, *, user_id: UUID) -> UserAuthRow | Non
 
   Notes
   -----
-  Added beyond ``slice-a.md`` §5's list because :func:`find_user_for_auth`
-  keys on ``email_norm`` and runs before Argon2: the re-read §6.8 rows 3 and
-  5 require *inside* the transaction is by id and must see the row's current
+  :func:`find_user_for_auth` keys on ``email_norm`` and runs before Argon2,
+  so the re-read *inside* the transaction is by id and must see the row's
+  current
   ``version``, ``is_active`` and ``role``. A version other than the one read
   before Argon2 fails the login generically — it can mean a concurrent
   password change committed, and writing a rehash under the stale guard would
-  overwrite the new password with a rehash of the old one (§6.8 note 1).
+  overwrite the new password with a rehash of the old one.
   """
   cursor = await conn.execute(_READ_USER_SQL, {"id": str(user_id)})
   row = await cursor.fetchone()
@@ -278,7 +277,7 @@ async def set_password(
   expected_version: int,
   now: datetime,
 ) -> bool:
-  """Write a new password — a real credential change (§6.8 rows 5 and 17).
+  """Write a new password — a real credential change.
 
   Parameters
   ----------
@@ -308,8 +307,8 @@ async def set_password(
 
   Notes
   -----
-  Split from :func:`update_password_hash` (amendment **A2**) precisely so
-  that the login-time rehash cannot reach ``password_changed_at`` or
+  Split from :func:`update_password_hash` precisely so that the login-time
+  rehash cannot reach ``password_changed_at`` or
   ``must_change_password``. One function with a ``must_change_password``
   argument would silently clear a forced reset the first time a rehash fired.
   """
@@ -346,7 +345,7 @@ async def update_password_hash(
   password_hash : str
     The new encoding of the **same** password, computed on the bounded
     executor before the transaction opened and reused across every retry
-    (§6.8 note 1).
+   .
   expected_version : int
     The version read before Argon2 ran.
   now : datetime
@@ -361,8 +360,8 @@ async def update_password_hash(
   -----
   A parameter migration, not a password change: ``password_changed_at`` and
   ``must_change_password`` are untouched, so this must not revoke sessions
-  and cannot clear a forced reset. ``version`` **is** bumped, because the row
-  changed and §4.1 admits no unversioned write to an editable row.
+  and cannot clear a forced reset. ``version`` **is** bumped, because the
+  row changed and no write to an editable row goes unversioned.
   """
   cursor = await conn.execute(
     _REHASH_SQL,
@@ -388,14 +387,14 @@ async def insert_user(
   must_change_password: bool,
   now: datetime,
 ) -> None:
-  """Create one account — maintenance role only (§6.8 rows 15 and 16).
+  """Create one account — maintenance role only.
 
   Parameters
   ----------
   conn : PoolConnection
     A connection inside the caller's ``SERIALIZABLE`` transaction.
   user_id : UUID
-    The application-generated id (``A3``).
+    The application-generated id; the database generates none.
   email : str
     The address as the operator typed it, 3..254 characters and containing
     an ``@`` with something on either side (``ck_users_email``).
@@ -405,7 +404,7 @@ async def insert_user(
     1..160 characters.
   role : str
     ``admin`` or ``agent``. **This statement is the only place ``role`` is
-    ever written** (``H-07``, ``ARC-018``(a)).
+    ever written.**
   password_hash : str
     The encoded Argon2id hash.
   must_change_password : bool
@@ -419,11 +418,11 @@ async def insert_user(
   ``is_active`` is literal ``true`` and ``version`` literal ``1`` in the
   statement, not parameters: a new account is active at version one, and
   there is no caller that could legitimately ask for anything else. The
-  schema carries no DEFAULT clauses (§2.3 rule 1), so both are written here.
+  schema carries no DEFAULT clauses, so both are written here.
 
   A duplicate address raises ``23505`` on ``uq_users_email_norm``. It is not
   caught: ``create-user`` classifies it as "already exists" (exit 3), which
-  is a domain refusal and not a retry (§6.8 row 16).
+  is a domain refusal and not a retry.
   """
   await conn.execute(
     _INSERT_USER_SQL,
@@ -448,7 +447,7 @@ async def set_active(
   expected_version: int,
   now: datetime,
 ) -> bool:
-  """Enable or disable one account — the ``ARC-018``(b) statement.
+  """Enable or disable one account — the one statement that may.
 
   Parameters
   ----------
@@ -457,7 +456,7 @@ async def set_active(
   user_id : UUID
     Whose account.
   is_active : bool
-    ``False`` disables it; Slice A has no path that passes ``True``.
+    ``False`` disables it; no path in this application passes ``True``.
   expected_version : int
     The version read in the same transaction.
   now : datetime
@@ -471,14 +470,14 @@ async def set_active(
   Notes
   -----
   This is the **one** ``UPDATE users`` in the tree whose ``SET`` list names
-  ``is_active``, and the reason ``ARC-018``(b) exempts this file by name
-  rather than claiming no repository holds the statement.
+  ``is_active``, and the reason the rule above names this file rather than
+  claiming no repository holds the statement.
 
   It is composed **before** :func:`count_active_admins`, in one
   ``run_serializable``, by ``app/services/accounts.py``: the UPDATE first,
   then the predicate read. That order is what makes PostgreSQL's SSI abort
   the losing run when two ``disable-user`` commands race for the last
-  administrator (§6.9, ``SQL-014``) — the read is what creates the conflict,
+  administrator — the read is what creates the conflict,
   so it has to come after the write it must see.
   """
   cursor = await conn.execute(
@@ -510,7 +509,7 @@ async def count_active_admins(conn: PoolConnection) -> int:
   -----
   Served by ``ix_users_role_active``. Two callers: ``bootstrap`` refuses to
   run when this is above zero, and ``disable-user`` refuses to commit when
-  its own UPDATE brought it to zero (§6.9).
+  its own UPDATE brought it to zero.
   """
   cursor = await conn.execute(_COUNT_ACTIVE_ADMINS_SQL)
   row = await cursor.fetchone()
@@ -518,7 +517,7 @@ async def count_active_admins(conn: PoolConnection) -> int:
 
 
 async def is_active_user(conn: PoolConnection, *, user_id: UUID) -> bool:
-  """Answer whether one account exists and is enabled — ``PIN 9``'s target check.
+  """Answer whether one account exists and is enabled.
 
   Parameters
   ----------
@@ -532,16 +531,15 @@ async def is_active_user(conn: PoolConnection, *, user_id: UUID) -> bool:
   -------
   bool
     ``True`` only for an existing, active account. **Missing** and
-    **disabled** both answer ``False``, which is what ``ACC-032`` wants: one
-    400 for "not a valid target", with no branch that would tell an admin
-    which of the two it was.
+    **disabled** both answer ``False``: one 400 for "not a valid target",
+    with no branch that would tell an admin which of the two it was.
 
   Notes
   -----
-  Additive, and a **read**: no existing function changes and ``ARC-018`` is
-  untouched. It takes no ``Scope`` — ``users`` is an identity repository, and
-  a scope would add a second, redundant authorization input to a lookup that
-  is already id-keyed (``ARC-001``'s identity/infrastructure side).
+  A **read**, so it changes nothing the rules above confine. It takes no
+  ``Scope`` — ``users`` is an identity repository, and a scope would add a
+  second, redundant authorization input to a lookup that is already
+  id-keyed.
 
   Composing it **inside** the reassign transaction is the load-bearing part: a
   concurrent ``disable-user`` updates the row this transaction read,
@@ -576,8 +574,8 @@ async def list_active_users(conn: PoolConnection) -> tuple[UserOptionRow, ...]:
 
   Notes
   -----
-  Amendment **A-10**: ``contacts/detail.html``'s frozen
-  ``reassign.assignable_users`` has no other source, and the template is
+  ``contacts/detail.html``'s ``reassign.assignable_users`` has no other
+  source, and the template is
   rendered under ``StrictUndefined``. Two columns and no more — an account's
   address, role and flags are not needed to pick an owner, and a read that
   returned them would widen what a reassignment control discloses.

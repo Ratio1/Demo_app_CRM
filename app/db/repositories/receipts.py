@@ -1,16 +1,15 @@
 """``mutation_receipts`` — write-once idempotency, read before every mutation.
 
-`contracts/slice-b.md` §1(b). Two statements: the lookup every mutation runs
-before it writes anything, and the insert that records what it did. Nothing
-here decides whether a submission is a replay, a duplicate or a first
-execution — that is ``app/security/idempotency.py``'s ``decide``; this module
-only reads and writes the row.
+Two statements: the lookup every mutation runs before it writes anything,
+and the insert that records what it did. Nothing here decides whether a
+submission is a replay, a duplicate or a first execution — that is
+``app/security/idempotency.py``'s ``decide``; this module only reads and
+writes the row.
 
 Three properties are load-bearing and all three live in the SQL:
 
-*The lookup binds all three key columns.* ``PIN 1`` abbreviates the key as
-``(user_id, key)``; ``DATA_CONTRACT.md`` §3.8 scopes a key to
-``(user_id, operation)``. A two-column read is **not unique** — the same key
+*The lookup binds all three key columns.* A key is scoped to
+``(user_id, operation)``, so a two-column read is **not unique** — the same key
 under a different operation is a different receipt — so it could replay
 another operation's outcome and would not use ``uq_mutation_receipts_key``.
 Binding the whole tuple also makes the read after a conflict the *same*
@@ -18,23 +17,22 @@ statement as the read before it.
 
 *The insert catches nothing.* A duplicate raises ``23505``, which is not in
 ``RETRYABLE_SQLSTATES``, so ``run_serializable`` re-raises it unwrapped on the
-first attempt and the whole transaction unwinds with no business write —
-``DATA_CONTRACT.md`` §6.4 step 1, for free. The service then opens a **fresh**
+first attempt and the whole transaction unwinds with no business write, for
+free. The service then opens a **fresh**
 transaction and re-reads, because the failed one can carry no further
 statement (``25P02``).
 
-*There is no ``response_location`` column.* §3.8 stores the outcome —
+*There is no ``response_location`` column.* The table stores the outcome —
 ``result_status``, ``result_object_type``, ``result_object_id`` — and never a
 URL: a stored URL would go stale the moment a route was renamed, and this
 table's whole discipline is identifiers only. Replay rebuilds the ``Location``
 from those three values through the same route-name function that built it the
 first time.
 
-This module takes **no** ``Scope`` (§1(b) B2): a receipt is keyed by the
-session's ``user_id``, never by a request value, and it has no owner other
-than that user, so a scope would add a second, redundant authorization input
-to a lookup that is already identity-keyed. ``ARC-001``'s allowlist records it
-alongside the identity repositories (ask **A-3**).
+This module takes **no** ``Scope``: a receipt is keyed by the session's
+``user_id``, never by a request value, and it has no owner other than that
+user, so a scope would add a second, redundant authorization input to a
+lookup that is already identity-keyed.
 """
 
 from __future__ import annotations
@@ -57,9 +55,8 @@ __all__ = [
   "read_receipt",
 ]
 
-#: The nine operations ``ck_mutation_receipts_operation`` admits. Slice B uses
-#: the five ``contact_*`` values; the deal and activity names are already in
-#: the CHECK so Slice C and Slice D add no migration to use them.
+#: The nine operations ``ck_mutation_receipts_operation`` admits, one per
+#: mutation surface in the application.
 type Operation = Literal[
   "contact_create",
   "contact_update",
@@ -73,8 +70,8 @@ type Operation = Literal[
 ]
 
 #: The five outcomes ``ck_mutation_receipts_status`` admits. Note that there is
-#: no ``stage_changed``: a Slice C stage change records ``updated`` or the
-#: INSERT fails ``23514`` at runtime (§1(h) ask **A-5**).
+#: no ``stage_changed``: a stage change records ``updated``, or the INSERT
+#: fails ``23514`` at runtime.
 type ResultStatus = Literal["created", "updated", "archived", "restored", "reassigned"]
 
 #: What the recorded outcome points at.
@@ -153,7 +150,7 @@ def _row_to_receipt(row: tuple[object, ...]) -> ReceiptRow:
   ReceiptRow
     The row with its ``TEXT`` ids converted back to :class:`uuid.UUID`. This
     is the module's single conversion point in that direction
-    (``DATA_CONTRACT.md`` §2.2).
+   .
 
   Notes
   -----
@@ -189,7 +186,7 @@ async def read_receipt(
   conn : PoolConnection
     A connection inside the caller's transaction — the ``SERIALIZABLE`` one
     the mutation runs in, or the **fresh** ``READ COMMITTED`` one opened after
-    a ``23505`` (§6.4).
+    a ``23505``.
   user_id : UUID
     From the session. Never a request value.
   operation : Operation
@@ -213,8 +210,8 @@ async def read_receipt(
   that index rather than on a row that does not exist, which is why a
   concurrent duplicate surfaces as ``40001`` — handled invisibly by
   ``run_serializable`` — rather than as the ``23505`` the unique index would
-  otherwise report (§1(d), measured). Tests must therefore assert the
-  *outcome*, never a SQLSTATE.
+  otherwise report. Tests must therefore assert the *outcome*, never a
+  SQLSTATE.
   """
   cursor = await conn.execute(
     _READ_RECEIPT_SQL,
@@ -248,7 +245,7 @@ async def insert_receipt(
   conn : PoolConnection
     A connection inside the caller's ``SERIALIZABLE`` transaction. The receipt
     and the business row commit together or not at all, which is what makes
-    "exactly one receipt, one business row, one audit row" (``SQL-011``) a
+    "exactly one receipt, one business row, one audit row" a
     property of the schema rather than of the service's care.
   receipt_id : UUID
     The application-generated id (``A3``).
@@ -278,7 +275,7 @@ async def insert_receipt(
   would put a decision in a layer whose contract is "no function decides
   anything".
 
-  ``INSERT`` is issued **before** the business write (§6.2), so a duplicate can
+  ``INSERT`` is issued **before** the business write, so a duplicate can
   never have a business write in flight.
   """
   await conn.execute(

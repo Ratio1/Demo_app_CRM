@@ -1,16 +1,10 @@
-"""``CONTRACTS.md`` §8.3's shared deal sub-contexts, built in one place.
-
-Authority: ``CONTRACTS.md`` §8.3 (``deal_card``/``deal_row``, frozen), §8.2
-(``contacts/detail.html``'s ``deal_forms`` and ``deals/detail.html``'s
-``stage_form``), ``contracts/slice-c.md`` §2(d) (the stage control's exact
-fields), **R22**.
+"""The shared deal sub-contexts, built in one place.
 
 Three surfaces render the same card — the deal list, a pipeline column and
 the contact workspace's ``#deals`` region — and two render the same stage
-form. The shapes are **frozen**, so building them here rather than in each
-route is what keeps ``app/routes/deals.py`` and ``app/routes/contacts.py``
-from drifting apart one key at a time; neither may invent, rename or drop
-one (§8's rule 3).
+form. The shapes are fixed, so building them here rather than in each route
+is what keeps ``app/routes/deals.py`` and ``app/routes/contacts.py`` from
+drifting apart one key at a time; neither may invent, rename or drop one.
 
 This module holds the URLs a card needs and no authorization decision at
 all. ``url`` and ``contact_url`` are composed from route **names**, never
@@ -49,7 +43,7 @@ def contact_url(request: Request, contact_id: UUID) -> str:
 
 
 def deal_card_context(request: Request, card: DealCardView) -> dict[str, Any]:
-  """Build ``CONTRACTS.md`` §8.3's ``deal_card`` — and nothing beyond it.
+  """Build the ``deal_card`` context — and nothing beyond it.
 
   Parameters
   ----------
@@ -63,14 +57,14 @@ def deal_card_context(request: Request, card: DealCardView) -> dict[str, Any]:
   dict[str, Any]
     Exactly the thirteen frozen keys. ``amount`` stays a
     :class:`decimal.Decimal` and is rendered by the ``eur`` filter, so no
-    money string is built here (**PIN C1**); ``close_date`` stays a
+    money string is built here; ``close_date`` stays a
     :class:`datetime.date` for the ``day`` filter.
 
   Notes
   -----
   ``version`` is deliberately **not** in the card: the concurrency token
   belongs to a *form*, and the workspace's stage forms carry it under
-  ``deal_forms`` (§8.2). A card is a read.
+  ``deal_forms``. A card is a read.
   """
   return {
     "id": str(card.id),
@@ -90,7 +84,7 @@ def deal_card_context(request: Request, card: DealCardView) -> dict[str, Any]:
 
 
 def stage_form_context(*, idempotency_key: UUID, version: int, stage: str) -> dict[str, Any]:
-  """Build the frozen ``stage_form`` of §8.2 (**R22**, §2(d)).
+  """Build the ``stage_form`` context the stage control renders from.
 
   Parameters
   ----------
@@ -98,7 +92,7 @@ def stage_form_context(*, idempotency_key: UUID, version: int, stage: str) -> di
     **One key per control render**, shared by the three forms the partial
     draws: only one of them can be submitted, because each answers with a
     ``303`` and a full reload, so a second action posted with the same key
-    meets ``ACC-226``'s 409 ``duplicate`` by design (finding F-4).
+    meets the 409 ``duplicate`` answer by design.
   version : int
     The deal's current version, rendered as a hidden field in all three
     forms and re-checked inside the transaction.
@@ -109,10 +103,10 @@ def stage_form_context(*, idempotency_key: UUID, version: int, stage: str) -> di
   -------
   dict[str, Any]
     ``lateral_targets`` holds the legal targets **minus the current
-    stage**, so ``ACC-219``'s 400 is unreachable through the UI and still
-    enforced server-side; ``terminal`` is ``True`` for ``won``/``lost``,
-    which is the template's instruction to render **no control at all**,
-    just ``CP-35``.
+    stage**, so a move to the stage the deal is already in is unreachable
+    through the UI and still refused server-side; ``terminal`` is ``True``
+    for ``won``/``lost``, which is the template's instruction to render
+    **no control at all**, just the closing line.
   """
   return {
     "idempotency_key": str(idempotency_key),

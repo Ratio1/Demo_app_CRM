@@ -6,7 +6,7 @@ on, writes the business rows and the audit row together, and returns a
 plain result object. A route decides statuses, templates and cookies; a
 repository decides nothing at all.
 
-``ARC-003``: nothing here is reachable from a ``GET``/``HEAD`` handler.
+Nothing here is reachable from a ``GET``/``HEAD`` handler.
 Every function in this package is a mutation or the read half of one, and
 the route table only calls them from ``POST`` handlers.
 """

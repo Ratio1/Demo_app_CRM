@@ -7,7 +7,7 @@ instead of importing a module-level singleton, which is what keeps
 own without touching the process.
 
 Nothing in here is read at import time, so ``import app.main`` still
-contacts no database (``DEP-001``/``DEP-003``).
+contacts no database.
 """
 
 from __future__ import annotations
@@ -40,16 +40,16 @@ class AppContext:
     The five-name configuration, read once at lifespan start.
   pool : Pool
     The one lazy connection pool. A request holds at most one connection
-    from it at a time (``DATA_CONTRACT.md`` §6.1). Reached directly only by
+    from it at a time. Reached directly only by
     the three best-effort writers that keep the module-level shims — the
     session touch, the counters and the deny-audit — and by nothing that
     decides a business outcome.
   runner : TransactionRunner
     The one transaction runner, built over :attr:`pool` with the
-    application :class:`~app.security.clock.Clock` (amendment **A-14**).
+    application :class:`~app.security.clock.Clock`.
     **Every** ``app/services/**`` call takes it instead of the pool, which
     is what lets a test drive the retry budget and the backoff schedule
-    through injected hooks (**PIN C4**) rather than through a real wait.
+    through injected hooks rather than through a real wait.
   clock : Clock
     The injected time source; the only clock anything reads.
   passwords : PasswordService
@@ -63,7 +63,8 @@ class AppContext:
   readiness : ReadinessCache
     The ``/health/ready`` verdict, cached for five seconds.
   templates : Jinja2Templates
-    The explicit Jinja environment of delta **D11**.
+    The Jinja environment, built explicitly at startup rather than
+    per request.
   """
 
   config: Config
