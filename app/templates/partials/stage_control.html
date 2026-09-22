@@ -46,8 +46,8 @@
   <div class="field">
     <label for="stage-{{ deal_id }}">Move "{{ deal_title }}" to</label>
     <select id="stage-{{ deal_id }}" name="to_stage">
-      {% for _value, _label in stage_form.lateral_targets %}
-      <option value="{{ _value }}">{{ _label }}</option>
+      {% for _target in stage_form.lateral_targets %}
+      <option value="{{ _target.value }}">{{ _target.label }}</option>
       {% endfor %}
     </select>
   </div>
