@@ -105,7 +105,8 @@ nav wordmark resolve there too.
   date, summary up to 1000 characters) posts into the timeline right below. Once logged, an
   activity cannot be edited or deleted — append-only by design.
 - **Won** — on the deal, move it laterally with the stage dropdown + "Move", or open the "Mark as
-  won…" (or "…lost") disclosure and confirm. Both are terminal: no drag-and-drop, no JavaScript.
+  won…" (or "…lost") disclosure and confirm. Won and Lost are terminal: no drag-and-drop, no
+  JavaScript.
 - **Dashboard totals** — three tiles (visible contacts, open deal count/value, won deal
   count/value) plus recent activity. As an **agent** every number is that agent's own records
   only; as **admin** the same tiles are unfiltered. Switch to the other seeded agent to see the
@@ -115,10 +116,10 @@ Worth trying — each is a real server response, not a client-side guess:
 
 - Sign in as `agent.one`, open a contact owned by `agent.two` by guessing its URL — an identical
   `404` either way; ownership is never revealed.
-- Archive a contact, then try to add a deal or activity to it — `409` "archived — restore it
-  first", not a silent success.
-- Edit the same contact in two tabs, submit both — the second gets `409` "changed since you
-  loaded this" with your input preserved, not a lost update.
+- Archive a contact, then try to add a deal or activity to it — `409` "This contact is archived.
+  Restore it before adding or changing anything under it," not a silent success.
+- Edit the same contact in two tabs, submit both — the second gets `409` "This record changed
+  while you were editing," a side-by-side diff, and your input preserved, not a lost update.
 
 ## 6. Re-run
 
