@@ -65,6 +65,7 @@ from app.logging import set_correlation_id as bind_correlation_id
 from app.routes import activities as activity_routes
 from app.routes import auth as auth_routes
 from app.routes import contacts as contact_routes
+from app.routes import dashboard as dashboard_routes
 from app.routes import deals as deal_routes
 from app.routes import health as health_routes
 from app.routes.errors import (
@@ -500,6 +501,7 @@ def create_app(
   # a contact-scoped region and its sibling paths are declared there; the two
   # tables hold no overlapping path (slice-c.md §2(c)'s registration rule).
   application.include_router(activity_routes.router)
+  application.include_router(dashboard_routes.router)
 
   handlers: dict[Any, Any] = {
     StarletteHTTPException: http_exception_handler,

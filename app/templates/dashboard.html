@@ -1,0 +1,85 @@
+{#-  dashboard.html — CONTRACTS.md §8.2: `totals {visible_contacts,
+  open_count, open_amount, won_count, won_amount}`, `recent_activities
+  [{id, contact_id, contact_name, contact_owner_name, kind, occurred_on,
+  summary, author_name | None}]`, `is_empty: bool` — "three tiles and the
+  recent-activities list, no fourth tile (R16)".
+
+  No chart, no sparkline, no canvas (§7, and there is no JavaScript lane at
+  all). A tile is a number, its label and — for the two deal tiles — the €
+  total beside it, rendered through the `eur` filter from a Decimal the
+  engine summed. `scope_label` (CP-30/CP-31) is what tells an admin these
+  numbers cover every record and an agent that they cover their own.
+
+  The recent list links each row to its contact's workspace: an activity has
+  no page of its own (ACCESS_MATRIX.md §1.6), so the contact IS the record
+  link. The owner column renders for an admin only — an agent's rows are all
+  their own.
+
+  Illustrations follow R18: the empty state carries one, the populated page
+  carries none. Both SVGs already ship (ARTWORK_INVENTORY.md §3).
+-#}
+{% extends "base.html" %}
+{% block main %}
+<header class="page-header">
+  <h1>Dashboard</h1>
+  <p class="note">{{ scope_label }}</p>
+</header>
+{% include "partials/notice.html" %}
+
+{% if is_empty %}
+<div class="state-panel">
+  <img src="/static/img/empty-contacts.svg" alt="" width="200" height="160">
+  <h2 tabindex="-1">Nothing here yet</h2>
+  <p>No contacts yet. Add your first contact to start tracking deals and activity.</p>
+  <p class="state-panel-action"><a href="/contacts/new" class="btn btn-primary">Add contact</a></p>
+</div>
+{% else %}
+<section aria-labelledby="h-totals">
+  <h2 id="h-totals" class="sr-only">Totals</h2>
+  <ul class="stat-tiles">
+    <li class="stat-tile">
+      <p class="stat-tile-label">Contacts</p>
+      <p class="stat-tile-value">{{ totals.visible_contacts }}</p>
+      <p class="stat-tile-note"><a href="/contacts">View contacts</a></p>
+    </li>
+    <li class="stat-tile">
+      <p class="stat-tile-label">Open deals</p>
+      <p class="stat-tile-value">{{ totals.open_count }}</p>
+      <p class="stat-tile-note">{{ totals.open_amount|eur }} · <a href="/deals/pipeline">View pipeline</a></p>
+    </li>
+    <li class="stat-tile">
+      <p class="stat-tile-label">Won deals</p>
+      <p class="stat-tile-value">{{ totals.won_count }}</p>
+      <p class="stat-tile-note">{{ totals.won_amount|eur }} · <a href="/deals?stage=won">View won deals</a></p>
+    </li>
+  </ul>
+</section>
+
+<section class="dashboard-recent" aria-labelledby="h-recent">
+  <h2 id="h-recent">Recent activity</h2>
+  {% if recent_activities %}
+  <ol class="timeline-list">
+    {% for item in recent_activities %}
+    <li class="timeline-item">
+      <span class="timeline-icon" aria-hidden="true"><svg class="icon" aria-hidden="true"><use href="/static/img/icons.svg#icon-activity-{{ item.kind }}"></use></svg></span>
+      <div class="timeline-body">
+        <p class="timeline-meta"><span class="timeline-kind-label">{{ item.kind_label }}</span> ·
+          <a href="{{ item.contact_url }}">{{ item.contact_name }}</a> ·
+          <time datetime="{{ item.occurred_on.isoformat() }}">{{ item.occurred_on|day }}</time> ·
+          {% if item.author_name %}by {{ item.author_name }}{% else %}by removed user{% endif %}
+          {%- if principal.is_admin %} · <span class="chip chip-owner">{{ item.contact_owner_name }}</span>{% endif %}</p>
+        <p class="timeline-summary">{{ item.summary }}</p>
+      </div>
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <div class="state-panel state-panel-region">
+    <img src="/static/img/empty-activities.svg" alt="" width="200" height="160">
+    <h3 tabindex="-1">No activity yet</h3>
+    <p>No activity yet. Log a call, meeting, email or note to build the history.</p>
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

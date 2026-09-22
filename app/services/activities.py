@@ -74,6 +74,7 @@ __all__ = [
   "TimelineView",
   "log_activity",
   "recent_for_dashboard",
+  "recent_item",
   "timeline_for_contact",
 ]
 
@@ -261,7 +262,7 @@ def _item(row: ActivityRow) -> ActivityItemView:
   )
 
 
-def _recent(row: RecentRow) -> RecentItemView:
+def recent_item(row: RecentRow) -> RecentItemView:
   """Build one dashboard recent-activity entry from a repository row."""
   return RecentItemView(
     id=row.id,
@@ -323,7 +324,7 @@ async def recent_for_dashboard(
   async def _read(conn: PoolConnection) -> tuple[RecentRow, ...]:
     return await activities_repo.recent_for_dashboard(conn, scope, limit=limit)
 
-  return tuple(_recent(row) for row in await runner.read_committed(_read, op="activity-recent"))
+  return tuple(recent_item(row) for row in await runner.read_committed(_read, op="activity-recent"))
 
 
 async def _blocked_parent(conn: PoolConnection, scope: Scope, *, contact_id: UUID) -> Blocked:
