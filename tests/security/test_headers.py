@@ -1,15 +1,14 @@
-"""Response headers — SEC-026, SEC-027, SEC-028, SEC-070 through SEC-076.
+"""Response headers: CSP, HSTS, Permissions-Policy, frame/referrer/CORS and error-page hygiene.
 
-Authority: ``ACCESS_MATRIX.md`` §7; ``slice-a.md`` §2.6 (the exact header
-table), ruling **R49** (``img-src`` drops ``data:`` — nothing ships a
-``data:`` image) and ruling **R50** (``Referrer-Policy: same-origin``, never
-``no-referrer``: per the Fetch standard a browser serialises ``Origin`` as
-the literal string ``"null"`` on a non-``GET``/``HEAD`` request whose
-referrer policy is ``no-referrer``, so an exact-``Origin`` check at step 0a
-would refuse every real-browser form ``POST`` — reproduced live against
-headless Chromium in Slice A gate round 1). One assertion per directive, on
-a private page, the login page and an error page, per ``PLAN.md`` §6's
-security-gate description.
+The exact header table is asserted byte for byte. Two notes on choices:
+``img-src`` drops ``data:`` because nothing ships a ``data:`` image, and
+``Referrer-Policy`` is ``same-origin`` rather than ``no-referrer`` because,
+per the Fetch standard, a browser serialises ``Origin`` as the literal
+string ``"null"`` on a non-``GET``/``HEAD`` request whose referrer policy
+is ``no-referrer`` — an exact-``Origin`` check at the request-origin gate
+would then refuse every real-browser form ``POST`` (reproduced live
+against headless Chromium). One assertion per directive, on a private
+page, the login page and an error page.
 """
 
 from __future__ import annotations
@@ -44,7 +43,7 @@ async def _pages(
   return [private, login, error]
 
 
-async def test_sec070_csp_is_the_exact_pinned_value_on_every_kind_of_page(
+async def test_csp_is_the_exact_pinned_value_on_every_kind_of_page(
   admin_session: httpx.AsyncClient, http_client_factory: Any
 ) -> None:
   """The exact CSP string, byte for byte, on a private page, login and an error page."""
@@ -52,7 +51,7 @@ async def test_sec070_csp_is_the_exact_pinned_value_on_every_kind_of_page(
     assert response.headers.get("content-security-policy") == _EXPECTED_CSP
 
 
-async def test_sec071_x_content_type_options_nosniff_on_every_kind_of_page(
+async def test_x_content_type_options_nosniff_on_every_kind_of_page(
   admin_session: httpx.AsyncClient, http_client_factory: Any
 ) -> None:
   """``X-Content-Type-Options: nosniff`` on every response."""
@@ -60,7 +59,7 @@ async def test_sec071_x_content_type_options_nosniff_on_every_kind_of_page(
     assert response.headers.get("x-content-type-options") == "nosniff"
 
 
-async def test_sec072_strict_transport_security_present_on_every_kind_of_page(
+async def test_strict_transport_security_present_on_every_kind_of_page(
   admin_session: httpx.AsyncClient, http_client_factory: Any
 ) -> None:
   """HSTS header present with the pinned ``max-age`` and ``includeSubDomains``, no ``preload``."""
@@ -71,7 +70,7 @@ async def test_sec072_strict_transport_security_present_on_every_kind_of_page(
     assert "preload" not in hsts
 
 
-async def test_sec073_permissions_policy_is_the_exact_pinned_value(
+async def test_permissions_policy_is_the_exact_pinned_value(
   admin_session: httpx.AsyncClient, http_client_factory: Any
 ) -> None:
   """The exact restrictive ``Permissions-Policy`` string on every kind of page."""
@@ -79,7 +78,7 @@ async def test_sec073_permissions_policy_is_the_exact_pinned_value(
     assert response.headers.get("permissions-policy") == _EXPECTED_PERMISSIONS_POLICY
 
 
-async def test_sec026_frame_ancestors_none_on_every_kind_of_page(
+async def test_frame_ancestors_none_on_every_kind_of_page(
   admin_session: httpx.AsyncClient, http_client_factory: Any
 ) -> None:
   """``frame-ancestors 'none'`` is in the CSP on every response, paired with ``X-Frame-Options``."""
@@ -88,15 +87,15 @@ async def test_sec026_frame_ancestors_none_on_every_kind_of_page(
     assert response.headers.get("x-frame-options") == "DENY"
 
 
-async def test_sec027_referrer_policy_same_origin_on_every_kind_of_page(
+async def test_referrer_policy_same_origin_on_every_kind_of_page(
   admin_session: httpx.AsyncClient, http_client_factory: Any
 ) -> None:
-  """``Referrer-Policy: same-origin`` (R50) on every response, never ``no-referrer``."""
+  """``Referrer-Policy: same-origin`` on every response, never ``no-referrer``."""
   for response in await _pages(admin_session, http_client_factory):
     assert response.headers.get("referrer-policy") == "same-origin"
 
 
-async def test_sec028_no_credential_or_token_ever_appears_as_a_query_parameter() -> None:
+async def test_no_credential_or_token_ever_appears_as_a_query_parameter() -> None:
   """The rendered login form's action carries no query string (static, no live session needed).
 
   ``auth/login.html``'s ``<form ... action="/login">`` names no ``?``.
@@ -110,7 +109,7 @@ async def test_sec028_no_credential_or_token_ever_appears_as_a_query_parameter()
   assert 'action="/login?' not in login_html
 
 
-async def test_sec074_no_directory_listing_is_served_for_static(
+async def test_no_directory_listing_is_served_for_static(
   http_client_factory: Any,
 ) -> None:
   """``GET /static/`` (no filename) never returns a directory listing."""
@@ -120,7 +119,7 @@ async def test_sec074_no_directory_listing_is_served_for_static(
   assert "Index of" not in response.text
 
 
-async def test_sec075_an_unsupported_method_is_405_with_no_disclosure(
+async def test_an_unsupported_method_is_405_with_no_disclosure(
   http_client_factory: Any,
 ) -> None:
   """``TRACE /login`` is ``405`` (or ``404``), never a body echoing the request."""
@@ -129,20 +128,20 @@ async def test_sec075_an_unsupported_method_is_405_with_no_disclosure(
   assert response.status_code in (404, 405)
 
 
-async def test_sec063_docs_routes_are_404_on_a_server_whose_lifespan_ran(
+async def test_docs_routes_are_404_on_a_server_whose_lifespan_ran(
   http_client_factory: Any,
 ) -> None:
   """``/docs``, ``/redoc`` and ``/openapi.json`` are ``404`` over a live, lifespan-backed server.
 
   Complements ``tests/arch/test_gates.py``'s
-  ``test_sec063_docs_routes_are_404_in_the_shipped_configuration``, which
-  asserts on the constructed ``FastAPI`` object without ever entering the
-  lifespan (``app.state.context`` stays unset, so no live request could be
-  made there without hitting ``OriginHostMiddleware``'s ``503`` "not
-  provisioned" path — not the ``404`` this ID actually names). ``live_server``
-  (via ``http_client_factory``) already waited for ``/health/live`` and ran
-  ``manage set-origin`` before this test runs, so its lifespan has
-  genuinely started: this is the live half SEC-063 needs.
+  ``test_docs_routes_are_404_in_the_shipped_configuration``, which asserts
+  on the constructed ``FastAPI`` object without ever entering the lifespan
+  (``app.state.context`` stays unset, so no live request could be made
+  there without hitting the origin/host middleware's ``503`` "not
+  provisioned" path — not the ``404`` this test actually needs).
+  ``live_server`` (via ``http_client_factory``) already waited for
+  ``/health/live`` and ran ``manage set-origin`` before this test runs, so
+  its lifespan has genuinely started: this is the live half that needs.
   """
   client: httpx.AsyncClient = http_client_factory()
   for path in ("/docs", "/redoc", "/openapi.json"):
@@ -150,11 +149,11 @@ async def test_sec063_docs_routes_are_404_on_a_server_whose_lifespan_ran(
     assert response.status_code == 404, f"{path} did not 404 (got {response.status_code})"
 
 
-# SEC-076 (repeated allowlisted query parameter -> 400) has no assertion
-# surface in Slice A: the allowlisted keys it governs (sort, dir, status,
-# kind, stage, page) belong to list/search/pagination routes that do not
-# exist until Slices B-D. Slice A's own routes (login, account/password,
-# logout, health) take no allowlisted query key at all, so a test written
-# against them would not exercise the control this ID names. Left
+# A repeated allowlisted query parameter -> 400 has no assertion surface
+# here: the allowlisted keys it governs (sort, dir, status, kind, stage,
+# page) belong to list/search/pagination routes that this module's routes
+# (login, account/password, logout, health) do not have — a test written
+# against them would not exercise the control this describes. Left
 # deliberately unwritten here rather than asserting something that isn't
-# the real behaviour; NOT VERIFIED until a later slice adds such a route.
+# the real behaviour; NOT VERIFIED until a route with such a parameter is
+# added elsewhere in this suite.

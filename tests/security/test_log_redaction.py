@@ -1,22 +1,21 @@
-"""Log redaction — SEC-060, SEC-061, SEC-062.
+"""Log redaction.
 
-Authority: ``ACCESS_MATRIX.md`` §7; ``slice-a.md`` §1.1 (``app/logging.py``
-record keys, exactly ``ts, level, event, method, path, status, duration_ms,
-correlation_id, actor_id`` — never a body, cookie, header, SQL text,
-traceback, password or query string).
+The structured log record keys are exactly ``ts, level, event, method, path,
+status, duration_ms, correlation_id, actor_id`` — never a body, cookie,
+header, SQL text, traceback, password or query string.
 
 Drives a failed login (401), a spoofed-``Host`` request (403) and an
 unknown path (404) through ``live_server`` and reads its own ``log_path``
 (the uvicorn subprocess's combined stdout/stderr) — the whole process
-stream, per SEC-061's widened scope, not only ``app/logging.py``'s
-formatter. Never prints that stream's contents; only asserts on it.
+stream, not only the log formatter. Never prints that stream's contents;
+only asserts on it.
 
-**The 500 and 503 legs are NOT VERIFIED here.** Slice A ships no
-fault-injection hook (a way to force an internal error on demand without
-also breaking the fixtures that provision the test itself), so this module
-cannot honestly claim to have driven either. A later slice or a dedicated
-fault-injection fixture should close this gap rather than this file
-asserting something it never actually forced.
+**The 500 and 503 legs are NOT VERIFIED here.** There is no fault-injection
+hook yet (a way to force an internal error on demand without also breaking
+the fixtures that provision the test itself), so this module cannot
+honestly claim to have driven either. A dedicated fault-injection fixture
+should close this gap rather than this file asserting something it never
+actually forced.
 """
 
 from __future__ import annotations
@@ -28,7 +27,7 @@ from conftest import LiveServer, extract_csrf_token
 pytestmark = pytest.mark.asyncio
 
 #: A distinctive fictional term, chosen so it cannot appear in the stream by
-#: coincidence — SEC-061's own worked example.
+#: coincidence.
 _DISTINCTIVE_TERM = "zarquon-x7f3@example.test"
 _DISTINCTIVE_PASSWORD = "zarquon-secret-passphrase-9f2e"
 
@@ -53,7 +52,7 @@ def _assert_absent(haystack: bytes, needle: str, *, label: str) -> None:
     pytest.fail(f"{label} leaked into the process log stream (content redacted from this report)")
 
 
-async def test_sec061_a_failed_login_leaks_no_password_or_cookie(
+async def test_a_failed_login_leaks_no_password_or_cookie(
   live_server: LiveServer, http_client_factory: object
 ) -> None:
   """A failed login with a distinctive password leaves no trace of it in the log stream."""
@@ -75,16 +74,14 @@ async def test_sec061_a_failed_login_leaks_no_password_or_cookie(
     _assert_absent(stream, cookie_value, label="the raw session cookie value")
 
 
-async def test_sec061_positive_the_structured_record_strips_the_query_string(
+async def test_positive_the_structured_record_strips_the_query_string(
   live_server: LiveServer, http_client_factory: object
 ) -> None:
-  """A request to ``/contacts?q=<distinctive>`` logs ``path`` with the query string stripped.
+  """A request to a path carrying a distinctive query string logs ``path`` with it stripped.
 
-  R1's positive half: proves the replacement for uvicorn's own access line
-  does not reintroduce the leak it was added to close. ``/contacts`` is not
-  a Slice A route, so this drives the closest Slice A equivalent —
-  ``/login?next=...`` — and asserts the distinctive value is absent from
-  the stream, which is the same property over an available route.
+  Proves the replacement for uvicorn's own access line does not reintroduce
+  the leak it was added to close, by driving it through ``/login?next=...``
+  and asserting the distinctive value is absent from the stream.
   """
   client: httpx.AsyncClient = http_client_factory()  # type: ignore[operator]
   await client.get("/login", params={"next": f"/{_DISTINCTIVE_TERM}"})
@@ -92,7 +89,7 @@ async def test_sec061_positive_the_structured_record_strips_the_query_string(
   _assert_absent(stream, _DISTINCTIVE_TERM, label="the query string value")
 
 
-async def test_sec061_a_spoofed_host_403_leaks_nothing_either(
+async def test_a_spoofed_host_403_leaks_nothing_either(
   live_server: LiveServer, http_client_factory: object
 ) -> None:
   """The step-0 403 for a spoofed ``Host`` leaves no trace of the spoofed value in the stream."""
@@ -108,7 +105,7 @@ async def test_sec061_a_spoofed_host_403_leaks_nothing_either(
   _assert_absent(stream, spoofed_host, label="the spoofed Host value")
 
 
-async def test_sec062_error_pages_carry_only_a_correlation_id(
+async def test_error_pages_carry_only_a_correlation_id(
   http_client_factory: object,
 ) -> None:
   """A 404 page's body carries a correlation id and no other diagnostic detail."""
@@ -126,7 +123,7 @@ async def test_sec062_error_pages_carry_only_a_correlation_id(
   assert uuid_pattern.search(body) is not None, "no correlation id found in the error page body"
 
 
-async def test_sec060_crlf_in_a_login_field_cannot_forge_a_log_line(
+async def test_crlf_in_a_login_field_cannot_forge_a_log_line(
   live_server: LiveServer, http_client_factory: object
 ) -> None:
   """A CRLF-laced email field cannot inject a fabricated JSON log line."""

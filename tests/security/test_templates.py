@@ -1,16 +1,13 @@
-"""Template-level static and rendering checks — SEC-005, SEC-018, delta D11.
+"""Template-level static and rendering checks: XSS escaping, paste/password-manager, strict context.
 
-Authority: ``ACCESS_MATRIX.md`` §7 (SEC-005, SEC-018); ``slice-a.md`` §6 D11
-(the explicit Jinja environment: ``FileSystemLoader``, ``autoescape=True``,
-``undefined=StrictUndefined``, ``auto_reload=False``).
-
-These run against the templates the Frontend lane has already shipped
+These run against the shipped templates
 (``app/templates/auth/login.html``, ``app/templates/auth/change_password.html``),
-using a **locally constructed** Jinja environment that mirrors D11 exactly.
-This proves the templates behave correctly *under* that environment; it is
-not proof that ``app/main.py`` actually builds its ``Jinja2Templates`` this
-way, since ``app/main.py`` does not exist yet — that half stays
-NOT VERIFIED and is not claimed here.
+using a **locally constructed** Jinja environment that mirrors the real one
+exactly: ``FileSystemLoader``, ``autoescape=True``,
+``undefined=StrictUndefined``, ``auto_reload=False``. This proves the
+templates behave correctly *under* that environment; it is not proof that
+``app/main.py`` actually builds its ``Jinja2Templates`` this way — that half
+stays NOT VERIFIED and is not claimed here.
 """
 
 from __future__ import annotations
@@ -27,12 +24,12 @@ TEMPLATES_DIR = APP_DIR / "templates"
 _LOGIN_TEMPLATE = "auth/login.html"
 _CHANGE_PASSWORD_TEMPLATE = "auth/change_password.html"
 
-#: The five field-input source files SEC-018 and SEC-005 read directly.
+#: The two field-input source files these tests read directly.
 _PASSWORD_BEARING_TEMPLATES = (_LOGIN_TEMPLATE, _CHANGE_PASSWORD_TEMPLATE)
 
 
-def _d11_environment() -> jinja2.Environment:
-  """Build the exact environment delta D11 pins.
+def _jinja_environment() -> jinja2.Environment:
+  """Build the exact environment the shipped app configures.
 
   Returns
   -------
@@ -49,7 +46,7 @@ def _d11_environment() -> jinja2.Environment:
 
 
 def _base_context(**overrides: Any) -> dict[str, Any]:
-  """The frozen base context (``base.html``'s own docstring / CONTRACTS.md §8.1).
+  """The frozen base context (``base.html``'s own docstring).
 
   Parameters
   ----------
@@ -76,7 +73,7 @@ def _base_context(**overrides: Any) -> dict[str, Any]:
 
 
 def _login_context(**overrides: Any) -> dict[str, Any]:
-  """The login page's context, beyond the base (``slice-a.md`` §4 route table)."""
+  """The login page's context, beyond the base."""
   context = _base_context(
     form={"email": ""},
     errors={},
@@ -104,7 +101,7 @@ def _change_password_context(**overrides: Any) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# SEC-005 — stored/reflected XSS renders inert.
+# Stored/reflected XSS renders inert.
 # ---------------------------------------------------------------------------
 
 _XSS_CORPUS: tuple[str, ...] = (
@@ -142,24 +139,24 @@ def _assert_rendered_inert(html: str, payload: str) -> None:
 
 
 @pytest.mark.parametrize("payload", _XSS_CORPUS)
-def test_sec005_login_email_field_renders_the_xss_corpus_inert(payload: str) -> None:
+def test_login_email_field_renders_the_xss_corpus_inert(payload: str) -> None:
   """A hostile ``form.email`` value never reaches the response as live markup."""
-  environment = _d11_environment()
+  environment = _jinja_environment()
   template = environment.get_template(_LOGIN_TEMPLATE)
   html = template.render(**_login_context(form={"email": payload}))
   _assert_rendered_inert(html, payload)
 
 
 @pytest.mark.parametrize("payload", _XSS_CORPUS)
-def test_sec005_change_password_error_text_renders_the_xss_corpus_inert(payload: str) -> None:
+def test_change_password_error_text_renders_the_xss_corpus_inert(payload: str) -> None:
   """A hostile validation-error message never reaches the response as live markup."""
-  environment = _d11_environment()
+  environment = _jinja_environment()
   template = environment.get_template(_CHANGE_PASSWORD_TEMPLATE)
   html = template.render(**_change_password_context(errors={"new_password": [payload]}))
   _assert_rendered_inert(html, payload)
 
 
-def test_sec005_autoescape_holds_without_any_explicit_escape_call() -> None:
+def test_autoescape_holds_without_any_explicit_escape_call() -> None:
   """The template source names no ``|e``/``|escape``/``safe`` — autoescape alone must carry it."""
   for name in _PASSWORD_BEARING_TEMPLATES:
     source = (TEMPLATES_DIR / name).read_text(encoding="utf-8")
@@ -168,7 +165,7 @@ def test_sec005_autoescape_holds_without_any_explicit_escape_call() -> None:
 
 
 # ---------------------------------------------------------------------------
-# SEC-018 — paste and password managers permitted.
+# Paste and password managers permitted.
 # ---------------------------------------------------------------------------
 
 _FORBIDDEN_PASTE_BLOCKERS = (
@@ -182,21 +179,21 @@ _FORBIDDEN_PASTE_BLOCKERS = (
 
 
 @pytest.mark.parametrize("name", _PASSWORD_BEARING_TEMPLATES)
-def test_sec018_no_paste_or_password_manager_blocker_in_source(name: str) -> None:
+def test_no_paste_or_password_manager_blocker_in_source(name: str) -> None:
   """Neither template carries a paste-blocking handler, ``autocomplete="off"`` or ``readonly``."""
   source = (TEMPLATES_DIR / name).read_text(encoding="utf-8")
   for forbidden in _FORBIDDEN_PASTE_BLOCKERS:
     assert forbidden not in source, f"{name} contains forbidden {forbidden!r}"
 
 
-def test_sec018_login_password_field_is_autocomplete_current_password() -> None:
+def test_login_password_field_is_autocomplete_current_password() -> None:
   """The login password field is ``autocomplete="current-password"``, not blocked."""
   source = (TEMPLATES_DIR / _LOGIN_TEMPLATE).read_text(encoding="utf-8")
   assert 'name="password"' in source
   assert 'autocomplete="current-password"' in source
 
 
-def test_sec018_change_password_fields_use_the_contracted_autocomplete_values() -> None:
+def test_change_password_fields_use_the_contracted_autocomplete_values() -> None:
   """Current password is ``current-password``; both new/confirm fields are ``new-password``."""
   source = (TEMPLATES_DIR / _CHANGE_PASSWORD_TEMPLATE).read_text(encoding="utf-8")
   assert source.count('autocomplete="new-password"') == 2
@@ -204,28 +201,28 @@ def test_sec018_change_password_fields_use_the_contracted_autocomplete_values() 
   assert 'autocomplete="current-password"' in source
 
 
-def test_sec018_a_pasted_value_arrives_intact_in_the_rendered_value_attribute() -> None:
+def test_a_pasted_value_arrives_intact_in_the_rendered_value_attribute() -> None:
   """The rendered ``value`` attribute round-trips a distinctive string byte for byte (escaped only).
 
-  This is the template-rendering half of SEC-018's "a paste into each is
+  This is the template-rendering half of "a paste into each field is
   asserted to arrive intact in the submitted body" — the browser half (an
   actual paste event) needs Playwright and is covered in ``tests/e2e``.
   """
   distinctive = "pasted+value@example.test"
-  environment = _d11_environment()
+  environment = _jinja_environment()
   template = environment.get_template(_LOGIN_TEMPLATE)
   html = template.render(**_login_context(form={"email": distinctive}))
   assert f'value="{distinctive}"' in html
 
 
 # ---------------------------------------------------------------------------
-# D11 — StrictUndefined turns a missing context key into a loud failure.
+# StrictUndefined turns a missing context key into a loud failure.
 # ---------------------------------------------------------------------------
 
 
-def test_d11_strict_undefined_raises_on_a_missing_context_key() -> None:
+def test_strict_undefined_raises_on_a_missing_context_key() -> None:
   """Omitting a required context key raises ``UndefinedError`` rather than rendering blank."""
-  environment = _d11_environment()
+  environment = _jinja_environment()
   template = environment.get_template(_LOGIN_TEMPLATE)
   incomplete_context = _login_context()
   del incomplete_context["signed_out"]
@@ -233,9 +230,9 @@ def test_d11_strict_undefined_raises_on_a_missing_context_key() -> None:
     template.render(**incomplete_context)
 
 
-def test_d11_every_shipped_template_renders_with_no_missing_key_under_a_full_context() -> None:
+def test_every_shipped_template_renders_with_no_missing_key_under_a_full_context() -> None:
   """Sanity check: the two auth templates render cleanly given their documented full context."""
-  environment = _d11_environment()
+  environment = _jinja_environment()
   login_html = environment.get_template(_LOGIN_TEMPLATE).render(**_login_context())
   assert "<h1>Sign in</h1>" in login_html
   change_password_html = environment.get_template(_CHANGE_PASSWORD_TEMPLATE).render(
