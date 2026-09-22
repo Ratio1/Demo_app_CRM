@@ -84,10 +84,21 @@ async def test_sec001_sqli_corpus_in_create_fields_changes_no_query_semantics(
 async def test_sec001_sqli_corpus_in_search_q_changes_no_query_semantics(
   agent_a: LoggedInPrincipal, payload: str
 ) -> None:
-  """An SQLi payload in `?q=` never produces a `500` and never widens the result set."""
+  """An SQLi payload in `?q=` never produces a `500` and never widens the result set.
+
+  Does **not** assert the payload is absent from the body: `query.q` is a
+  frozen context key (`CONTRACTS.md` §8.2) and the search box legitimately
+  echoes back whatever was submitted, HTML-escaped, in its `value="..."`
+  attribute — a corpus entry with no HTML metacharacter (for example
+  ``1; SELECT pg_sleep(5)--``) is therefore unchanged by escaping and
+  appears verbatim with no defect. What the docstring actually promises —
+  no `500`, no widened result set — is what is checked: `agent_a` owns no
+  contact this payload could legitimately match, so a clean scoped search
+  must land on the `no_results` panel.
+  """
   response = await agent_a.client.get("/contacts", params={"q": payload})
   assert response.status_code == 200
-  assert payload not in response.text
+  assert "No contacts match this search." in response.text
 
 
 @pytest.mark.parametrize("payload", _SQLI_CORPUS)
