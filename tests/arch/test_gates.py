@@ -147,6 +147,26 @@ def test_arc008_routes_never_import_repositories() -> None:
 
 _SAFE_METHODS = {"get", "head"}
 
+#: ``ACCESS_MATRIX.md`` §7 ``ARC-003``: *"The mutating names are exactly
+#: `create_contact`, `update_contact`, `archive_contact`, `restore_contact`,
+#: `reassign_contact` — the gate can read that list."* The gate's scope
+#: **is** the assertion (§7's own wording, echoing the P1 final fix round):
+#: a GET/HEAD handler calling a **read** service function — `list_contacts`,
+#: `get_for_detail`, `build_contact_query`, all of `app/services/contacts.py`
+#: — is the ordinary, contracted shape of Slice B's own list/detail/edit-form
+#: routes, not a violation. Extend this set, never widen it back to "every
+#: name imported from `app.services`", as later slices add their own
+#: mutations (`deal_*`, `activity_create`).
+_SERVICE_MUTATION_NAMES: Final[frozenset[str]] = frozenset(
+  {
+    "create_contact",
+    "update_contact",
+    "archive_contact",
+    "restore_contact",
+    "reassign_contact",
+  }
+)
+
 
 def _route_method_decorators(function_def: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
   """Return the lower-cased HTTP verbs a function is registered for, from its decorators.
@@ -168,30 +188,49 @@ def _route_method_decorators(function_def: ast.FunctionDef | ast.AsyncFunctionDe
 
 
 def _service_call_names(tree: ast.Module, module_path: Path) -> set[str]:
-  """Return the local names this file bound to something imported from ``app.services``."""
+  """Return the local names this file bound to a service **mutation** import.
+
+  Scoped to :data:`_SERVICE_MUTATION_NAMES` (``ACCESS_MATRIX.md`` §7
+  ``ARC-003``'s own wording) — not every name imported from
+  ``app.services``. A GET/HEAD route legitimately imports and calls a
+  **read** service function (Slice B's `list_contacts`/`get_for_detail`,
+  by contract); only a mutation import is this gate's business.
+  """
   names: set[str] = set()
   for node in ast.walk(tree):
     if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("app.services"):
       for alias in node.names:
-        names.add(alias.asname or alias.name)
+        bound = alias.asname or alias.name
+        if alias.name in _SERVICE_MUTATION_NAMES:
+          names.add(bound)
     elif isinstance(node, ast.Import):
       for alias in node.names:
         if alias.name.startswith("app.services"):
+          # A bare `import app.services.x` binds the module, not a function
+          # name, so no individual mutation name can be resolved from the
+          # import alone — the call-site check below still catches
+          # `contacts.create_contact(...)` through the attribute form.
           names.add(alias.asname or alias.name.split(".")[0])
   del module_path
   return names
 
 
 def test_arc003_no_get_or_head_handler_directly_calls_a_services_import() -> None:
-  """No ``GET``/``HEAD`` handler's own body directly calls a name imported from ``app.services``.
+  """No ``GET``/``HEAD`` handler's own body directly calls a service **mutation**.
 
   Heuristic, documented rather than overclaimed: this checks direct calls in
   the handler's own body, one level deep. It does not follow calls into a
   helper function defined elsewhere in the same file or in another module,
   so it cannot by itself prove the full transitive-call-graph claim
   ``ACCESS_MATRIX.md`` ARC-003 makes; it is the cheap static half that a
-  route calling a service *directly* — the overwhelmingly common shape in
-  this codebase's module map — is caught immediately.
+  route calling a service *mutation* **directly** — the overwhelmingly
+  common shape in this codebase's module map — is caught immediately.
+  Scoped to :data:`_SERVICE_MUTATION_NAMES`, exactly as ``ACCESS_MATRIX.md``
+  §7 states the gate's own scope: a GET/HEAD handler calling a **read**
+  service function is the ordinary, contracted shape of a list/detail/
+  edit-form route, not a violation (Slice B's `list_contacts`/
+  `get_for_detail`, called from `contacts_page`/`contact_detail`/
+  `contact_edit`).
   """
   route_files = _python_files_under(ROUTES_DIR)
   assert route_files, f"{ROUTES_DIR} does not exist yet (Backend lane pending)"
