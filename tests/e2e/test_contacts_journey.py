@@ -219,7 +219,13 @@ def test_prd010_create_view_edit_stale_recovery_archive_restore(
   tab_two.get_by_role("button", name="Save contact").click()
   stale_heading = tab_two.get_by_role("heading", name="This record changed while you were editing")
   expect(stale_heading).to_be_visible()
-  expect(tab_two.get_by_label("Company")).to_have_value("Loser Submitted Co")
+  # errors/409.html's `stale` context is a read-only diff (`fields
+  # [{label, submitted, current, differs}]`, CONTRACTS.md §8.4) plus a
+  # `keep_form` of HIDDEN inputs — there is no editable, labelled
+  # "Company" field on this recovery screen to hold a value; the
+  # submitted value is shown as text in the "Your changes" column.
+  your_changes = tab_two.get_by_role("region", name="Your changes")
+  expect(your_changes.get_by_text("Loser Submitted Co")).to_be_visible()
   tab_two.get_by_role("button", name="Keep my changes").click()
   expect(tab_two).to_have_url(re.compile(r"notice=contact_saved"))
   expect(tab_two.get_by_text("Loser Submitted Co")).to_be_visible()
@@ -263,19 +269,42 @@ def test_keyboard_only_through_the_list_filter_and_pagination_region(
   del password
 
   page.goto(f"{live_server.base_url}/contacts")
-  expect(page.get_by_role("heading", name="Contacts")).to_be_visible()
+  # `exact=True`: on an empty result set, "Filter contacts" (the filter
+  # disclosure's sr-only heading) and "No contacts yet" both contain
+  # "Contacts" as a substring and would otherwise make this locator
+  # ambiguous (Playwright strict mode).
+  expect(page.get_by_role("heading", name="Contacts", exact=True)).to_be_visible()
 
-  # The filter bar lives inside a closed <details class="filter-disclosure">
-  # at every viewport (`app/templates/contacts/list.html`) — its "Search"
-  # field is not interactable until the <summary> opens it.
-  page.get_by_text("Search and filters", exact=False).click()
+  # The filter bar lives inside a <details class="filter-disclosure">
+  # (`app/templates/contacts/list.html`). Below 1024px it is a real,
+  # closed toggle — its "Search" field is not interactable until the
+  # <summary> opens it. At >=1024px (this test's default, unset
+  # viewport) `app.css`'s `@media (min-width: 1024px)` block hides the
+  # <summary> and force-unwraps the content via `::details-content`
+  # (UI_SPEC §4.11 / R23's boundary), so the field is already visible
+  # and clicking the hidden toggle would hang. Handle both without
+  # hard-coding a viewport assumption.
+  search_toggle = page.get_by_text("Search and filters", exact=False)
+  if search_toggle.is_visible():
+    search_toggle.click()
   search_box = page.get_by_label("Search")
   search_box.click()
   page.keyboard.type("zzz-no-such-contact-zzz")
   page.keyboard.press("Enter")
-  expect(page.get_by_text("No contacts match this search")).to_be_visible()
+  # `partials/contact_results.html` renders "No contacts match this
+  # search" three times over (the region's own `<h2>`, its body `<p>`,
+  # and the OOB `#announce` live region carrying the same string for
+  # screen readers, `CONTRACTS.md` §8.3) -- an unscoped text locator is
+  # ambiguous (Playwright strict mode). The heading is the one the R24
+  # focus-move region itself carries, so it is the unambiguous target.
+  expect(page.get_by_role("heading", name="No contacts match this search")).to_be_visible()
 
-  page.get_by_role("link", name="Clear filters").click()
+  # Same "Clear filters" link (`results.clear_url`) is rendered twice --
+  # once beside the filter form (`contacts/list.html`) and once as the
+  # no-results panel's own CTA (`partials/contact_results.html`) -- an
+  # unscoped role locator is ambiguous (Playwright strict mode). The
+  # no-results panel's copy is the one this step is actually exercising.
+  page.locator("#contact-results").get_by_role("link", name="Clear filters").click()
   expect(page).to_have_url(f"{live_server.base_url}/contacts")
 
   # R24: on a result set with no further page, the "Next" control does not
