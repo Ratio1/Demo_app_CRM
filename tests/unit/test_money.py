@@ -20,8 +20,10 @@ from __future__ import annotations
 import pytest
 
 #: `(raw, expected constant NAME)` — the *name* is looked up on the module
-#: inside the test body, never at collection time.
-_AMOUNT_REJECTIONS: tuple[tuple[str, str], ...] = (
+#: inside the test body, never at collection time. `raw` is `str | None`
+#: because the last case below is the missing-field shape (`None`, not
+#: `""`), which `parse_amount` must classify identically to the empty string.
+_AMOUNT_REJECTIONS: tuple[tuple[str | None, str], ...] = (
   ("", "CP_68_AMOUNT_REQUIRED"),
   ("-1.00", "CP_69_AMOUNT_NEGATIVE"),
   ("1.005", "CP_69A_TOO_MANY_DECIMALS"),
@@ -63,7 +65,11 @@ def test_parse_amount_accepts_every_valid_shape_as_a_decimal(raw: str) -> None:
 
   result = parse_amount(raw)
   assert isinstance(result, Decimal), f"{raw!r} should have parsed, got {result!r}"
-  assert not isinstance(result, float)
+  # mypy (warn_unreachable): once narrowed to Decimal, a float instance is
+  # statically impossible (the two are unrelated extension types that cannot
+  # share a subclass) — but ARC-021 pins "never a float" as the property
+  # under test, so the runtime check stays as explicit, readable evidence.
+  assert not isinstance(result, float)  # type: ignore[unreachable]
 
 
 def test_parse_amount_10000000000_00_is_rejected_but_9999999999_99_is_accepted() -> None:
