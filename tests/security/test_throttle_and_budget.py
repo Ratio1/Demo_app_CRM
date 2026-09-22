@@ -111,12 +111,15 @@ def _reset_throttle_and_budget_between_tests(
   (``pytest tests/security/test_throttle_and_budget.py``), not only as
   part of the full suite — verified: schema/data isolation hold either
   way. ``test_sec034`` is a separate matter regardless of scope: it drives
-  10 genuinely concurrent Argon2 hashes against a real, timed queue depth,
-  so whether the 10th actually overflows it depends on ambient system
-  load at the moment it runs, not on this fixture or on standalone vs.
-  full-suite invocation — observed passing in both shapes, and also
-  observed to flake once in a standalone module run under load from other
-  back-to-back suite runs on the same machine.
+  10 genuinely concurrent Argon2 hashes against a real, timed queue depth.
+  An earlier revision staged its 10 attempts as free-running
+  ``GET``-then-``POST`` pairs under one ``asyncio.gather`` and that shape
+  flaked roughly 1 run in 3, standalone or full-suite, independent of this
+  fixture; the test now fetches every CSRF token first and releases all
+  ten ``POST``s together through an ``asyncio.Barrier``, which removed the
+  flake across 6/6 standalone reruns and a full-suite run. See the test's
+  own docstring for the detail; this fixture's before/after clear is
+  unrelated to that timing and was never the cause.
   """
   _clear_throttle_and_budget_state(log_path=tmp_path / "clear-before.log")
   yield
