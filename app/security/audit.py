@@ -40,8 +40,15 @@ if TYPE_CHECKING:
   from app.db.pool import Pool, PoolConnection
 
 __all__ = [
+  "ACTION_ACCESS_DENIED",
   "ACTION_BUDGET_DENIED",
+  "ACTION_CONTACT_ARCHIVED",
+  "ACTION_CONTACT_CREATED",
+  "ACTION_CONTACT_REASSIGNED",
+  "ACTION_CONTACT_RESTORED",
+  "ACTION_CONTACT_UPDATED",
   "ACTION_FORCED_RESET_BLOCKED",
+  "ACTION_INPUT_REJECTED",
   "ACTION_LOGIN_FAILED",
   "ACTION_LOGIN_SUCCEEDED",
   "ACTION_LOGOUT",
@@ -49,9 +56,11 @@ __all__ = [
   "ACTION_PASSWORD_CHANGED",
   "ACTION_PASSWORD_RESET",
   "ACTION_PROVISIONED",
+  "ACTION_ROLE_DENIED",
   "ACTION_THROTTLE_LOCKED",
   "ACTION_USER_CREATED",
   "ACTION_USER_DISABLED",
+  "OBJECT_CONTACT",
   "OUTCOME_DENIED",
   "OUTCOME_FAILURE",
   "OUTCOME_SUCCESS",
@@ -59,9 +68,9 @@ __all__ = [
   "record_denial",
 ]
 
-#: The Slice A subset of ``ck_audit_events_action``'s 31 values. Every one
-#: is emitted by a named row of ``DATA_CONTRACT.md`` §6.8; nothing here is
-#: admitted-but-unwritten.
+#: The Slice A and Slice B subset of ``ck_audit_events_action``'s 31 values.
+#: Every one is emitted by a named row of ``DATA_CONTRACT.md`` §6.8; nothing
+#: here is admitted-but-unwritten.
 ACTION_LOGIN_SUCCEEDED: Final = "login_succeeded"
 ACTION_LOGIN_FAILED: Final = "login_failed"
 ACTION_LOGOUT: Final = "logout"
@@ -75,7 +84,24 @@ ACTION_PROVISIONED: Final = "provisioned"
 ACTION_FORCED_RESET_BLOCKED: Final = "forced_reset_blocked"
 ACTION_BUDGET_DENIED: Final = "budget_denied"
 
+#: Slice B. The five business verbs of ``DATA_CONTRACT.md`` §6.8 rows 6-9
+#: and the reassign row, each written in the same transaction as the
+#: mutation it describes, and the three denial actions of
+#: ``ACCESS_MATRIX.md`` §4.5 rows 1, 4 and 6 — the only denial triples a
+#: contact surface emits. ``ck_audit_events_denied`` is an *iff*: these
+#: three carry ``outcome='denied'`` and nothing else, and the five verbs
+#: never carry it.
+ACTION_CONTACT_CREATED: Final = "contact_created"
+ACTION_CONTACT_UPDATED: Final = "contact_updated"
+ACTION_CONTACT_ARCHIVED: Final = "contact_archived"
+ACTION_CONTACT_RESTORED: Final = "contact_restored"
+ACTION_CONTACT_REASSIGNED: Final = "contact_reassigned"
+ACTION_ACCESS_DENIED: Final = "access_denied"
+ACTION_ROLE_DENIED: Final = "role_denied"
+ACTION_INPUT_REJECTED: Final = "input_rejected"
+
 OBJECT_USER: Final = "user"
+OBJECT_CONTACT: Final = "contact"
 OBJECT_SESSION: Final = "session"
 OBJECT_SETTINGS: Final = "settings"
 OBJECT_SYSTEM: Final = "system"

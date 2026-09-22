@@ -15,8 +15,14 @@ router, where Starlette's exception handlers do not run.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+  from uuid import UUID
+
 __all__ = [
   "BudgetExceeded",
+  "ContactNotFound",
   "ForcedResetRequired",
   "NoSession",
   "NotProvisioned",
@@ -85,3 +91,39 @@ class BudgetExceeded(Exception):
 
 class TooLarge(Exception):
   """The request body exceeded the 64 KiB cap before any handler saw it."""
+
+
+class ContactNotFound(Exception):
+  """Step 4: the scope predicate admitted no contact — foreign **or** missing.
+
+  Raised, never returned, so the six contact surfaces cannot drift apart
+  (``contracts/slice-b.md`` §2(a) note 1): one handler writes
+  ``ACCESS_MATRIX.md`` §4.5 **row 1** and renders the one ``404`` body, so
+  a foreign object and a missing one are byte-identical for the same
+  principal modulo the correlation id (**PIN 8**, **R27**).
+
+  Raising it from inside ``run_serializable`` also unwinds the transaction
+  and returns its connection **before** the handler opens the deny-audit's
+  own one, which is the one-connection-at-a-time rule
+  (``DATA_CONTRACT.md`` §6.1).
+
+  Attributes
+  ----------
+  object_id : UUID | None
+    The requested id, **iff** the application already validated it as a
+    canonical 36-character UUID; ``None`` otherwise (§4.5 rule 1). A
+    hostile path segment would violate ``ck_audit_events_object_id`` and
+    the best-effort write would then die on exactly the inputs the row
+    exists to record.
+  """
+
+  def __init__(self, object_id: UUID | None) -> None:
+    """Record the id the deny row may carry.
+
+    Parameters
+    ----------
+    object_id : UUID | None
+      The canonical id, or ``None`` when the segment was not canonical.
+    """
+    super().__init__("contact not found")
+    self.object_id = object_id

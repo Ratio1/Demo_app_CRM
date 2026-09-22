@@ -32,7 +32,14 @@ if TYPE_CHECKING:
 
   from app.db.repositories.sessions import SessionRow
 
-__all__ = ["Principal", "Scope", "principal_of", "resolve_principal", "resolve_session"]
+__all__ = [
+  "Principal",
+  "Scope",
+  "principal_of",
+  "resolve_principal",
+  "resolve_session",
+  "scope_of",
+]
 
 _STATE_ROW = "crm_session_row"
 _STATE_PRINCIPAL = "crm_principal"
@@ -80,14 +87,35 @@ class Scope:
 
   Notes
   -----
-  Slice A owns no business row, so nothing consumes a ``Scope`` yet. It is
-  defined here because the identity that produces it is defined here, and
-  Slice B's repositories take it as a mandatory first argument
-  (``ARC-001``).
+  Defined here because the identity that produces it is defined here.
+  Slice B's business repositories take it as a mandatory argument — the
+  first *business* one, after the connection (``ARC-001``,
+  ``contracts/slice-b.md`` §1(b) B1).
   """
 
   actor_id: UUID
   is_admin: bool
+
+
+def scope_of(principal: Principal) -> Scope:
+  """Return the authorization scope this principal's reads and writes carry.
+
+  Parameters
+  ----------
+  principal : Principal
+    The resolved identity of the request, whose role was re-read from
+    ``users`` on this request by :func:`resolve_session`.
+
+  Returns
+  -------
+  Scope
+    ``actor_id`` is the session's user id — never a submitted value — and
+    ``is_admin`` is the re-read role. Building the scope here, from the
+    principal alone, is what makes it impossible for a route to widen its
+    own authorization: there is no parameter through which a request could
+    reach either field.
+  """
+  return Scope(actor_id=principal.id, is_admin=principal.is_admin)
 
 
 def principal_of(row: SessionRow | None) -> Principal | None:
