@@ -2,15 +2,17 @@
 #
 # build-image — build demo-crm-app:local with the TLS material it needs.
 #
-#   scripts/build-image
+#   scripts/build-image [ca-cert-path]
 #
 # Three steps, in order, none of them optional:
 #
-#   1. Copy the shared PostgreSQL CA's PUBLIC certificate to
-#      app/certs/ca-bundle.pem. That file is the trust anchor
-#      `sslmode=verify-full` uses (app/config.py's CA_BUNDLE_PATH) and it is
-#      git-ignored, so a fresh clone has to build it. Only the .crt is ever
-#      read; the CA's private key is never touched by anything here.
+#   1. Copy a PostgreSQL CA's PUBLIC certificate to app/certs/ca-bundle.pem,
+#      the trust anchor `sslmode=verify-full` uses (app/config.py's
+#      CA_BUNDLE_PATH); git-ignored, so a fresh clone has to build it. Only
+#      the certificate is read; a CA's private key is never touched here.
+#      Source, in order: ../_tools/pgsql/pg ca (parent checkout) when that
+#      helper is executable; else this script's first argument; else
+#      CA_CERT. A standalone clone needs one of the latter two.
 #   2. Generate a self-signed 127.0.0.1 certificate into app/certs/ if it is
 #      not already there — the pair scripts/start turns into uvicorn's
 #      --ssl-certfile/--ssl-keyfile. An existing pair is never regenerated:
@@ -36,12 +38,19 @@ readonly PG="../_tools/pgsql/pg"
 
 mkdir -p -- "$CERT_DIR"
 
-if [ ! -x "$PG" ]; then
-  printf 'build-image: %s is not executable; run from the meta-repo checkout\n' "$PG" >&2
+if [ -x "$PG" ]; then
+  ca_path="$("$PG" ca)"
+elif [ -n "${1:-}" ]; then
+  ca_path="$1"
+elif [ -n "${CA_CERT:-}" ]; then
+  ca_path="$CA_CERT"
+else
+  printf 'build-image: %s not found; pass a CA certificate path as the\nfirst argument or set CA_CERT.\n' "$PG" >&2
   exit 2
 fi
 
-ca_path="$("$PG" ca)"
+[ -f "$ca_path" ] || { printf 'build-image: CA certificate %s does not exist\n' "$ca_path" >&2; exit 2; }
+
 cp -- "$ca_path" "$BUNDLE"
 printf 'build-image: trust anchor written to %s\n' "$BUNDLE" >&2
 

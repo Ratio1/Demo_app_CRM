@@ -82,8 +82,8 @@ Transport 2's fixture (``db_connection``) calls ``app.config.load_config()`` wit
 
      scripts/with-env .env.test.local -- .venv/bin/python -B -m pytest tests -p no:cacheprovider -q
 
-   (from ``Demo_app_CRM``; also recorded in ``tests/README.md`` and
-   ``ACCEPTANCE.md``). **A bare ``pytest`` invocation is not a supported
+   (from ``Demo_app_CRM``; also recorded in ``README.md`` and
+   ``tests/README.md``). **A bare ``pytest`` invocation is not a supported
    invocation** — it still collects and runs every test that does not
    request ``db_connection`` (all of ``tests/unit``, ``tests/arch``, and
    the subprocess-driven ``tests/security/test_dep_hostile_env.py``, each
@@ -121,15 +121,15 @@ same session, which removes the corruption for a single, literal
 zero "never awaited" warnings across the whole suite with the hook in
 place). This single, literal invocation is the canonical one; the
 two-invocation split below is kept only as a fallback for isolating a
-browser-less run by hand and is never what a gate or ``ACCEPTANCE.md`` run
-cites::
+browser-less run by hand and is never what a gate or ``README.md``/
+``tests/README.md`` run cites::
 
   scripts/with-env .env.test.local -- .venv/bin/python -B -m pytest tests/ --ignore=tests/e2e
   .venv/bin/python -B -m pytest tests/e2e   # separate invocation; no with-env needed today
 
 Counts reported from either invocation form are corruption-free, but only
 the single-invocation run is the one this suite's own reports
-(``README.md``, ``ACCEPTANCE.md``, ``tests/README.md``) may cite as *the*
+(``README.md``, ``tests/README.md``) may cite as *the*
 run.
 """
 

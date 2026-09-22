@@ -42,7 +42,9 @@ Demo_app_CRM/scripts/build-image
 Copies the shared PostgreSQL CA's certificate to `app/certs/ca-bundle.pem` (the `verify-full`
 trust anchor), generates a self-signed `127.0.0.1` development certificate once (git-ignored,
 reused on later builds), then `docker build -t demo-crm-app:local --target runtime .`. The image
-holds no `.env*` file, no `.git`, and no source outside `app/`, `migrations/`, `scripts/`.
+holds no `.env*` file, no `.git`, and no source outside `app/`, `migrations/`, `scripts/`. When
+`../_tools/pgsql/pg` is not present (a standalone clone, outside the meta-repo checkout), pass a
+CA certificate PEM path as the script's first argument, or set `CA_CERT`, instead.
 
 ## 3. Provision, from the same image
 
@@ -164,6 +166,11 @@ A bare `pytest` is not a supported invocation — credentials only ever reach a 
 .venv/bin/ruff format --check .
 .venv/bin/mypy
 ```
+
+Each step's `.sql` file under `migrations/` is checksummed byte-for-byte, and that checksum is
+verified against the journal at startup and again by every `/health/ready` check. Never edit an
+already-applied step's `.sql` file — not even its comments — once its checksum has been
+recorded; add a new step instead.
 
 ## 8. Deferred
 
