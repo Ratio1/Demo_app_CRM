@@ -185,7 +185,12 @@ def test_prd001_contact_to_deal_edit_move_won_and_pipeline_journey(
 
   # --- Pipeline: the Won column shows it, with the right sum -------------
   page.goto(f"{live_server.base_url}/deals/pipeline")
-  expect(page.get_by_role("heading", name="Pipeline")).to_be_visible()
+  # `exact=True`: Playwright's accessible-name match is a case-insensitive
+  # substring by default, so the bare string would also resolve the page's
+  # `<h2 id="pipeline-filter-h" class="sr-only">Filter pipeline</h2>`
+  # (`app/templates/deals/pipeline.html`) and trip strict mode. The `<h1>`
+  # is the only exact match for "Pipeline".
+  expect(page.get_by_role("heading", name="Pipeline", exact=True)).to_be_visible()
   won_heading = page.locator("#col-won-heading")
   expect(won_heading).to_contain_text("€ 1,250.00")
   won_column = page.locator("section.pipeline-column", has=won_heading)
