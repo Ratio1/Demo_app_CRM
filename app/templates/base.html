@@ -35,7 +35,11 @@
   {% if principal %}
     {% include "partials/nav.html" %}
   {% else %}
-    {% block public_brand %}<div class="public-brand">{{ app_name }}</div>{% endblock %}
+    {# <header>, direct child of <body>, gets the implicit "banner" landmark
+       role — a bare <div> here left the public-shell brand text outside
+       every landmark (axe-core "region" rule, moderate; found by this
+       session's screenshot/axe pass, not by the render/grep checks). #}
+    {% block public_brand %}<header class="public-brand">{{ app_name }}</header>{% endblock %}
   {% endif %}
   <main id="main" tabindex="-1">
     {% block main %}{% endblock %}
