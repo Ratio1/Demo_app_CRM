@@ -1,8 +1,4 @@
-"""The last-active-admin race — SQL-014 / ACC-608.
-
-Authority: ``ACCESS_MATRIX.md`` §7 (SQL-014, ACC-608); ``DATA_CONTRACT.md``
-§6.9; ``slice-a.md`` §1.2 (``scripts/manage disable-user``, exit code 3 on
-refusal).
+"""The last-active-admin race: two concurrent disables of the last two admins leave exactly one.
 
 Isolation, documented rather than assumed
 -------------------------------------------
@@ -17,30 +13,23 @@ This module therefore resets and migrates ``crm_test`` **itself**, in its
 own ``module``-scoped fixture, independent of every other fixture in
 ``conftest.py``.
 
-Collection order (ruling R57, amended from the original R41-era note)
---------------------------------------------------------------------------
+Collection order
+------------------
 This module's own reset wipes the schema and bootstraps two admins that
 are **not** the shared ``bootstrap_admin``, so it must never run while
 anything else in the session still needs the shared admin or the schema
-state ``crm_test_schema`` (session-scoped, autouse) established. Earlier
-revisions of this docstring relied on ``tests/concurrency`` sorting before
-``tests/security``/``tests/e2e`` in pytest's default collection order —
-true as far as it went, but no longer sufficient once ``crm_test_schema``
-became session-scoped **autouse**: that fixture now runs and caches
-*before* the first test in the session, which would be *this* module's
-own reset racing it for nothing (harmless) were it not for what runs
-*after*. The real requirement is stronger than "before tests/security":
-this module must run **strictly after every other module in the
-session**, ``tests/e2e`` included, so that nothing downstream ever asks
-for ``bootstrap_admin``/``live_server`` again after this module has
-disabled and re-created admins out from under them. ``conftest.py``'s
-``pytest_collection_modifyitems`` now places this exact file dead last for
-that reason — see its own docstring for the four-bucket ordering and why
-placing it after ``tests/e2e`` specifically (not merely after
-``tests/security``) is what the guarantee actually requires. Running this
-file **in isolation** (``pytest tests/concurrency/test_last_admin_race.py``)
-is always safe and is the recommended invocation for re-verifying it by
-hand.
+state ``crm_test_schema`` (session-scoped, autouse) established. The real
+requirement is stronger than "before tests/security": this module must run
+**strictly after every other module in the session**, ``tests/e2e``
+included, so that nothing downstream ever asks for
+``bootstrap_admin``/``live_server`` again after this module has disabled
+and re-created admins out from under them. ``conftest.py``'s
+``pytest_collection_modifyitems`` places this exact file dead last for
+that reason — see its own docstring for the ordering and why placing it
+after ``tests/e2e`` specifically (not merely after ``tests/security``) is
+what the guarantee actually requires. Running this file **in isolation**
+(``pytest tests/concurrency/test_last_admin_race.py``) is always safe and
+is the recommended invocation for re-verifying it by hand.
 
 No ``asyncio`` in this module (deliberately)
 ------------------------------------------------
@@ -211,8 +200,8 @@ def _count_active_admins(*, log_path: Path) -> int:
   Independent of the two subprocesses' exit codes: a bug in the guard's
   own read-after-write logic could in principle exit ``[0, 3]`` for the
   wrong reason while still leaving the database in a bad state, so this is
-  a direct assertion on the invariant itself (ACC-608/SQL-014: "exactly
-  one active admin remains"), not an inference from process exit status.
+  a direct assertion on the invariant itself ("exactly one active admin
+  remains"), not an inference from process exit status.
   """
   argv = [
     str(WITH_ENV),
@@ -242,7 +231,7 @@ def _count_active_admins(*, log_path: Path) -> int:
   pytest.fail(f"no RESULT line from the active-admin count probe (exit {completed.returncode})")
 
 
-def test_sql014_two_concurrent_disable_user_races_leave_exactly_one_active_admin(
+def test_two_concurrent_disable_user_races_leave_exactly_one_active_admin(
   isolated_two_admins: tuple[ProvisionedUser, ProvisionedUser],
   tmp_path: Path,
 ) -> None:
@@ -252,7 +241,7 @@ def test_sql014_two_concurrent_disable_user_races_leave_exactly_one_active_admin
   survivor plus one fresh one), then race ``disable-user`` on each against
   the other, concurrently, as two ``subprocess.Popen`` processes.
   Exactly one must exit ``0``; the other must exit ``3`` ("last active
-  admin", slice-a.md §1.2) — never both succeeding (would leave 0 active
+  admin") — never both succeeding (would leave 0 active
   admins) and never both failing (would falsely block a legitimate
   disablement).
 
@@ -269,8 +258,7 @@ def test_sql014_two_concurrent_disable_user_races_leave_exactly_one_active_admin
   (``_count_active_admins``, an independent owner-role ``SELECT count(*)``),
   not only from the two subprocesses' exit codes: exit codes prove the
   CLI's own view of the outcome, a direct count proves the database itself
-  ended the iteration with exactly one active administrator, which is what
-  ACC-608/SQL-014 actually requires.
+  ended the iteration with exactly one active administrator.
 
   Genuinely concurrent by OS process, not by ``asyncio`` (module docstring):
   both ``disable-user`` subprocesses are started with ``subprocess.Popen``
@@ -340,9 +328,9 @@ def test_sql014_two_concurrent_disable_user_races_leave_exactly_one_active_admin
         password_file.unlink(missing_ok=True)
 
     # Two commands, each targeting a *different* one of the two currently
-    # active admins, run concurrently — "each removing the other admin"
-    # (ACC-608): command A targets the current survivor, command B targets
-    # the freshly created one.
+    # active admins, run concurrently — each removing the other admin:
+    # command A targets the current survivor, command B targets the
+    # freshly created one.
     exit_survivor, exit_fresh = _race(survivor_email, fresh_email, iteration)
     exits = sorted([exit_survivor, exit_fresh])
     assert exits == [0, 3], (

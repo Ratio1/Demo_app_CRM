@@ -1,16 +1,15 @@
-"""``SQL-024``, ``SQL-025``, ``SQL-026`` — the migration runner's restart/no-op/empty guarantees.
+"""The migration runner's restart/no-op/empty-schema guarantees.
 
-Authority: ``ACCESS_MATRIX.md`` §7 ``SQL-024`` ("the runner is killed
-mid-migration and restarted; check-first records the applied-but-unjournaled
-step and continues, and the final state equals an uninterrupted run"),
-``SQL-025`` ("a second `migrate` run is a no-op — zero DDL executed, journal
-unchanged, every check re-verified" — re-verified only when unverified;
-already-verified rows are skipped without even a re-check, which is the
-stronger, cheaper no-op this module measures), ``SQL-026`` ("migrate from
-empty applies every step in order against a freshly reset `crm_test` schema,
-with each postcondition TRUE"); ``app/db/journal.py``'s own restart-semantics
-docstring (the DDL-then-check-then-journal-write ordering this module drives
-directly, by owner-role subprocess, against the real `crm_test` database).
+The runner is killed mid-migration and restarted; check-first records the
+applied-but-unjournaled step and continues, and the final state equals an
+uninterrupted run. A second `migrate` run is a no-op — zero DDL executed,
+journal unchanged; already-verified rows are skipped without even a
+re-check, which is the stronger, cheaper no-op this module measures.
+Migrate from empty applies every step in order against a freshly reset
+`crm_test` schema, with each postcondition TRUE — driven directly, by
+owner-role subprocess, against the real `crm_test` database, matching
+``app/db/journal.py``'s own restart-semantics docstring (the
+DDL-then-check-then-journal-write ordering).
 
 Every mutation here — deleting a journal row, dropping and recreating
 `public`, running `migrate` itself — is an owner-role (``crm_test_owner``)
@@ -19,20 +18,20 @@ subprocess under ``.env.test.owner.local``, exactly the pattern
 own read-back opens its own direct, **synchronous** connection as the
 runtime role (``crm_test_app``, already the credentials this suite process
 itself runs under — ``tests/README.md``), which holds ``SELECT`` on
-``schema_migrations`` (`DATA_CONTRACT.md` §5.2) and nothing more.
+``schema_migrations`` and nothing more.
 **``crm`` is never touched — only ``crm_test``.**
 
 Collection order (see ``tests/conftest.py``'s ``pytest_collection_modifyitems``):
 this module is collected **dead last**, after even
-``tests/concurrency/test_last_admin_race.py``, because ``SQL-026`` drops and
-recreates the whole ``public`` schema (wiping every user, contact and
-session the rest of the session's fixtures depend on) — exactly the reason
-``test_last_admin_race.py`` itself already runs last among everything else.
-A module-scoped, autouse fixture below also runs one more `migrate` at
-teardown as a second line of defence, so a database this module leaves
-mid-test (a failed assertion partway through ``SQL-024``/``SQL-026``) is
-still handed back fully migrated to whatever runs the *next* session's own
-``crm_test_schema`` reset.
+``tests/concurrency/test_last_admin_race.py``, because dropping and
+recreating the whole ``public`` schema (wiping every user, contact and
+session the rest of the session's fixtures depend on) is exactly the
+reason ``test_last_admin_race.py`` itself already runs last among
+everything else. A module-scoped, autouse fixture below also runs one more
+`migrate` at teardown as a second line of defence, so a database this
+module leaves mid-test (a failed assertion partway through a restart or
+empty-schema run) is still handed back fully migrated to whatever runs the
+*next* session's own ``crm_test_schema`` reset.
 
 No ``asyncio`` in this module (deliberately, same reason as
 ``test_last_admin_race.py``'s own docstring)
@@ -73,11 +72,10 @@ if TYPE_CHECKING:
   from psycopg.rows import TupleRow
 
 _MIGRATION_ID = "0003_contacts_receipts"
-#: An index-postcondition step (§7.1's "index existence has no
-#: information_schema view" adaptation point) — a safe, side-effect-free
-#: choice for SQL-024's delete-and-readopt probe: its DDL is idempotent-safe
-#: to leave untouched (the row is deleted, never the object it describes),
-#: and its check is a plain `pg_catalog.pg_class` existence probe with no
+#: An index-postcondition step — a safe, side-effect-free choice for the
+#: delete-and-readopt probe below: its DDL is idempotent-safe to leave
+#: untouched (the row is deleted, never the object it describes), and its
+#: check is a plain `pg_catalog.pg_class` existence probe with no
 #: dependency on any other step's data.
 _STEP_ID = "04_ix_contacts_owner_email"
 
@@ -206,8 +204,9 @@ def _restore_fully_migrated_schema_afterwards(
   """Run one more `migrate` at module teardown — belt and braces on top of each test's own state.
 
   Every test in this module already leaves `crm_test` fully migrated on
-  its own (``SQL-024``/``SQL-025`` never remove that property;
-  ``SQL-026`` ends with a fresh, complete `migrate`), so this is a second
+  its own (the restart-recovery and no-op tests never remove that
+  property; the empty-schema test ends with a fresh, complete `migrate`),
+  so this is a second
   line of defence for a database a failed assertion left mid-test, not the
   primary mechanism. This module is collected dead last in the session
   (see the module docstring), so nothing else in *this* run depends on
@@ -219,7 +218,7 @@ def _restore_fully_migrated_schema_afterwards(
   _run_migrate(log_path)
 
 
-def test_sql024_restart_recovery_adopts_an_applied_but_unjournaled_step(
+def test_restart_recovery_adopts_an_applied_but_unjournaled_step(
   sync_connection: psycopg.Connection[TupleRow], tmp_path: Path
 ) -> None:
   """A step whose DDL already ran but whose journal row was lost is ADOPTED, never re-applied.
@@ -263,7 +262,7 @@ def test_sql024_restart_recovery_adopts_an_applied_but_unjournaled_step(
     )
 
 
-def test_sql025_second_migrate_run_is_a_no_op(
+def test_second_migrate_run_is_a_no_op(
   sync_connection: psycopg.Connection[TupleRow], tmp_path: Path
 ) -> None:
   """A second `migrate` run against an already-migrated schema applies and changes nothing."""
@@ -287,15 +286,14 @@ def test_sql025_second_migrate_run_is_a_no_op(
   )
 
 
-def test_sql026_migrate_from_empty_applies_every_step_in_order(
+def test_migrate_from_empty_applies_every_step_in_order(
   sync_connection: psycopg.Connection[TupleRow], tmp_path: Path
 ) -> None:
   """A fresh `migrate` against a pristine, freshly recreated `public` applies every step, in order.
 
   Also the first point in the whole suite that genuinely exercises
   `ck_audit_events_denied` and `ck_contacts_kind` from a schema that never
-  held them before this very `migrate` call (`ACCESS_MATRIX.md` §7's own
-  note on `SQL-026`).
+  held them before this very `migrate` call.
 
   **One documented exception to "every step applied":** the very first
   step, ``0001_journal/01_schema_migrations``, is reported ``adopted``
@@ -303,10 +301,10 @@ def test_sql026_migrate_from_empty_applies_every_step_in_order(
   ``apply_migrations`` calls :func:`app.db.journal.ensure_journal_table`
   (the identical DDL) *before* the per-step loop ever reaches it, so by
   the time the loop's own check-first probe runs for that step, the table
-  already exists. Measured, not assumed: `DECISIONS.md` §5.2's own P0
-  row for the (then three-step) `0001_journal` chain reads "migrate from
-  empty → 2 applied, **1 adopted**" — the same one-adopted shape this
-  test reproduces at 34 steps.
+  already exists. Measured, not assumed: an earlier, three-step version of
+  the `0001_journal` chain was observed producing "migrate from empty ->
+  2 applied, **1 adopted**" — the same one-adopted shape this test
+  reproduces at the full step count.
   """
   from app.db.journal import BOOTSTRAP_MIGRATION_ID, BOOTSTRAP_STEP_ID, load_steps
 
@@ -337,7 +335,7 @@ def test_sql026_migrate_from_empty_applies_every_step_in_order(
       )
   # In-order: the report lines must read out in exactly `load_steps`' own
   # application order, since a later step's DDL may depend on an earlier
-  # one (§1(a): "a table precedes its own indexes, constraints and grant").
+  # one (a table precedes its own indexes, constraints and grant).
   reported_keys = [line.split()[0] for line in report_lines]
   expected_keys = [str(step) for step in expected_steps]
   assert reported_keys == expected_keys, "steps were not applied in load_steps()'s own order"
