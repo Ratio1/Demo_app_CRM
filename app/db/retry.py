@@ -172,8 +172,8 @@ class RetryExhausted(Exception):
   elapsed_s : float | None
     Seconds from the first attempt to the last, read from the injected
     :class:`app.security.clock.Clock`. ``None`` when the runner was built
-    without one, which is the module-level shims' case (``ARC-019`` forbids
-    ``time.monotonic()`` outside ``app/security/clock.py``, and B3 forbids
+    without one, which is the module-level shims' case (``ARC-019`` forbids the
+    standard library's monotonic counter outside ``app/security/clock.py``, and B3 forbids
     ``app/db/**`` from importing ``app/security/**`` at runtime, so a default
     runner cannot own a clock).
   """
@@ -349,8 +349,8 @@ class TransactionRunner:
   ``clock`` is **optional and is never control flow**: only ``monotonic()`` is
   read, and only to stamp elapsed time onto :class:`RetryExhausted` and the
   log line. It has to be optional because two standing rules make a mandatory
-  one impossible — ``ARC-019`` forbids ``time.monotonic()`` outside
-  ``app/security/clock.py``, and B3 forbids ``app/db/**`` from importing
+  one impossible — ``ARC-019`` forbids the standard library's monotonic counter
+  outside ``app/security/clock.py``, and B3 forbids ``app/db/**`` from importing
   ``app/security/**`` at runtime — so a module-level default runner cannot own
   a clock (``contracts/slice-c.md`` §1(h) ask A-1).
   """
