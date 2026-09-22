@@ -1,0 +1,121 @@
+{#-  contacts/form.html — CONTRACTS.md §8.2: `mode: "new"|"edit"`,
+  `action_url`, `cancel_url`, `contact {id?, full_name, company, email,
+  phone, kind, version?}`, `owner_label`, `errors {field: [str]}`,
+  `idempotency_key`, `limits {full_name:160, company:160, email:254,
+  phone:32}`.
+
+  POST field names (slice-b.md §2(f)) are `name, company, email, phone,
+  kind` (+ `version` on edit) — NOT `full_name`; the context key is
+  `contact.full_name`, the wire name is `name`. Every `errors` lookup below
+  is keyed by the POST name to match.
+
+  UX_FLOWS.md §4.5: single column, max 640px, not a modal. Field order:
+  Full name* · Company · Work email* · Phone · Type (radio pair, R31/§4.6).
+  Actions CP-115: "Save contact" (primary) / "Cancel" (a LINK to
+  `cancel_url`, never a form button). Ownership: read-only `owner_label`
+  (CP-32, pre-formatted server-side — "Owner: you" / "Owner: {name}"), no
+  owner control (`ACC-012`). Hidden: `version` (edit only), a fresh
+  `idempotency_key`, CSRF. Focus (R28): `autofocus` on the first field on a
+  fresh load, none after a validation failure.
+-#}
+{% extends "base.html" %}
+{% from "partials/field_errors.html" import field_errors %}
+{% block main %}
+{% set field_labels = {"name": "contact-name", "company": "contact-company", "email": "contact-email", "phone": "contact-phone", "kind": "contact-kind-lead"} %}
+{% set name_errors = errors.get("name") %}
+{% set company_errors = errors.get("company") %}
+{% set email_errors = errors.get("email") %}
+{% set phone_errors = errors.get("phone") %}
+{% set kind_errors = errors.get("kind") %}
+{% include "partials/error_summary.html" %}
+<header class="page-header">
+  <h1>{{ "New contact" if mode == "new" else "Edit contact" }}</h1>
+</header>
+<div class="form-shell">
+  <form method="post" action="{{ action_url }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="idempotency_key" value="{{ idempotency_key }}">
+    {% if mode == "edit" %}<input type="hidden" name="version" value="{{ contact.version }}">{% endif %}
+
+    <fieldset>
+      <legend class="sr-only">Contact details</legend>
+
+      <div class="field">
+        <label for="contact-name">Full name <span class="field-required" aria-hidden="true">*</span></label>
+        <input id="contact-name" name="name" type="text" required maxlength="{{ limits.full_name }}"
+               value="{{ contact.full_name }}"
+               {% if not errors %}autofocus{% endif %}
+               {% if name_errors %}aria-invalid="true" aria-describedby="err-name"{% endif %}>
+        {% if name_errors %}
+        {{ field_errors("name", name_errors) }}
+        {% endif %}
+      </div>
+
+      <div class="field">
+        <label for="contact-company">Company</label>
+        <input id="contact-company" name="company" type="text" maxlength="{{ limits.company }}"
+               value="{{ contact.company }}"
+               {% if company_errors %}aria-invalid="true" aria-describedby="err-company"{% endif %}>
+        {% if company_errors %}
+        {{ field_errors("company", company_errors) }}
+        {% endif %}
+      </div>
+
+      <div class="field">
+        <label for="contact-email">Work email <span class="field-required" aria-hidden="true">*</span></label>
+        <input id="contact-email" name="email" type="email" required maxlength="{{ limits.email }}"
+               value="{{ contact.email }}"
+               {% if email_errors %}aria-invalid="true" aria-describedby="err-email"{% endif %}>
+        {% if email_errors %}
+        {{ field_errors("email", email_errors) }}
+        {% else %}
+        <p class="field-help">Where this person is reached at work.</p>
+        {% endif %}
+      </div>
+
+      <div class="field">
+        <label for="contact-phone">Phone</label>
+        <input id="contact-phone" name="phone" type="text" maxlength="{{ limits.phone }}"
+               value="{{ contact.phone }}"
+               {% if phone_errors %}aria-invalid="true" aria-describedby="err-phone"{% endif %}>
+        {% if phone_errors %}
+        {{ field_errors("phone", phone_errors) }}
+        {% endif %}
+      </div>
+
+      <fieldset class="radio-group radio-pair" {% if kind_errors %}aria-describedby="err-kind"{% endif %}>
+        <legend>Type</legend>
+        <label class="radio-option">
+          <input id="contact-kind-lead" type="radio" name="kind" value="lead"{% if contact.kind == "lead" %} checked{% endif %}>
+          <span>Lead</span>
+        </label>
+        <label class="radio-option">
+          <input id="contact-kind-customer" type="radio" name="kind" value="customer"{% if contact.kind == "customer" %} checked{% endif %}>
+          <span>Customer</span>
+        </label>
+      </fieldset>
+      {% if kind_errors %}
+      {{ field_errors("kind", kind_errors) }}
+      {% endif %}
+    </fieldset>
+
+    {#- `owner_label` is confirmed against the shipped
+       `app/routes/contacts.py` as a RAW display name
+       (`principal.display_name` on create, `view.owner_name` on edit) —
+       never the literal word "you", even for the actor's own contact.
+       UX_FLOWS.md §4.5 says the read-only line is "Owner: you" /
+       "Owner: {name}" (UI_SPEC.md §4.13 the same, CP-32 verbatim); the
+       shipped route always sends the second form, so this template adds
+       the "Owner: " wrapper and never renders "you". Flagged for
+       `backend-security`/UX_FLOWS reconciliation, not silently
+       resolved by inventing an `is_own` this context key does not
+       carry. #}
+    <p class="owner-line">Owner: {{ owner_label }}</p>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary btn-form-submit">Save contact</button>
+      <a href="{{ cancel_url }}" class="btn btn-secondary btn-form-submit">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}
