@@ -1,6 +1,6 @@
-"""Slice B concurrency and idempotency — SQL-010, SQL-011, SQL-023.
+"""Slice B concurrency and idempotency — SQL-010, SQL-011, SQL-023, SQL-028.
 
-Authority: ``ACCESS_MATRIX.md`` §7 (SQL-010, SQL-011, SQL-023);
+Authority: ``ACCESS_MATRIX.md`` §7 (SQL-010, SQL-011, SQL-023, SQL-028);
 ``DATA_CONTRACT.md`` §10 (mechanisms), §6.2-§6.4 (the canonical mutation
 shape, stale edit, duplicate submission); ``contracts/slice-b.md`` §1(g)
 probes 3-8 (the SQL-side mechanism's own executed evidence) and PIN 1
@@ -160,6 +160,65 @@ async def test_sql011_concurrent_duplicate_submission_replays_leaving_one_of_eac
   after = await _receipt_and_contact_counts(db_connection, owner_email=agent_a.user.email)
   assert after[0] - before[0] == 1, "exactly one contact row survives the race"
   assert after[1] - before[1] == 1, "exactly one mutation_receipts row survives the race"
+
+
+async def test_sql028_same_key_different_payload_is_409_duplicate(
+  agent_a: LoggedInPrincipal, db_connection: Any
+) -> None:
+  """Reusing an idempotency key with a DIFFERENT payload is `409 duplicate`, never a second write.
+
+  `SQL-028` — the scope `SQL-011` explicitly excludes (`ACCESS_MATRIX.md`
+  §7): a `23505` on the receipt's unique key still fires (same
+  ``(user_id, operation, idempotency_key)``), but the stored
+  ``payload_sha256`` now disagrees with the second submission's digest, so
+  the replay path answers ``duplicate`` instead of re-issuing the original
+  ``Applied`` outcome — no second business row is ever created.
+  """
+  email = f"sql028+{uuid.uuid4().hex[:8]}@example.test"
+  new_form = await agent_a.client.get("/contacts/new")
+  csrf_token = extract_csrf_token(new_form.text)
+  idempotency_key = extract_hidden_field(new_form.text, "idempotency_key")
+
+  first = await agent_a.client.post(
+    "/contacts",
+    data={
+      "csrf_token": csrf_token,
+      "idempotency_key": idempotency_key,
+      **_CREATE_FIELDS,
+      "email": email,
+    },
+  )
+  assert first.status_code == 303
+
+  second = await agent_a.client.post(
+    "/contacts",
+    data={
+      "csrf_token": csrf_token,
+      "idempotency_key": idempotency_key,  # SAME key
+      **_CREATE_FIELDS,
+      "email": email,
+      "company": "A Completely Different Company",  # DIFFERENT payload
+    },
+  )
+  assert second.status_code == 409
+  assert "already submitted" in second.text, (
+    "a same-key/different-payload conflict must render the duplicate context "
+    '(errors/409.html context="duplicate"), not the stale or archived-parent one'
+  )
+
+  receipt_count = await _count(
+    db_connection,
+    "SELECT count(*) FROM mutation_receipts WHERE idempotency_key = %(key)s",
+    {"key": idempotency_key},
+  )
+  assert receipt_count == 1, "exactly one receipt row — the second INSERT never committed"
+
+  contact_count = await _count(
+    db_connection,
+    "SELECT count(*) FROM contacts WHERE email_lower = %(email)s",
+    {"email": email.lower()},
+  )
+  assert contact_count == 1, "no second business row was created for the conflicting payload"
 
 
 async def test_sql010_stale_edit_preserves_submitted_values_and_reissues_version_and_key(
