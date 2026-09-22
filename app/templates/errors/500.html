@@ -1,14 +1,14 @@
-{#-  errors/500.html — CONTRACTS.md §8.4: `correlation_id`. Public shell
-  ALWAYS (R32) — the backend passes `principal=None` unconditionally for
+{#-  errors/500.html — context: `correlation_id`. Public shell
+  ALWAYS — the backend passes `principal=None` unconditionally for
   this handler, so base.html's ordinary shell selection is enough; no
   extra template-side logic needed to enforce the rule.
 
-  CP-91/CP-20b. CP-20b's own text embeds `{correlation_id}` inline
+  The body text embeds `{correlation_id}` inline
   ("...give your administrator this reference: {correlation_id}."), so
   unlike every sibling error template this page does NOT also add the
   separate small-print "Reference: ..." line — that would duplicate it.
-  May carry `state-error.svg` (R18) — "the one system failure, not a
-  denial".
+  Carries `state-error.svg` — the one system-failure illustration,
+  never used for an access denial.
 -#}
 {% extends "base.html" %}
 {% block main %}

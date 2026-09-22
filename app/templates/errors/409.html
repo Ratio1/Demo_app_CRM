@@ -1,57 +1,32 @@
-{#-  errors/409.html — CONTRACTS.md §8.4: `context: "stale" |
-  "archived_parent" | "duplicate" | "stage_terminal"` (R19), plus per-
+{#-  errors/409.html — context: `context: "stale" |
+  "archived_parent" | "duplicate" | "stage_terminal"`, plus per-
   context: `stale {object_label, updated_at, fields [{label, submitted,
   current, differs}], keep_form {action_url, values, version,
   idempotency_key}, reload_url}`, `archived_parent {contact_id,
   contact_name, restore_form | None}`, `duplicate {record_url}`,
   `stage_terminal {deal_url, stage_label}`. Authenticated shell (follows
-  the session, R56). Only the ACTIVE context's dict is ever referenced
+  the session). Only the ACTIVE context's dict is ever referenced
   below, so the other three keys never need to exist in a given render.
 
-  `correlation_id` is rendered unconditionally, although CONTRACTS.md
-  §8.4's 409 row is the one row in that table that omits it from its own
-  column (every other error template's row lists it explicitly) — R27's
-  blanket "every state panel... shows its correlation id" clearly still
-  applies, and `app/routes/errors.py`'s `conflict()` helper does pass
-  it (`extra={"context": context, "correlation_id": current_correlation_id(),
-  **extra}`), confirming the table's own omission rather than a missing
-  key here.
+  `correlation_id` is rendered unconditionally: every state panel shows
+  its correlation id, regardless of which context is active.
 
-  `archived_parent` — slice-b.md §2(d) says the "body"/"state" select
-  CP-13 vs CP-23, but the FROZEN `extra` shape in CONTRACTS.md §8.4's own
-  table carries no `body`/`state` key at all. Confirmed as a real
-  documentation gap, not a guess: `app/routes/contacts.py`'s
-  `_blocked_response` builds `archived_parent` with `body`/`state` always
-  present, and its own docstring says so — "The two keys are additions to
-  CONTRACTS.md §8.4's frozen archived_parent row ... recorded for the
-  contract step rather than assumed." This template reads them with
-  `.get(...)` regardless, so a render is defensive either way.
+  `archived_parent.body` distinguishes two states: the parent contact
+  is archived and must be restored first, or the requested action was
+  already carried out (the parent was already archived/restored by
+  someone else). Read with `.get(...)` since the key may be absent.
 
-  §4.23's stale-diff marker glyph: UX_FLOWS.md §3.9 says "a ★ marker",
-  UI_SPEC.md §4.23's own literal snippet uses "✎" — a cross-document
-  conflict. This template follows UI_SPEC's executable snippet (✎,
-  `aria-hidden`, plus the visible word "changed" — never the glyph
-  alone), flagged for the copy authority to reconcile.
+  The stale-diff marker uses "✎" with `aria-hidden`, plus the visible
+  word "changed" — never the glyph alone.
 
-  Zero-field stale (archive/restore, slice-b.md §1(b) note 5: "no fields;
-  version only") — UX_FLOWS.md §3.9's suppression clause (CP-12a) is
-  scoped to "a stage change ... or an admin reassignment", which does not
-  list archive/restore, so it is not applied here; the panel renders with
-  no per-field rows and both actions stay available. The exact zero-field
-  copy is UI_SPEC.md's own open ask A-11 (not yet answered) — this
-  template adds no invented sentence beyond the orientation line CP-85's
-  own screen already carries (UX_FLOWS.md §3.9's example prose, which
-  itself has no CP id yet — §10).
+  For an archive/restore action (version-only, no editable fields), the
+  panel renders with no per-field rows and both actions stay available.
 
-  `stale.keep_form.values` is read here as the form's WRITABLE fields
-  only (`name`/`company`/`email`/`phone`/`kind`, or empty for archive/
-  restore, or `{"owner_id": ...}` for reassign) — the same three names
-  this form already emits explicitly (`csrf_token`, `idempotency_key`,
-  `version`) are assumed absent from that map. Confirmed against
-  `app/services/contacts.py`: `_stale_after_race`'s callers pass
-  `submitted=values` (the validated field dict), `submitted={}` (archive/
-  restore) or `submitted={"owner_id": str(new_owner_id)}` (reassign) —
-  never the raw POST body, so this template never emits a repeated field.
+  `stale.keep_form.values` holds only the form's writable fields
+  (`name`/`company`/`email`/`phone`/`kind`, empty for archive/restore,
+  or `{"owner_id": ...}` for reassign) — never `csrf_token`,
+  `idempotency_key` or `version`, which this template already emits
+  explicitly, so no hidden field is ever repeated.
 -#}
 {% extends "base.html" %}
 {% block main %}

@@ -1,13 +1,12 @@
-{#-  errors/503.html — CONTRACTS.md §8.4: `context: "unavailable" |
-  "ambiguous_commit"` (R19/R37 — the token is `ambiguous_commit`, the
-  pre-R19 "unconfirmed" spelling is retired), `correlation_id`,
-  `record_url | None`. Public shell ALWAYS (R32) — the backend passes
-  `principal=None` unconditionally, same reasoning as 500.html.
+{#-  errors/503.html — context: `context: "unavailable" |
+  "ambiguous_commit"`, `correlation_id`, `record_url | None`. Public
+  shell ALWAYS — the backend passes `principal=None` unconditionally,
+  same reasoning as 500.html.
 
-  `unavailable` (DB down and unprovisioned, one body): CP-92/CP-18,
-  no action link. `ambiguous_commit`: CP-93/CP-19 — explicitly forbids
-  resubmission and sends the user to the record when `record_url` is
-  known. Both may carry `state-unavailable.svg` (R18).
+  `unavailable` (DB down and unprovisioned, one body): no action link.
+  `ambiguous_commit`: explicitly forbids resubmission and sends the
+  user to the record when `record_url` is known. Both may carry
+  `state-unavailable.svg`.
 -#}
 {% extends "base.html" %}
 {% block main %}

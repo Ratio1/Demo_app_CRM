@@ -1,7 +1,6 @@
-{#-  errors/404.html — CONTRACTS.md §8.4: `correlation_id`, `back_url`.
-  Shell follows the session. Identical for a foreign and a missing object,
-  for one principal (R27) — CP-84/CP-10. Action label "Dashboard"
-  (UI_SPEC.md §4.22 row: "link to Dashboard/Contacts").
+{#-  errors/404.html — context: `correlation_id`, `back_url`.
+  Shell follows the session. Renders identically for a foreign object
+  and a missing one, so a user can never tell the two apart.
 -#}
 {% extends "base.html" %}
 {% block main %}

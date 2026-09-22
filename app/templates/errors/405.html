@@ -1,16 +1,11 @@
-{#-  errors/405.html — CONTRACTS.md §8.4 / R38: the "400-family context":
-  `status`, `title`, `message` (a copy id), `correlation_id`. No `back_url`
-  in this context (unlike 400/404/413), so no action link.
+{#-  errors/405.html — context: `status`, `title`, `message`,
+  `correlation_id`. No `back_url` in this context (unlike 400/404/413),
+  so no action link.
 
-  Unlike every other error page, 405 has no dedicated `CP-##` heading/body
-  in UX_FLOWS.md §6 (`UX_FLOWS.md` §3.8 only fixes the behaviour — "a bare
-  405 with no body beyond the standard error page" — not the wording), so
+  Unlike every other error page, 405 has no fixed heading/body copy:
   `title`/`message` are rendered as plain server-supplied strings rather
-  than hardcoded here, unlike every sibling error template. This lane's
-  reading of "message (a copy id)" is that the value IS the resolved text
-  (as `notice.text` already is elsewhere in this contract), not the bare
-  id string; flagged in the session report as a contract ambiguity for
-  backend-security/the orchestrator to confirm.
+  than hardcoded here, unlike every sibling error template — the server
+  passes the already-resolved text, not a bare id to look up.
 -#}
 {% extends "base.html" %}
 {% block main %}
