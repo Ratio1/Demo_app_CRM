@@ -1,4 +1,4 @@
-"""``GET /dashboard`` — plan §4 task 6: totals against independently computed fixtures.
+"""``GET /dashboard`` — totals against independently computed fixtures.
 
 Every total below is computed **in this file**, from `Decimal` arithmetic
 over the exact rows this test inserted through the real HTTP surface —
@@ -317,7 +317,7 @@ async def test_dashboard_recent_activities_drop_when_the_parent_is_archived(
 
 
 async def test_root_redirects_signed_in_user_to_dashboard(agent_a: LoggedInPrincipal) -> None:
-  """`GET /` is `303 /dashboard` for a signed-in agent — the 404 the plan names first."""
+  """`GET /` is `303 /dashboard` for a signed-in agent, never a bare 404."""
   response = await agent_a.client.get("/")
   assert response.status_code == 303
   assert response.headers.get("location") == "/dashboard"

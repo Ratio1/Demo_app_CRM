@@ -1,19 +1,9 @@
 """Playwright end-to-end journey — login, forced reset, logout, keyboard, axe.
 
-Authority: ``PLAN.md`` §6 (Product/Design gates); ``ACCESS_MATRIX.md`` §7
-(``PRD-001``, ``SEC-018``'s browser half); ``slice-a.md`` §4 (route table).
-
 Plain **sync** tests (pytest-playwright's ``page`` fixture is sync); no
 ``pytestmark = pytest.mark.asyncio`` in this module. TLS is the real
 self-signed test certificate ``live_server`` generates, so every browser
-context here is built with ``ignore_https_errors=True`` (R41 point 4).
-
-Scope note: ``GET /dashboard`` is registered by Slice D, not Slice A
-(slice-a.md §4's own note). The forced-reset journey's final ``303`` target
-(``/dashboard?notice=password_changed``) therefore 404s in this slice by
-contract, not by defect; this module follows the journey exactly as far as
-Slice A's own route table reaches and does not invent dashboard content to
-assert on.
+context here is built with ``ignore_https_errors=True``.
 """
 
 from __future__ import annotations
@@ -48,8 +38,8 @@ def browser_context_args(browser_context_args: dict[str, Any]) -> dict[str, Any]
   """Extend pytest-playwright's default context args with ``ignore_https_errors``.
 
   The test cert is a throwaway fixture generated per ``live_server``
-  instance, not a trust decision (R41 point 4) — the same reason the httpx
-  fixtures use ``verify=False``.
+  instance, not a trust decision — the same reason the httpx fixtures use
+  ``verify=False``.
   """
   return {**browser_context_args, "ignore_https_errors": True}
 
@@ -137,7 +127,7 @@ def forced_reset_agent(live_server: LiveServer, tmp_path: Path) -> Iterator[tupl
 
 
 @pytest.mark.parametrize("viewport", VIEWPORTS)
-def test_prd001_login_forced_reset_change_password_logout_back_button(
+def test_login_forced_reset_change_password_logout_back_button(
   page: Page,
   live_server: LiveServer,
   forced_reset_agent: tuple[str, str],
@@ -167,10 +157,10 @@ def test_prd001_login_forced_reset_change_password_logout_back_button(
   page.get_by_label("Repeat new password").fill(new_password)
   page.get_by_role("button", name="Change password").click()
 
-  # Slice A does not register /dashboard (slice-a.md §4 note) — the 303
-  # lands there and the destination itself is out of this slice's scope.
-  # What this slice *can* assert: the browser left /account/password's
-  # forced state, i.e. the redirect fired at all.
+  # /dashboard is not registered by every route table this module might
+  # run against — the 303 lands there and the destination itself may be
+  # out of scope. What this test *can* assert: the browser left
+  # /account/password's forced state, i.e. the redirect fired at all.
   page.wait_for_url(lambda url: "/account/password" not in url, timeout=10_000)
 
   # Confirm the account is no longer forced: a direct visit to the change-
