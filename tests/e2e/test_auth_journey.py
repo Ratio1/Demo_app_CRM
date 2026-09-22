@@ -69,52 +69,60 @@ def _provision_forced_reset_agent(tmp_path: Path) -> tuple[str, str]:
   password_file = write_password_fixture(tmp_path, password, name="pw-create")
   try:
     with password_file.open("rb") as stdin_file:
-      subprocess.run(  # noqa: S603
-        [
-          str(WITH_ENV),
-          OWNER_ENV_FILE,
-          "--",
-          str(VENV_PYTHON),
-          "-B",
-          str(MANAGE),
-          "create-user",
-          "--email",
-          email,
-          "--name",
-          "E2E Forced Reset",
-          "--role",
-          "agent",
-          "--password-stdin",
-        ],
-        cwd=SUBMODULE_ROOT,
-        stdin=stdin_file,
-        check=True,
-        timeout=30.0,
-      )
+      log_path = tmp_path / "create-user.log"
+      with log_path.open("wb") as log_file:
+        subprocess.run(  # noqa: S603
+          [
+            str(WITH_ENV),
+            OWNER_ENV_FILE,
+            "--",
+            str(VENV_PYTHON),
+            "-B",
+            str(MANAGE),
+            "create-user",
+            "--email",
+            email,
+            "--name",
+            "E2E Forced Reset",
+            "--role",
+            "agent",
+            "--password-stdin",
+          ],
+          cwd=SUBMODULE_ROOT,
+          stdin=stdin_file,
+          stdout=log_file,
+          stderr=subprocess.STDOUT,
+          check=True,
+          timeout=30.0,
+        )
   finally:
     password_file.unlink(missing_ok=True)
 
   password_file = write_password_fixture(tmp_path, password, name="pw-reset")
   try:
     with password_file.open("rb") as stdin_file:
-      subprocess.run(  # noqa: S603
-        [
-          str(WITH_ENV),
-          OWNER_ENV_FILE,
-          "--",
-          str(VENV_PYTHON),
-          "-B",
-          str(MANAGE),
-          "reset-password",
-          "--email",
-          email,
-          "--password-stdin",
-        ],
-        cwd=SUBMODULE_ROOT,
-        stdin=stdin_file,
-        check=True,
-        timeout=30.0,
-      )
+      log_path = tmp_path / "reset-password.log"
+      with log_path.open("wb") as log_file:
+        subprocess.run(  # noqa: S603
+          [
+            str(WITH_ENV),
+            OWNER_ENV_FILE,
+            "--",
+            str(VENV_PYTHON),
+            "-B",
+            str(MANAGE),
+            "reset-password",
+            "--email",
+            email,
+            "--password-stdin",
+          ],
+          cwd=SUBMODULE_ROOT,
+          stdin=stdin_file,
+          stdout=log_file,
+          stderr=subprocess.STDOUT,
+          check=True,
+          timeout=30.0,
+        )
   finally:
     password_file.unlink(missing_ok=True)
 

@@ -55,11 +55,11 @@ async def test_sec013_preauth_session_is_live_at_9m59s_and_dead_at_10m01s(
   db_connection: Any, clock: Any
 ) -> None:
   """A pre-auth row is readable one second before its 10-minute expiry, dead one second after."""
-  from app.db.repositories.sessions import (  # type: ignore[import-not-found]
+  from app.db.repositories.sessions import (
     create_preauth_session,
     read_live_session,
   )
-  from app.security.sessions import PREAUTH_TTL  # type: ignore[import-not-found]
+  from app.security.sessions import PREAUTH_TTL
 
   _token, token_sha256 = _token_and_digest()
   _, csrf_sha256 = _token_and_digest()
@@ -334,7 +334,13 @@ async def test_sec029_logout_carries_clear_site_data_and_expires_the_cookie(
 
 
 def _run_manage_with_stdin(*args: str, password: str, tmp_path: Path, name: str) -> None:
-  """Run ``scripts/manage <args> --password-stdin`` under the owner env file."""
+  """Run ``scripts/manage <args> --password-stdin`` under the owner env file.
+
+  Combined stdout/stderr is redirected to ``<tmp_path>/<name>.log``, never
+  captured into a string: the module docstring's credential discipline
+  ("Subprocess stdout/stderr is always redirected to a per-test log file")
+  applies here exactly as it does to every helper in ``conftest.py``.
+  """
   import subprocess
 
   from conftest import MANAGE, OWNER_ENV_FILE, SUBMODULE_ROOT, VENV_PYTHON, WITH_ENV
@@ -343,13 +349,17 @@ def _run_manage_with_stdin(*args: str, password: str, tmp_path: Path, name: str)
   password_file = _write_password_fixture(tmp_path, password, name=name)
   try:
     with password_file.open("rb") as stdin_file:
-      subprocess.run(  # noqa: S603
-        [str(WITH_ENV), OWNER_ENV_FILE, "--", str(VENV_PYTHON), "-B", str(MANAGE), *args],
-        cwd=SUBMODULE_ROOT,
-        stdin=stdin_file,
-        check=True,
-        timeout=30.0,
-      )
+      log_path = tmp_path / f"{name}-manage.log"
+      with log_path.open("wb") as log_file:
+        subprocess.run(  # noqa: S603
+          [str(WITH_ENV), OWNER_ENV_FILE, "--", str(VENV_PYTHON), "-B", str(MANAGE), *args],
+          cwd=SUBMODULE_ROOT,
+          stdin=stdin_file,
+          stdout=log_file,
+          stderr=subprocess.STDOUT,
+          check=True,
+          timeout=30.0,
+        )
   finally:
     password_file.unlink(missing_ok=True)
 
