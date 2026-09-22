@@ -1,26 +1,23 @@
-{#-  partials/announce.html — CONTRACTS.md §8.3: `announce` (OOB).
+{#-  partials/announce.html — context: `announce` (OOB).
 
-  slice-b.md §2(e): a TOP-LEVEL out-of-band sibling using
-  `hx-swap-oob="innerHTML"` on `#announce`, so the shell's own
+  A TOP-LEVEL out-of-band sibling using `hx-swap-oob="innerHTML"` on
+  `#announce`, so the shell's own
   `<p id="announce" role="status" aria-live="polite" aria-atomic="true">`
   (base.html) is never removed — only its content is swapped. Included
   from a fragment partial (partials/contact_results.html) as a sibling of
-  that partial's own swap-target `<section>`, never nested inside it
-  (`allowNestedOobSwaps` is not pinned true in the htmx-config meta tag —
-  slice-b.md §1397 probe notes).
+  that partial's own swap-target `<section>`, never nested inside it.
 
   A full-page render passes `announce=None` (base.html's own `#announce`
   already renders empty), so this partial emits nothing there and there is
   never a second `#announce` node in the DOM.
 -#}
-{#- slice-b.md §2(e) prints this element verbatim, including its class.
-   "innerHTML" oob swap semantics (htmx 2.0.10, verified in slice-b.md
-   §2(j) probe 3's source read) only replace the MATCHED element's
-   children — the shell's real `#announce` (base.html) keeps its own
-   `role`/`aria-live`/`aria-atomic` and this node's own tag/attributes are
-   discarded, so the class below is otherwise inert; `.visually-hidden` is
-   aliased to `.sr-only` in app.css so nothing here references an
-   undefined class either way. #}
+{#- This element is printed verbatim, including its class. htmx's
+   "innerHTML" out-of-band swap semantics (htmx 2.0.10) only replace the
+   MATCHED element's children — the shell's real `#announce` (base.html)
+   keeps its own `role`/`aria-live`/`aria-atomic` and this node's own
+   tag/attributes are discarded, so the class below is otherwise inert;
+   `.visually-hidden` is aliased to `.sr-only` in app.css so nothing here
+   references an undefined class either way. #}
 {% if announce %}
 <p id="announce" hx-swap-oob="innerHTML" class="visually-hidden">{{ announce }}</p>
 {% endif %}

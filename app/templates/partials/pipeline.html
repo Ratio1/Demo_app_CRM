@@ -1,26 +1,21 @@
-{#-  partials/pipeline.html — CONTRACTS.md §8.3: `stages`, `query` + base —
+{#-  partials/pipeline.html — context: `stages`, `query` + base —
   the `#pipeline-results` swap target, `tabindex="-1"`.
 
-  UI_SPEC.md §4.18: five `<section aria-labelledby="col-{stage}-heading">`
-  columns >=1024px, five ALWAYS-VISIBLE stacked sections <1024px (no
-  `<details>` collapse — the € total is a required honesty value,
-  `ACC-302`, and must not hide behind an unstated default state), same
-  order and headers at both widths (`STAGE_ORDER`: new, qualified,
-  proposal, won, lost). R22: READ-ONLY — no stage control on any card,
-  every card links to the deal. slice-c.md §2(e): `focus_region` is
-  ALWAYS false here (no pager, no sort on this surface — `stage`/`sort`/
-  `page` are not in `ACCESS_MATRIX.md` §5.2's pipeline allowlist), so no
-  conditional `autofocus` is ever wired and this template references no
-  such key.
+  Five `<section aria-labelledby="col-{stage}-heading">` columns
+  >=1024px, five ALWAYS-VISIBLE stacked sections <1024px (no
+  `<details>` collapse — the € total for each stage is always shown,
+  never hidden behind a default filter), same order and headers at
+  both widths (`STAGE_ORDER`: new, qualified, proposal, won, lost).
+  READ-ONLY — no stage control on any card, every card links to the
+  deal. `focus_region` is ALWAYS false here (no pager, no sort on this
+  surface), so no conditional `autofocus` is ever wired and this
+  template references no such key.
 
-  UX_FLOWS.md S8 / UI_SPEC.md §4.18 name slightly different card fields
-  (Title/Amount/Contact/Close date vs. Title/Amount/Owner chip/Contact) —
-  a genuine cross-document conflict, flagged rather than silently picked.
-  This template renders the union: title, amount, contact link (+
-  "Archived contact" badge when `deal.parent_archived`), close date, and
-  an owner chip for admin scope only (matching the deal list's own
-  admin-only Owner column, since an agent's pipeline shows only their own
-  deals and `is_own` would always read "you").
+  Card fields: title, amount, contact link (+ "Archived contact" badge
+  when `deal.parent_archived`), close date, and an owner chip for admin
+  scope only (matching the deal list's own admin-only Owner column,
+  since an agent's pipeline shows only their own deals and `is_own`
+  would always read "you").
 -#}
 {% from "partials/badges.html" import archived_contact_badge %}
 <section id="pipeline-results" tabindex="-1" class="pipeline">

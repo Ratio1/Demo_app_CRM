@@ -1,27 +1,23 @@
-{#-  partials/pagination.html — CONTRACTS.md §8.3: `results` (macro). "The
-  single implementation of R24's markup; the timeline uses the same macro
-  with `timeline` in place of `results`, so the available `<a>` and the
-  inert `<span>` are written in exactly one place."
+{#-  partials/pagination.html — context: `results` (macro). The single
+  implementation of this markup; the timeline uses the same macro with
+  `timeline` in place of `results`, so the available `<a>` and the inert
+  `<span>` are written in exactly one place.
 
-  Markup and attribute set: UI_SPEC.md §4.10 (CP-101/CP-107/CP-103.../
-  CP-106) for the INVARIANTS (available = real `<a>` with `href` + stable
-  id + no `tabindex`; unavailable = non-focusable `<span
+  Markup and attribute invariants: available = real `<a>` with `href` +
+  stable id + no `tabindex`; unavailable = non-focusable `<span
   aria-disabled="true" class="is-disabled">`, same visible label, no id,
-  no `hx-*`, no `href` — never `disabled`, never a `<button>`), amended by
-  slice-b.md §2(e)/R40 for the SWAP MECHANICS actually wired this slice:
-  `hx-swap="outerHTML"` (not UI_SPEC's stale `innerHTML` example — the
-  partial renders its own container, so outerHTML is what lets the
-  swapped-in fragment carry its own `tabindex="-1"`/`autofocus`) and
-  `hx-push-url="true"` (R15: one URL serves the enhanced and no-JS paths).
+  no `hx-*`, no `href` — never `disabled`, never a `<button>`. Swap
+  mechanics: `hx-swap="outerHTML"` (the partial renders its own
+  container, so outerHTML is what lets the swapped-in fragment carry
+  its own `tabindex="-1"`/`autofocus`) and `hx-push-url="true"` (one URL
+  serves the enhanced and no-JS paths).
 
-  Only `contacts/list.html`/`partials/contact_results.html` wire this
-  macro's `<a>` branch in Slice B — `target`/`id_prefix` are parameterized
-  so `partials/timeline.html` (a later slice) reuses this file unchanged,
-  per the CONTRACTS.md row's own instruction; the contact-workspace
-  timeline region rendered THIS slice always takes the zero-item,
-  has_prev/has_next=false placeholder (slice-b.md §2(i)), so both timeline
-  controls always render as the inert `<span>` here — no `#timeline`
-  hx-wiring is reachable yet, and none is asserted.
+  `target`/`id_prefix` are parameterized so both `partials/
+  contact_results.html`/`contacts/list.html` and `partials/
+  timeline.html` reuse this file unchanged. The contact-workspace
+  timeline region currently always renders zero items with
+  has_prev/has_next=false, so both timeline controls always render as
+  the inert `<span>` here.
 -#}
 {% macro pagination(results, target, id_prefix, aria_label, prev_label, next_label) -%}
 <p class="pagination-summary">Showing {{ results.range_start }}–{{ results.range_end }} of {{ results.total }}</p>

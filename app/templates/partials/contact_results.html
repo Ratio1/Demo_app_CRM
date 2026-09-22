@@ -1,34 +1,26 @@
 {#-  partials/contact_results.html — the `#contact-results` swap target.
-  CONTRACTS.md §8.3 lists this partial's context as "`results` + base",
-  which reads as abbreviated: a sort-header link needs the active filters
-  to survive a re-sort, and the empty-state CTA needs `can_create`,
-  neither reachable from `results` alone. Confirmed, not just inferred —
-  `app/routes/contacts.py`'s `list_contacts` route (`page.update(query=...,
-  results=..., can_create=True, focus_region=focus_region)`) builds ONE
-  context dict and renders it through either this partial or
-  `contacts/list.html` depending on `HX-Request`, so every key here is
-  what that route actually passes both times. Still an owed CONTRACTS.md
-  §8.3 documentation amendment (three keys: `query`, `can_create`,
-  `focus_region`), just no longer an open question for this lane.
+  Context is `results` plus base, plus `query` (a sort-header link needs
+  the active filters to survive a re-sort), `can_create` (the empty-state
+  CTA needs it) and `focus_region`. `app/routes/contacts.py`'s
+  `list_contacts` route builds one context dict and renders it through
+  either this partial or `contacts/list.html` depending on `HX-Request`,
+  so every key here is what that route actually passes both times.
 
-  `results.items` (and `stale.keep_form.values` in errors/409.html) is
-  exactly the dict-vs-attribute collision `app/routes/rendering.py`'s own
-  `View` class docstring names by id — this template's attribute access
-  (`results.items`, never `results['items']`) is what that class is built
-  to serve.
+  `results.items` is read as an attribute (`results.items`, never
+  `results['items']`) to match how `app/routes/rendering.py` builds the
+  view.
 
-  R40 / slice-b.md §2(e): the partial renders its OWN container
-  (`hx-swap="outerHTML"` on the caller's side, §2(e)), `tabindex="-1"` +
-  conditional `autofocus` here is the entire focus-move mechanism, no
-  script. `partials/announce.html` is included as a TOP-LEVEL sibling of
-  this `<section>`, never nested inside it (OOB swap target is the shell's
-  own `#announce`, not this container).
+  The partial renders its OWN container (`hx-swap="outerHTML"` on the
+  caller's side), `tabindex="-1"` + conditional `autofocus` here is the
+  entire focus-move mechanism, no script. `partials/announce.html` is
+  included as a TOP-LEVEL sibling of this `<section>`, never nested
+  inside it (the OOB swap target is the shell's own `#announce`, not
+  this container).
 
-  Table→card: UI_SPEC.md §4.8/§4.9/R23 — one <table role="table"> with
-  explicit ARIA roles, `.cell-label` spans (real text, `display:none`
-  >=640px), CSS grid rows <640px. Sort headers: UX_FLOWS.md §4.4's
-  allowlist (`name, company, email, created_at, updated_at`); `Type` and
-  `Owner` are not sortable.
+  Table→card: one <table role="table"> with explicit ARIA roles,
+  `.cell-label` spans (real text, `display:none` >=640px), CSS grid
+  rows <640px. Sortable columns: `name, company, email, created_at,
+  updated_at`; `Type` and `Owner` are not sortable.
 -#}
 {%- macro _sort_href(key) -%}
 {%- set _dir = "desc" if (query.sort == key and query.dir == "asc") else "asc" -%}
@@ -58,12 +50,11 @@
   </div>
   {% else %}
     {% if results.result_state == "no_results" %}
-    {#- UX_FLOWS.md §3.22: "A page beyond the result set renders no_results
-       with the pagination showing the real scoped range (ACC-112) … both
-       paging directions then render as Pin U-2's inert <span>" — unlike
-       `empty` (zero rows in scope at all), `no_results` still needs the
-       pagination control below (outside this `<div>`), or a request that
-       paged past the end has no way back to a valid page. #}
+    {#- A page beyond the result set renders `no_results` with the
+       pagination still showing the real scoped range — unlike `empty`
+       (zero rows in scope at all), `no_results` still needs the
+       pagination control below (outside this `<div>`), or a request
+       that paged past the end has no way back to a valid page. #}
     <div class="state-panel state-panel-region">
       <img src="/static/img/no-results.svg" alt="" width="200" height="160">
       <h2 tabindex="-1">No contacts match this search</h2>

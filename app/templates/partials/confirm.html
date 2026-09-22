@@ -1,17 +1,15 @@
-{#-  partials/confirm.html — CONTRACTS.md §8.3: `summary_text`, `body_text`,
+{#-  partials/confirm.html — context: `summary_text`, `body_text`,
   `button_text`, `action_url`, `hidden {…}`.
 
-  UI_SPEC.md §4.20 (archive) / §4.18 (the two terminal stage confirmations,
-  a later slice — same component): a native `<details class="confirm">`,
+  Used for the archive confirmation and for the two terminal stage
+  confirmations (same component): a native `<details class="confirm">`,
   no script, no Cancel control — re-activating the `<summary>` IS the
-  dismissal. `csrf_token` is NOT part of `hidden` (contacts/detail.html's
-  frozen `archive_form`/`restore_form` context keys are exactly
-  `{idempotency_key, version}`, CONTRACTS.md §8.2) — this partial emits it
-  itself from the ambient base-context `csrf_token`, and `hidden` supplies
-  every other field, in insertion order, as a plain `{name: value}` map so
-  one caller can carry `idempotency_key`+`version` (archive/restore) and a
-  later caller (deal stage "Won"/"Lost") can add `to_stage` the same way
-  with no change here.
+  dismissal. `csrf_token` is NOT part of `hidden` — this partial emits
+  it itself from the ambient base-context `csrf_token`, and `hidden`
+  supplies every other field, in insertion order, as a plain
+  `{name: value}` map so one caller can carry `idempotency_key`+
+  `version` (archive/restore) and another caller (deal stage
+  "Won"/"Lost") can add `to_stage` the same way with no change here.
 
   This template is `{% with %}`-included, never `{% include ... with
   context=False %}`'d standalone — every variable above is set by the

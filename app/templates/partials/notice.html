@@ -1,15 +1,14 @@
-{#-  partials/notice.html — CONTRACTS.md §8.1/§8.3: `notice` (None |
-  {kind: "success"|"info"|"warning", text}) — R20. The server maps an
+{#-  partials/notice.html — context: `notice` (None |
+  {kind: "success"|"info"|"warning", text}). The server maps an
   allowlisted `?notice=<code>` to this object through its own fixed table;
   the template never inspects the query string and never echoes anything
   that is not `notice.text`. Renders directly after the page header on a
-  successful PRG redirect. Slice A's three codes (slice-a.md §2.7):
-  `signed_out` (CP-26), `session_ended` (CP-07), `password_changed`
-  (CP-54 + CP-06, one banner).
+  successful redirect. The three codes currently in use are:
+  `signed_out`, `session_ended`, `password_changed` (one combined banner).
 
-  `role="alert"` for warning (the one Slice A kind that is never purely
-  informational is not used by these three codes, but the mapping is kept
-  general per UI_SPEC.md §4.21), `role="status"` for success/info.
+  `role="alert"` for warning (the one kind that is never purely
+  informational — none of the three current codes use it, but the
+  mapping is kept general), `role="status"` for success/info.
 -#}
 {% if notice %}
 <p class="notice alert alert-{{ notice.kind }}" role="{{ 'alert' if notice.kind == 'warning' else 'status' }}">

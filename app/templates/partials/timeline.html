@@ -1,27 +1,26 @@
-{#-  partials/timeline.html — CONTRACTS.md §8.3: "`timeline`, `contact_id` +
-  base — the **`#timeline`** swap target, `tabindex="-1"`".
+{#-  partials/timeline.html — context: `timeline`, `contact_id` +
+  base — the `#timeline` swap target, `tabindex="-1"`.
 
-  This file holds the markup `contacts/detail.html` rendered inline while no
-  route existed (slice-b.md §2(i): "zero items, no route yet"). The page now
-  includes it instead, so the region has ONE implementation for the full
-  render and for the fragment `GET /contacts/{id}/timeline` serves — the same
-  arrangement `contacts/list.html` and `partials/contact_results.html` have.
-  Nothing about the add-activity form above it changes; the form is frozen and
-  is not part of this partial.
+  `contacts/detail.html` includes this file, so the region has ONE
+  implementation for the full render and for the fragment
+  `GET /contacts/{id}/timeline` serves — the same arrangement
+  `contacts/list.html` and `partials/contact_results.html` have.
+  Nothing about the add-activity form above it changes; the form is
+  separate and is not part of this partial.
 
-  R40 / slice-b.md §2(e): the partial renders its OWN container
-  (`hx-swap="outerHTML"` on the pagination links), and `tabindex="-1"` here is
-  what lets the swapped-in region receive focus at all. The region keeps
-  `aria-label="Activity timeline"` rather than a second visible "Activity"
-  heading — CONTRACTS.md §8.2's note on the frozen detail template, unchanged.
+  The partial renders its OWN container (`hx-swap="outerHTML"` on the
+  pagination links), and `tabindex="-1"` here is what lets the
+  swapped-in region receive focus at all. The region keeps
+  `aria-label="Activity timeline"` rather than a second visible
+  "Activity" heading.
 
-  Dates: `datetime` carries ISO (wire), the text carries `21 Sep 2026` through
-  the `day` filter (UX_FLOWS.md §1.4 — "a user never sees a bare ISO date").
-  Kind is a text label plus its 16px `aria-hidden` icon, which is the badge
+  Dates: `datetime` carries ISO (wire), the text carries `21 Sep 2026`
+  through the `day` filter — a user never sees a bare ISO date. Kind is
+  a text label plus its 16px `aria-hidden` icon, following the badge
   partial's own rule: colour is never the only cue.
 
-  No edit and no delete affordance appears here, in any state: the runtime
-  role holds neither privilege on the table (ACC-413, ACC-414).
+  No edit and no delete affordance appears here, in any state: the
+  runtime role holds neither privilege on the table.
 -#}
 {% from "partials/pagination.html" import pagination %}
 <div id="timeline" tabindex="-1" aria-label="Activity timeline">

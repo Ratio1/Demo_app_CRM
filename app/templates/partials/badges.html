@@ -1,20 +1,19 @@
-{#-  partials/badges.html — CONTRACTS.md §8.3: macros `stage_badge(stage)`,
+{#-  partials/badges.html — macros `stage_badge(stage)`,
   `kind_badge(kind)`, `archived_badge()`, `owner_line(owner_name, is_own)`.
 
-  UI_SPEC.md §4.12: pill shape, `--text-xs`, `--weight-medium`, text label
-  (CP-128) plus, where natural, a 16px `aria-hidden` icon as a SECOND
-  non-colour cue. Slice B only renders `kind_badge` and `archived_badge`
-  (contacts have no stage); `stage_badge` is included now so a later slice
-  needs no template change, per the same "no CSS/markup addition later"
-  reasoning `app.css` §13 already states for pagination/table→card.
+  Pill shape, `--text-xs`, `--weight-medium`, a text label plus, where
+  natural, a 16px `aria-hidden` icon as a SECOND non-colour cue. Only
+  `kind_badge` and `archived_badge` are wired into a screen so far
+  (contacts have no stage); `stage_badge` is included so a later screen
+  needs no template change.
 
-  `owner_line` renders CP-32 verbatim ("Owner: you" / "Owner: {name}") as
-  PLAIN TEXT (UI_SPEC.md §4.13 — no pill on the workspace header/editor
-  owner line; the pill is reserved for list rows, which build their own
-  chip inline rather than through this macro — see contact_results.html).
+  `owner_line` renders "Owner: you" / "Owner: {name}" as PLAIN TEXT (no
+  pill on the workspace header/editor owner line; the pill is reserved
+  for list rows, which build their own chip inline rather than through
+  this macro — see contact_results.html).
 
-  Icon ids are ARTWORK_INVENTORY.md §2's sprite (25 symbols, unchanged this
-  slice): icon-lead, icon-customer, icon-archive, icon-stage-*.
+  Icon ids come from the shared sprite (icons.svg): icon-lead,
+  icon-customer, icon-archive, icon-stage-*.
 -#}
 {% macro kind_badge(kind) -%}
   {%- if kind == "customer" -%}
@@ -28,23 +27,19 @@
 <span class="badge badge-archived"><svg class="icon icon-16" aria-hidden="true"><use href="/static/img/icons.svg#icon-archive"></use></svg><span>Archived</span></span>
 {%- endmacro %}
 
-{#- Additive macro (slice-c.md §2(e), CP-128 "Archived contact") — NOT one
-   of CONTRACTS.md §8.3's four frozen `partials/badges.html` macros, but
-   adding one alongside them renames/drops none of the four and no
-   consumer's signature changes. UX_FLOWS.md §4.7 S7: "A deal whose parent
-   is archived ... carries an 'Archived contact' badge with text from
-   `parent_archived`" — the deal list, the pipeline cards and the deal
+{#- A deal whose parent contact is archived carries an "Archived
+   contact" badge — the deal list, the pipeline cards and the deal
    detail's contact link all use this, distinct from `archived_badge()`
    which reads "Archived" alone for the contact's OWN screens. #}
 {% macro archived_contact_badge() -%}
 <span class="badge badge-archived"><svg class="icon icon-16" aria-hidden="true"><use href="/static/img/icons.svg#icon-archive"></use></svg><span>Archived contact</span></span>
 {%- endmacro %}
 
-{#- CONTRACTS.md §8.3 freezes this macro's signature as `stage_badge(stage)` —
-   one argument, no separate label parameter — so the five fixed CP-128
-   labels are a module-level map here rather than a caller-supplied string;
-   not wired into any Slice B screen (contacts carry no stage), kept so a
-   later slice needs no template change. #}
+{#- This macro's signature is `stage_badge(stage)` — one argument, no
+   separate label parameter — so the five stage labels are a
+   module-level map here rather than a caller-supplied string; not yet
+   wired into a screen (contacts carry no stage), kept so a later
+   screen needs no template change. #}
 {% set _stage_labels = {"new": "New", "qualified": "Qualified", "proposal": "Proposal", "won": "Won", "lost": "Lost"} %}
 {% macro stage_badge(stage) -%}
 <span class="badge badge-stage-{{ stage }}"><svg class="icon icon-16" aria-hidden="true"><use href="/static/img/icons.svg#icon-stage-{{ stage }}"></use></svg><span>{{ _stage_labels[stage] }}</span></span>

@@ -1,26 +1,25 @@
-{#-  partials/deal_results.html — CONTRACTS.md §8.3: `results` + base —
+{#-  partials/deal_results.html — context: `results` + base —
   the `#deal-results` swap target, `tabindex="-1"`.
 
-  Mirrors `partials/contact_results.html`'s mechanism (R40 focus-on-swap,
-  table<->card at 640px, R23/R24 pagination) — see that file's own header
-  comment for the shared rationale, not repeated here. Contract addition,
-  documented not invented, same as that file's own note: `deals/list.html`
-  also supplies `focus_region` on every render (always `false` on the full
-  page; computed on the fragment per slice-c.md §2(e)).
+  Mirrors `partials/contact_results.html`'s mechanism (focus-on-swap,
+  table<->card at 640px, shared pagination) — see that file's own header
+  comment for the shared rationale, not repeated here. `deals/list.html`
+  also supplies `focus_region` on every render (always `false` on the
+  full page; computed on the fragment).
 
-  UX_FLOWS.md §4.7 S7: Title (link) · Contact (link, "Archived contact"
-  badge when `row.parent_archived`) · Amount (right-aligned) · Stage
-  (badge) · Close date · Owner (admin only). Sort allowlist
-  (ACCESS_MATRIX.md §5.2): title, amount, close_date, stage, created_at —
-  "Contact"/"Owner" are not sortable, same convention as the contacts
-  list's Type/Owner columns.
+  Columns: Title (link) · Contact (link, "Archived contact" badge when
+  `row.parent_archived`) · Amount (right-aligned) · Stage (badge) ·
+  Close date · Owner (admin only). Sortable columns: title, amount,
+  close_date, stage, created_at — "Contact"/"Owner" are not sortable,
+  same convention as the contacts list's Type/Owner columns.
 
-  "The amount stays on the card's first line with the title" below 640px
-  (UX_FLOWS.md §4.7 S7): the Title and Amount `<td>`s share the FIRST grid
-  row via named `grid-area`s (`.cell-title`/`.cell-amount`, app.css) rather
-  than each cell taking its own row the way the generic `.responsive-table`
-  pattern does — no content is duplicated, so a screen reader still hears
-  Title once and Amount once, each with its own `<th>` and sort link.
+  The amount stays on the card's first line with the title below 640px:
+  the Title and Amount `<td>`s share the FIRST grid row via named
+  `grid-area`s (`.cell-title`/`.cell-amount`, app.css) rather than each
+  cell taking its own row the way the generic `.responsive-table`
+  pattern does — no content is duplicated, so a screen reader still
+  hears Title once and Amount once, each with its own `<th>` and sort
+  link.
 -#}
 {%- macro _sort_href(key) -%}
 {%- set _dir = "desc" if (query.sort == key and query.dir == "asc") else "asc" -%}

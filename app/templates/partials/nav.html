@@ -1,16 +1,15 @@
-{#-  partials/nav.html — CONTRACTS.md §8.3 "base only": the text wordmark,
+{#-  partials/nav.html — base context only: the text wordmark,
   the three destinations and the account block, rendered TWICE (>=1024px
   sidebar, <1024px top bar + native <details> menu) from one link list;
   CSS `display: none` hides whichever does not apply so exactly one
-  `aria-label="Primary"` landmark is exposed at any width
-  (UX_FLOWS.md §1.3, UI_SPEC.md §4.1).
+  `aria-label="Primary"` landmark is exposed at any width.
 
   Only included by base.html when `principal` is present. The three
   destination links are omitted in forced-reset mode
-  (`principal.must_change_password`) — UX_FLOWS.md §3.3 / §1.3 "Forced-reset
-  shell: the menu holds the account block only, no destination links" — the
-  account block (identity, Change password, Sign out) always renders.
-  No image, no inline SVG, no `mark.svg` reference anywhere (R17).
+  (`principal.must_change_password`) — the menu then holds the account
+  block only, no destination links — the account block (identity,
+  Change password, Sign out) always renders.
+  No image, no inline SVG, no logo file referenced anywhere.
 -#}
 {% set _forced = principal.must_change_password %}
 {% set _role_label = "Administrator" if principal.is_admin else "Agent" %}
