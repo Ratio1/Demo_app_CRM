@@ -2,7 +2,8 @@
 
 Authority: ``ACCESS_MATRIX.md`` §7; ``slice-a.md`` §1.1
 (``app/security/throttle.py``: ``LOGIN_FAILURES=5``, ``LOGIN_WINDOW=15min``,
-``LOGIN_LOCK=15min``), §2.4 (login failure handling).
+``LOGIN_LOCK=15min``), §2.4 (login failure handling); ruling **R52**
+(``contracts/slice-a.md`` §7.5 amendment).
 
 Throttle/budget *counting and window recovery*, and the concurrent
 hash-queue depth (SEC-034), are wire-observable (drive real failed
@@ -10,20 +11,109 @@ logins/requests through ``live_server``); Argon2 parameter and
 timing-parity checks (SEC-017, SEC-033) are in-process against
 ``PasswordService`` directly, with the **real**, pinned parameters — never
 the fast test profile, which §7.4 reserves for bulk fixture setup only.
+
+Isolation (R52)
+-----------------
+The throttle and budget counters are deliberately **DB-shared, global
+state** (spec §6 S6) — that is not weakened here to make tests pass.
+Instead, every test in this module:
+
+1. targets a **dedicated, uniquely-generated** ``example.test`` identifier
+   (``conftest.unique_email`` / :func:`provision_agent`) — **never the
+   shared session admin** (``bootstrap_admin``/``admin_session``), which
+   other modules elsewhere in the same suite run rely on staying
+   throttle-free and budget-free; and
+2. runs under :func:`_reset_throttle_and_budget_between_tests`, an
+   ``autouse`` fixture (function-scoped — see its own docstring for why
+   that, and not a single ``scope="module"`` instance, is what "after
+   EVERY test" requires) that clears every row from ``login_throttle`` and
+   ``rate_budget`` (owner role, its own subprocess) both before and after
+   each test, so a global budget one test trips can never leak into the
+   next.
 """
 
 from __future__ import annotations
 
 import re
-from typing import Any
+from collections.abc import Iterator
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
-from conftest import ProvisionedUser, extract_csrf_token
+
+if TYPE_CHECKING:
+  from argon2 import PasswordHasher
+from conftest import (
+  OWNER_ENV_FILE,
+  VENV_PYTHON,
+  ProvisionedUser,
+  extract_csrf_token,
+  login_via_http,
+  run_with_env,
+)
 
 pytestmark = pytest.mark.asyncio
 
 LOGIN_FAILURE_THRESHOLD = 5
+
+#: Owner-role, autocommit: expiry/eviction is maintenance's job elsewhere,
+#: this is a blunt test-isolation wipe of exactly the two counter tables
+#: R52 names, nothing else (``crm`` is never touched; this only ever runs
+#: against ``crm_test``, via ``OWNER_ENV_FILE``).
+_CLEAR_THROTTLE_AND_BUDGET_SNIPPET = """
+import asyncio
+from typing import Any, cast
+from psycopg import AsyncConnection
+from app.config import load_config
+
+async def main() -> None:
+  kwargs = cast('dict[str, Any]', load_config().connect_kwargs())
+  conn = await AsyncConnection.connect(autocommit=True, **kwargs)
+  try:
+    await conn.execute('DELETE FROM public.login_throttle')
+    await conn.execute('DELETE FROM public.rate_budget')
+  finally:
+    await conn.close()
+
+asyncio.run(main())
+"""
+
+
+def _clear_throttle_and_budget_state(*, log_path: Path) -> None:
+  """Delete every row from ``login_throttle`` and ``rate_budget`` (owner role)."""
+  run_with_env(
+    OWNER_ENV_FILE,
+    str(VENV_PYTHON),
+    "-B",
+    "-c",
+    _CLEAR_THROTTLE_AND_BUDGET_SNIPPET,
+    log_path=log_path,
+  )
+
+
+@pytest.fixture(autouse=True)
+def _reset_throttle_and_budget_between_tests(
+  crm_test_schema: None, tmp_path: Path
+) -> Iterator[None]:
+  """Clear ``login_throttle``/``rate_budget`` before **and** after every test here (R52).
+
+  Deliberately **function-scoped** (pytest's default) despite R52's prose
+  calling it "module-scoped": a ``scope="module"`` fixture instantiates
+  **once** for the whole module and could not clear state *between*
+  individual tests, which is exactly what "after EVERY test" requires — so
+  "module-scoped" is read here as "scoped to this module's tests" (an
+  autouse fixture defined in this file, applying to every test it
+  collects), not as the literal pytest scope keyword. Depending on
+  ``crm_test_schema`` (session-scoped) rather than assuming some earlier
+  module already requested it means this module is safe to run in
+  isolation too (``pytest tests/security/test_throttle_and_budget.py``),
+  not only as part of the full suite.
+  """
+  _clear_throttle_and_budget_state(log_path=tmp_path / "clear-before.log")
+  yield
+  _clear_throttle_and_budget_state(log_path=tmp_path / "clear-after.log")
+
 
 #: Matches the hidden ``csrf_token`` field's value exactly as
 #: ``conftest._CSRF_INPUT_PATTERN`` extracts it, so :func:`_body_without_variable_fields`
@@ -83,12 +173,19 @@ async def _failed_login(client: httpx.AsyncClient, *, email: str) -> httpx.Respo
 
 
 async def test_sec030_five_failures_trip_a_temporary_backoff_that_recovers(
-  http_client_factory: Any, bootstrap_admin: ProvisionedUser
+  http_client_factory: Any, provision_agent: Any
 ) -> None:
-  """The 6th failed attempt within 15 minutes for one account is ``429``, not ``401``."""
+  """The 6th failed attempt within 15 minutes for one account is ``429``, not ``401``.
+
+  Targets a freshly provisioned, dedicated agent (R52) — never the shared
+  session admin — so this test's own throttle trip cannot lock out
+  ``bootstrap_admin`` for every other module that logs in as it later in
+  the same session.
+  """
+  agent: ProvisionedUser = provision_agent()
   client: httpx.AsyncClient = http_client_factory()
   statuses = [
-    (await _failed_login(client, email=bootstrap_admin.email)).status_code
+    (await _failed_login(client, email=agent.email)).status_code
     for _ in range(LOGIN_FAILURE_THRESHOLD + 1)
   ]
   assert statuses[:LOGIN_FAILURE_THRESHOLD] == [401] * LOGIN_FAILURE_THRESHOLD
@@ -112,7 +209,7 @@ async def test_sec031a_the_global_login_budget_trips_with_a_sanitized_429(
 
 
 async def test_sec031b_the_budget_recovers_without_operator_action(
-  http_client_factory: Any, bootstrap_admin: ProvisionedUser
+  http_client_factory: Any,
 ) -> None:
   """A successful login still works after a burst that trips the global budget subsides.
 
@@ -120,7 +217,10 @@ async def test_sec031b_the_budget_recovers_without_operator_action(
   1-minute window is taken here; it only asserts that *not every* request
   in a moderate burst is refused, which is the weakest true statement this
   suite can make without waiting out a live minute — a stronger version
-  belongs to a longer-running acceptance run, not this suite).
+  belongs to a longer-running acceptance run, not this suite). Drives
+  anonymous ``GET /login`` only, so it needs no account of its own — no
+  ``bootstrap_admin`` dependency (R52: this module never targets the
+  shared session admin).
   """
   client: httpx.AsyncClient = http_client_factory()
   statuses = [(await client.get("/login")).status_code for _ in range(20)]
@@ -144,7 +244,7 @@ async def test_sec032_unknown_user_and_wrong_password_are_indistinguishable(
 
 
 async def test_sec035_the_per_account_mutation_budget_trips_and_recovers(
-  admin_session: httpx.AsyncClient,
+  http_client_factory: Any, provision_agent: Any
 ) -> None:
   """A burst of change-password ``GET`` requests (the account_query bucket) eventually 429s.
 
@@ -152,8 +252,18 @@ async def test_sec035_the_per_account_mutation_budget_trips_and_recovers(
   the exact threshold (``DATA_CONTRACT.md`` §3.5's per-account limits are
   not quoted in the documents this lane read; the exact number is left to
   ``backend-security`` to confirm and this test tightened accordingly).
+  Logs in as a freshly provisioned, dedicated agent rather than
+  ``admin_session`` (R52) — 250 requests would otherwise burn a large
+  chunk of the shared session admin's own per-account budget for every
+  test that runs after this one in the same session.
   """
-  statuses = [(await admin_session.get("/account/password")).status_code for _ in range(250)]
+  agent: ProvisionedUser = provision_agent()
+  client: httpx.AsyncClient = http_client_factory()
+  login_response = await login_via_http(client, email=agent.email, password=agent.password)
+  assert login_response.status_code == 303, (
+    f"login as the freshly provisioned agent failed (status {login_response.status_code})"
+  )
+  statuses = [(await client.get("/account/password")).status_code for _ in range(250)]
   assert 429 in statuses
 
 
@@ -183,7 +293,7 @@ async def test_sec036_the_account_throttle_429_does_not_enumerate(
 # ---------------------------------------------------------------------------
 
 
-def _real_password_hasher() -> object:
+def _real_password_hasher() -> PasswordHasher:
   """The production Argon2 parameters (never the fast test profile — §7.4)."""
   from argon2 import PasswordHasher, Type
 
