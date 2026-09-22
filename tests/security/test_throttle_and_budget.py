@@ -14,6 +14,7 @@ the fast test profile, which §7.4 reserves for bulk fixture setup only.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import httpx
@@ -23,6 +24,53 @@ from conftest import ProvisionedUser, extract_csrf_token
 pytestmark = pytest.mark.asyncio
 
 LOGIN_FAILURE_THRESHOLD = 5
+
+#: Matches the hidden ``csrf_token`` field's value exactly as
+#: ``conftest._CSRF_INPUT_PATTERN`` extracts it, so :func:`_body_without_variable_fields`
+#: blanks precisely the one field that legitimately differs between two
+#: sessions (see its docstring) and nothing else.
+_CSRF_VALUE_PATTERN = re.compile(r'(name="csrf_token"[^>]*value=")[^"]*(")')
+
+#: Matches ``auth/login.html``'s echoed ``form.email`` value (``id=
+#: "login-email"`` disambiguates it from the hidden CSRF field). SEC-032 and
+#: SEC-036 deliberately submit two *different* email addresses (an
+#: unregistered one and a registered one, or two differently-keyed
+#: throttled ones) — the whole premise of "unknown vs known account" — so
+#: this field echoing the submitted value back is expected, not a leak, and
+#: must be normalized out the same way the CSRF token is.
+_EMAIL_VALUE_PATTERN = re.compile(r'(id="login-email"[\s\S]*?value=")[^"]*(")')
+
+
+def _body_without_variable_fields(html: str) -> str:
+  """Return ``html`` with its per-request ``csrf_token`` and echoed email blanked out.
+
+  Parameters
+  ----------
+  html : str
+    A rendered ``auth/login.html`` page.
+
+  Returns
+  -------
+  str
+    The same markup with both values replaced by a fixed placeholder.
+
+  Notes
+  -----
+  ``app.security.csrf.csrf_for_token`` derives the CSRF token from the
+  session's own token (``crm-csrf-v1:<session token>``), so it is, by
+  design, different for every client/session — including two clients that
+  hit ``/login`` at the same instant with the same email and password.
+  The email field simply echoes back whatever was submitted, per
+  ``CONTRACTS.md`` §8.2's ``form {email}`` context key. SEC-032/SEC-036
+  assert the *rest* of the page (status, copy, structure) is identical
+  regardless of whether the account exists or is locked; a raw ``==`` on
+  the full body fails on these two expected, non-enumerating differences
+  and never actually tests the no-enumeration property the ID names.
+  Confirmed empirically (a line-level diff of two such bodies) that these
+  two fields are the *only* differences once both are blanked.
+  """
+  without_csrf = _CSRF_VALUE_PATTERN.sub(r"\1REDACTED\2", html)
+  return _EMAIL_VALUE_PATTERN.sub(r"\1REDACTED\2", without_csrf)
 
 
 async def _failed_login(client: httpx.AsyncClient, *, email: str) -> httpx.Response:
@@ -90,7 +138,9 @@ async def test_sec032_unknown_user_and_wrong_password_are_indistinguishable(
   response_a = await _failed_login(client_a, email=unique_email("nobody"))
   response_b = await _failed_login(client_b, email=unique_email("also-nobody"))
   assert response_a.status_code == response_b.status_code == 401
-  assert response_a.text == response_b.text
+  assert _body_without_variable_fields(response_a.text) == _body_without_variable_fields(
+    response_b.text
+  )
 
 
 async def test_sec035_the_per_account_mutation_budget_trips_and_recovers(
@@ -123,7 +173,9 @@ async def test_sec036_the_account_throttle_429_does_not_enumerate(
   locked_known = await _failed_login(client_known, email=known_email)
   locked_unknown = await _failed_login(client_unknown, email=unknown_email)
   assert locked_known.status_code == locked_unknown.status_code == 429
-  assert locked_known.text == locked_unknown.text
+  assert _body_without_variable_fields(locked_known.text) == _body_without_variable_fields(
+    locked_unknown.text
+  )
 
 
 # ---------------------------------------------------------------------------
@@ -142,8 +194,8 @@ def _real_password_hasher() -> object:
 
 async def test_sec017_encoded_hash_parses_to_the_pinned_parameters() -> None:
   """The encoded string parses to exactly ``argon2id``/``v=19``/``m=19456``/``t=2``/``p=1``."""
-  from app.security.clock import SystemClock  # type: ignore[import-not-found]
-  from app.security.passwords import PasswordService  # type: ignore[import-not-found]
+  from app.security.clock import SystemClock
+  from app.security.passwords import PasswordService
 
   service = PasswordService(
     _real_password_hasher(), blocklist=frozenset(), clock=SystemClock(), max_active=1, max_queued=8
@@ -170,9 +222,10 @@ async def test_sec017_two_hashes_of_the_same_password_have_independent_salts() -
 
 async def test_sec017_a_non_pinned_hash_authenticates_and_is_replaced_on_login() -> None:
   """``needs_rehash`` is true for a default-parameter hash, false for a pinned one."""
+  from argon2 import PasswordHasher
+
   from app.security.clock import SystemClock
   from app.security.passwords import PasswordService
-  from argon2 import PasswordHasher
 
   service = PasswordService(
     _real_password_hasher(), blocklist=frozenset(), clock=SystemClock(), max_active=1, max_queued=8
