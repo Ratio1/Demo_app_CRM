@@ -23,8 +23,8 @@ So the token is a one-way function of the session token:
 ``sha256("crm-csrf-v1:" + session_token)``. The security properties that
 matter are unchanged. It is unpredictable to anyone who cannot read the
 cookie, which is the entire CSRF threat model — a cross-site attacker can
-cause a request but cannot read a ``__Host-``, ``HttpOnly``, ``SameSite=Lax``
-cookie. It is still validated **against the session row's stored digest**,
+cause a request but cannot read an ``HttpOnly``, ``SameSite=Lax`` cookie.
+It is still validated **against the session row's stored digest**,
 so it is a synchronizer token and not a bare double-submit: a token from
 another session fails. And the derivation is one-way, so the CSRF token —
 which appears in HTML, in page caches and in browser history — never leaks

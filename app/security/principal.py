@@ -23,8 +23,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from app.security.context import context_of
+from app.security.origin import origin_of
 from app.security.session_store import KIND_FULL, read_live, touch_if_stale
-from app.security.sessions import COOKIE_NAME
+from app.security.sessions import cookie_name
 
 if TYPE_CHECKING:
   from uuid import UUID
@@ -168,6 +169,11 @@ async def resolve_session(request: Request) -> SessionRow | None:
   so a handler that
   fails still leaves the idle window extended — which is correct: the user
   *was* active.
+
+  The cookie is looked up under the **one** name the stored origin's scheme
+  selects (:func:`app.security.sessions.cookie_name`), so a token presented
+  under the other name is not a session here either — there is no second
+  lookup to fall back to.
   """
   if getattr(request.state, _STATE_RESOLVED, False):
     row: SessionRow | None = getattr(request.state, _STATE_ROW, None)
@@ -175,7 +181,7 @@ async def resolve_session(request: Request) -> SessionRow | None:
 
   context = context_of(request)
   now = context.clock.now()
-  token = request.cookies.get(COOKIE_NAME)
+  token = request.cookies.get(cookie_name(origin_of(request)))
   resolved = await read_live(context.pool, token=token, now=now)
   if resolved is not None:
     await touch_if_stale(context.pool, resolved, now=now)

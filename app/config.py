@@ -7,7 +7,7 @@ a container environment may still set the port separately. If both carry a
 port and they disagree, startup fails rather than silently preferring one.
 
 Everything else is a code constant. There is no ``DATABASE_URL``, no signing
-secret, no ``APP_URL`` and no ``PORT``: the public HTTPS origin lives in the
+secret, no ``APP_URL`` and no ``PORT``: the public origin lives in the
 database, and the TLS trust anchor is the build-time bundle named by
 :data:`CA_BUNDLE_PATH`.
 

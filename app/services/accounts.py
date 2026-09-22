@@ -164,7 +164,7 @@ async def bootstrap(
   display_name : str
     Their display name.
   origin : str
-    The exact public HTTPS origin, such as ``https://127.0.0.1:3002``.
+    The exact public origin, such as ``https://crm.example.test``.
   password : str
     Their initial password.
   correlation_id : str
@@ -494,7 +494,7 @@ async def set_origin(
   origin: str,
   correlation_id: str,
 ) -> None:
-  """Write the public HTTPS origin every request is compared against.
+  """Write the public origin every request is compared against.
 
   Parameters
   ----------
@@ -503,7 +503,7 @@ async def set_origin(
   clock : Clock
     Injected time source.
   origin : str
-    The exact origin, such as ``https://127.0.0.1:3002``.
+    The exact origin, such as ``https://crm.example.test``.
   correlation_id : str
     This command's id.
 

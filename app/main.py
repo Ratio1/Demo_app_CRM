@@ -101,7 +101,7 @@ from app.security.failures import (
   TooLarge,
 )
 from app.security.headers import SecurityHeadersMiddleware
-from app.security.origin import OriginCache, ReadinessCache, authority_of
+from app.security.origin import STATE_ORIGIN, OriginCache, ReadinessCache, authority_of
 from app.security.passwords import (
   DEFAULT_BLOCKLIST,
   HashQueueFull,
@@ -325,7 +325,12 @@ class OriginHostMiddleware(BaseHTTPMiddleware):
 
     ``X-Forwarded-Host``/``-Proto``/``-For`` are never consulted, here or
     anywhere else, and uvicorn runs with ``--no-proxy-headers`` so they
-    cannot rewrite the scope either.
+    cannot rewrite the scope either. The process always serves plain HTTP;
+    the *stored* origin is what says which scheme the browser is on, and
+    this is the one place that reads it, so everything scheme-dependent
+    further down — the session cookie's name and ``Secure`` flag,
+    ``Strict-Transport-Security`` — reads the value recorded here
+    (``request.state.crm_origin``) instead of deciding for itself.
 
     Any failure while reading the origin — the database is down, the pool
     cannot hand out a connection — is answered ``503``. Fail closed: an
@@ -348,6 +353,10 @@ class OriginHostMiddleware(BaseHTTPMiddleware):
       return await unavailable(request)
     if not origin:
       return await unavailable(request)
+
+    # Recorded before the two comparisons, so the ``403`` they produce
+    # carries the same header set a served response would.
+    setattr(request.state, STATE_ORIGIN, origin)
 
     if request.headers.get("host", "").casefold() != authority_of(origin):
       return await forbidden(request)

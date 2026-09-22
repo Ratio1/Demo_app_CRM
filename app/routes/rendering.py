@@ -38,7 +38,8 @@ import jinja2
 from fastapi.templating import Jinja2Templates
 
 from app.security.csrf import csrf_for_token
-from app.security.sessions import COOKIE_NAME
+from app.security.origin import origin_of
+from app.security.sessions import cookie_name
 from app.services.money import format_day, format_eur
 
 if TYPE_CHECKING:
@@ -255,7 +256,7 @@ def csrf_token_for_request(request: Request) -> str:
     Derivation is pure (:mod:`app.security.csrf`), so an error page can
     render a working form without touching the database.
   """
-  token = request.cookies.get(COOKIE_NAME)
+  token = request.cookies.get(cookie_name(origin_of(request)))
   if not token:
     return ""
   csrf_token, _digest = csrf_for_token(token)

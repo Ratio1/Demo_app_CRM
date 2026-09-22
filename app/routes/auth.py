@@ -38,10 +38,10 @@ from app.security.authz import (
 from app.security.context import context_of
 from app.security.failures import BudgetExceeded
 from app.security.headers import apply_security_headers
-from app.security.origin import is_safe_relative
+from app.security.origin import is_safe_relative, origin_of
 from app.security.principal import resolve_session
 from app.security.session_store import ensure_preauth
-from app.security.sessions import COOKIE_NAME, expire_cookie, set_cookie
+from app.security.sessions import cookie_name, expire_cookie, set_cookie
 from app.security.throttle import (
   BUCKET_LOGIN_GLOBAL,
   BUCKET_PREAUTH_GLOBAL,
@@ -190,7 +190,7 @@ def _redirect(
 ) -> Response:
   """Return a ``303`` to ``location`` with the security headers applied."""
   response = RedirectResponse(location, status_code=303, headers=headers)
-  return apply_security_headers(response, path=request.url.path)
+  return apply_security_headers(response, path=request.url.path, origin=origin_of(request))
 
 
 def _field(form: FormData, name: str) -> str | None:
@@ -249,7 +249,8 @@ async def login_page(request: Request) -> Response:
   if not decision.allowed:
     raise BudgetExceeded(decision.retry_after_s)
 
-  preauth = await ensure_preauth(context.pool, token=request.cookies.get(COOKIE_NAME), now=now)
+  presented = request.cookies.get(cookie_name(origin_of(request)))
+  preauth = await ensure_preauth(context.pool, token=presented, now=now)
   page = _login_context(
     request,
     csrf_token=preauth.csrf_token,
@@ -257,7 +258,7 @@ async def login_page(request: Request) -> Response:
   )
   response = render(request, "auth/login.html", page)
   if preauth.issued_token is not None:
-    set_cookie(response, preauth.issued_token)
+    set_cookie(response, preauth.issued_token, origin=origin_of(request))
   return response
 
 
@@ -344,7 +345,7 @@ async def login_submit(request: Request) -> Response:
   # password form.
   destination = PASSWORD_URL if result.must_change_password else (next_path or DASHBOARD_URL)
   response = _redirect(destination, request)
-  set_cookie(response, result.token)
+  set_cookie(response, result.token, origin=origin_of(request))
   return response
 
 
@@ -400,7 +401,7 @@ async def password_submit(request: Request) -> Response:
     return render(request, "auth/change_password.html", page, status_code=400)
 
   response = _redirect(_PASSWORD_CHANGED_URL, request)
-  set_cookie(response, result.token)
+  set_cookie(response, result.token, origin=origin_of(request))
   return response
 
 
@@ -439,5 +440,5 @@ async def logout_submit(request: Request) -> Response:
     correlation_id=current_correlation_id(),
   )
   response = _redirect(_SIGNED_OUT_URL, request, headers={"Clear-Site-Data": '"cache", "storage"'})
-  expire_cookie(response)
+  expire_cookie(response, origin=origin_of(request))
   return response

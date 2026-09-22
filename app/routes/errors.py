@@ -41,9 +41,9 @@ from app.logging import current_correlation_id
 from app.routes.rendering import base_context, csrf_token_for_request, render
 from app.security.audit import ACTION_ACCESS_DENIED, OBJECT_CONTACT, OBJECT_DEAL, record_denial
 from app.security.headers import apply_security_headers
-from app.security.origin import is_safe_relative
+from app.security.origin import is_safe_relative, origin_of
 from app.security.principal import resolve_principal
-from app.security.sessions import COOKIE_NAME
+from app.security.sessions import cookie_name
 
 if TYPE_CHECKING:
   from starlette.requests import Request
@@ -221,7 +221,7 @@ async def _error_page(
   )
   context.update(extra)
   response = render(request, template, context, status_code=status, headers=headers)
-  return apply_security_headers(response, path=request.url.path)
+  return apply_security_headers(response, path=request.url.path, origin=origin_of(request))
 
 
 def region_error(
@@ -280,7 +280,7 @@ def region_error(
     status_code=status,
     headers=headers or None,
   )
-  return apply_security_headers(response, path=request.url.path)
+  return apply_security_headers(response, path=request.url.path, origin=origin_of(request))
 
 
 async def forbidden(request: Request, *, reason: str = "session") -> Response:
@@ -494,7 +494,7 @@ def redirect(location: str, request: Request, *, headers: dict[str, str] | None 
     application.
   """
   response = RedirectResponse(location, status_code=303, headers=headers)
-  return apply_security_headers(response, path=request.url.path)
+  return apply_security_headers(response, path=request.url.path, origin=origin_of(request))
 
 
 _STATUS_PAGES: Final[dict[int, Any]] = {
@@ -604,7 +604,7 @@ async def no_session_handler(request: Request, exc: Exception) -> Response:
   header and the body now say the same thing.
   """
   del exc
-  presented_cookie = bool(request.cookies.get(COOKIE_NAME))
+  presented_cookie = bool(request.cookies.get(cookie_name(origin_of(request))))
   if is_fragment(request):
     login_target = f"{LOGIN_URL}?notice=session_ended" if presented_cookie else LOGIN_URL
     return region_error(
@@ -620,7 +620,11 @@ async def no_session_handler(request: Request, exc: Exception) -> Response:
   if presented_cookie:
     parameters.append(("notice", "session_ended"))
   location = f"{LOGIN_URL}?{urlencode(parameters)}" if parameters else LOGIN_URL
-  return apply_security_headers(RedirectResponse(location, status_code=303), path=request.url.path)
+  return apply_security_headers(
+    RedirectResponse(location, status_code=303),
+    path=request.url.path,
+    origin=origin_of(request),
+  )
 
 
 async def forced_reset_handler(request: Request, exc: Exception) -> Response:

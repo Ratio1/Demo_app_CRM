@@ -1,9 +1,13 @@
 """The response header set, applied to every response.
 
 One table, one middleware, no per-route exceptions: a header that is only
-set on the routes someone remembered is not a control. ``Cache-Control`` is
-the single value that varies, and it varies on one visible axis — static
-assets are public and cacheable, everything else is ``no-store``.
+set on the routes someone remembered is not a control. Two values vary, each
+on one visible axis. ``Cache-Control``: static assets are public and
+cacheable, everything else is ``no-store``. ``Strict-Transport-Security``:
+sent when the stored public origin is an ``https://`` one and omitted
+otherwise, because the header is meaningless — and, on a plain-HTTP local
+run, a promise nothing can keep — when the browser is not on TLS. Nothing
+in the environment can move either one.
 
 There is no CORS middleware anywhere in this application and no
 ``Access-Control-*`` header is ever emitted; the browser's
@@ -17,6 +21,8 @@ from typing import TYPE_CHECKING, Final
 
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from app.security.origin import is_https_origin, origin_of
+
 if TYPE_CHECKING:
   from collections.abc import Awaitable, Callable
 
@@ -28,6 +34,7 @@ __all__ = [
   "CACHE_CONTROL_STATIC",
   "SECURITY_HEADERS",
   "STATIC_PREFIX",
+  "STRICT_TRANSPORT_SECURITY",
   "SecurityHeadersMiddleware",
   "apply_security_headers",
 ]
@@ -49,9 +56,10 @@ PERMISSIONS_POLICY: Final = (
   "publickey-credentials-get=(), screen-wake-lock=(), usb=(), xr-spatial-tracking=()"
 )
 
-#: Every header that is the same on every response. ``Cache-Control`` is not
-#: here because it is the one that varies; ``Retry-After`` and
-#: ``Clear-Site-Data`` are per-response and set by their own handlers.
+#: Every header that is the same on every response. ``Cache-Control`` and
+#: ``Strict-Transport-Security`` are not here because they are the two that
+#: vary; ``Retry-After`` and ``Clear-Site-Data`` are per-response and set by
+#: their own handlers.
 SECURITY_HEADERS: Final[dict[str, str]] = {
   "Content-Security-Policy": CONTENT_SECURITY_POLICY,
   "X-Content-Type-Options": "nosniff",
@@ -64,18 +72,22 @@ SECURITY_HEADERS: Final[dict[str, str]] = {
   # and the privacy goal both hold.
   "Referrer-Policy": "same-origin",
   "Permissions-Policy": PERMISSIONS_POLICY,
-  "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
   "X-Frame-Options": "DENY",
   "Cross-Origin-Opener-Policy": "same-origin",
   "Cross-Origin-Resource-Policy": "same-origin",
 }
+
+#: One year, subdomains included, no ``preload``: preloading is a public,
+#: hard-to-reverse registration and is the deployer's decision, not this
+#: application's.
+STRICT_TRANSPORT_SECURITY: Final = "max-age=31536000; includeSubDomains"
 
 CACHE_CONTROL_PRIVATE: Final = "no-store"
 CACHE_CONTROL_STATIC: Final = "public, max-age=300"
 STATIC_PREFIX: Final = "/static/"
 
 
-def apply_security_headers(response: Response, *, path: str) -> Response:
+def apply_security_headers(response: Response, *, path: str, origin: str | None = None) -> Response:
   """Set the pinned header set on ``response``, in place.
 
   Parameters
@@ -85,6 +97,12 @@ def apply_security_headers(response: Response, *, path: str) -> Response:
     handler, which never passes back through the middleware stack.
   path : str
     ``request.url.path``, used only to choose the ``Cache-Control`` value.
+  origin : str | None, optional
+    The stored public origin for this request
+    (:func:`app.security.origin.origin_of`). It decides
+    ``Strict-Transport-Security`` and nothing else. The default, ``None``,
+    omits that one header — which is what an unprovisioned deployment and
+    a request refused before the origin was read both get.
 
   Returns
   -------
@@ -101,6 +119,8 @@ def apply_security_headers(response: Response, *, path: str) -> Response:
   """
   for name, value in SECURITY_HEADERS.items():
     response.headers[name] = value
+  if is_https_origin(origin):
+    response.headers["Strict-Transport-Security"] = STRICT_TRANSPORT_SECURITY
   response.headers["Cache-Control"] = (
     CACHE_CONTROL_STATIC if path.startswith(STATIC_PREFIX) else CACHE_CONTROL_PRIVATE
   )
@@ -123,7 +143,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     Parameters
     ----------
     request : Request
-      The inbound request; only its path is read.
+      The inbound request; its path is read, and — on the way out — the
+      origin the ``Host``/``Origin`` check below recorded on it.
     call_next : Callable[[Request], Awaitable[Response]]
       The rest of the stack.
 
@@ -131,6 +152,13 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     -------
     Response
       The downstream response, with the header set applied.
+
+    Notes
+    -----
+    The origin is read *after* ``call_next``, because the middleware that
+    resolves it sits below this one. A response produced before it ran —
+    a health endpoint, an oversized body — carries no
+    ``Strict-Transport-Security``.
     """
     response = await call_next(request)
-    return apply_security_headers(response, path=request.url.path)
+    return apply_security_headers(response, path=request.url.path, origin=origin_of(request))
