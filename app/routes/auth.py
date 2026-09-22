@@ -409,6 +409,17 @@ async def logout_submit(request: Request) -> Response:
     ``303 /login?notice=signed_out`` carrying ``Clear-Site-Data`` and the
     expired cookie (``SEC-029``). Allowed on the forced-reset path: a user
     who cannot use the application must still be able to leave it.
+
+  Notes
+  -----
+  This is the one mutation that does **not** charge the
+  ``account_mutation`` budget, and the deviation from ``slice-a.md`` §2.1
+  is deliberate rather than an omission. Logout is self-limiting: the
+  session row is gone once it succeeds, so a repeat is refused at step 1
+  before it reaches any write. Charging it would buy no bound and would
+  create a real failure mode — a user whose budget is exhausted being
+  unable to sign out, which is precisely when they most want to. Recorded
+  for the review council.
   """
   context = context_of(request)
   principal = await require_session(request)
