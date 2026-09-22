@@ -1,6 +1,6 @@
 # Demo_App_CRM test suite
 
-## Canonical invocation (ruling R52)
+## Canonical invocation
 
 From `Demo_app_CRM`:
 
@@ -17,7 +17,7 @@ populated — never from a value this suite reads or prints itself. `-p no:cache
 writing a `.pytest_cache/` the suite does not need.
 
 `crm_test` is reset and migrated by one session-scoped, **autouse** fixture
-(`conftest.crm_test_schema`, ruling R57) that runs before the first test in the session,
+(`conftest.crm_test_schema`) that runs before the first test in the session,
 whichever test that is — this invocation is equally runnable starting from a freshly created,
 unmigrated `crm_test` or from one left dirty by a previous run.
 
@@ -28,7 +28,7 @@ process — never by hand, and never by exporting that role's credentials into t
 environment.
 
 Credentials for both roles reach any process only through `scripts/with-env <env-file> --
-<command>` (`AGENTS.md`); nothing under `tests/` ever opens `.env.test.local` or
+<command>`; nothing under `tests/` ever opens `.env.test.local` or
 `.env.test.owner.local` itself, and no fixture prints or asserts on a credential value.
 
 ## What each database role is for
@@ -41,34 +41,34 @@ Credentials for both roles reach any process only through `scripts/with-env <env
 Both point at the scratch database `crm_test`. `crm` (the real application database) is never
 touched by this suite.
 
-## Test isolation for throttle and budget (ruling R52)
+## Test isolation for throttle and budget
 
 `tests/security/test_throttle_and_budget.py` and `tests/inprocess/test_throttle_and_budget_windows.py`
-exercise the DB-shared, global login-throttle and rate-budget counters (spec §6 S6) without
+exercise the DB-shared, global login-throttle and rate-budget counters without
 weakening them: every test in either module targets a freshly provisioned, dedicated
 `example.test` identifier — never the shared session admin — and each module's own `autouse`
 fixture clears `login_throttle` and `rate_budget` (owner role, via
 `conftest.clear_throttle_and_budget_state`) both before and after every test, so a budget one
 test trips can never leak into another.
 
-## Three transports (ruling R46, extended by R54)
+## Three transports
 
 - **In-process, repository-level** (`db_connection` + `clock`): drives `app.db.repositories.*`
   directly with an injected `ManualClock`, for expiry/revocation behaviour a test can drive by
   an explicit `now` parameter without needing a request at all.
 - **In-process, through the whole ASGI app** (`tests/inprocess`, `in_process_app` /
-  `in_process_client`): ruling **R54** gives `create_app` a `clock`/`password_hasher` injection
+  `in_process_client`): `create_app` takes a `clock`/`password_hasher` injection
   seam, so a test can drive the real route table — middleware, CSRF, sessions, throttle, the
   lot — through `httpx.ASGITransport` with a `ManualClock` it advances by hand, entering the
   lifespan with `async with app.router.lifespan_context(app):`. This is the transport every
   clock-dependent, wire-observable assertion belongs on: pre-auth/idle/absolute session expiry,
   the login lock's recovery, and the global pre-auth budget's trip-and-recovery all live here
   now, because none of them can be proved over a real wall clock without either sleeping or
-  risking exactly the `:00`-boundary flake ruling R57 names. Its origin is the fixed
+  risking a `:00`-boundary flake. Its origin is the fixed
   `https://crm.test` (never `live_server`'s ephemeral port) — see
   `tests/inprocess/conftest.py`'s module docstring for why, and why `tests/inprocess` is
   collected **first** in the session (`conftest.py`'s `pytest_collection_modifyitems`).
-- **Out-of-process, one uvicorn subprocess per *session*** (`live_server`, ruling R46(b)/R57):
+- **Out-of-process, one uvicorn subprocess per *session*** (`live_server`):
   every test that needs genuinely wire-level behaviour (TLS itself, real cookie attributes,
   real header casing, `tests/e2e`) shares **one** server for the whole session, over TLS on an
   ephemeral `127.0.0.1` port with a throwaway self-signed certificate; port `3002` (the human
@@ -103,19 +103,13 @@ Four reasons, in that order:
    admins of its own, which would otherwise wipe the shared `bootstrap_admin`/`crm_test_schema`
    state every other module's `live_server`/`db_connection` fixture depends on. Placing it last
    means nothing else in *this* session needs that state afterward; the *next* session's
-   `crm_test_schema` (autouse, ruling R57) absorbs whatever it leaves behind.
-5. `tests/concurrency/test_migration_journal.py` (ruling R66) absolute last, after even
-   `test_last_admin_race.py`: its `SQL-026` test drops and recreates the whole `public` schema
+   `crm_test_schema` (autouse) absorbs whatever it leaves behind.
+5. `tests/concurrency/test_migration_journal.py` absolute last, after even
+   `test_last_admin_race.py`: its from-empty-migrate test drops and recreates the whole `public` schema
    directly to prove a from-empty `migrate`, one wipe further out than reason 4's. A
    module-scoped, autouse fixture there also runs one more `migrate` at teardown as a second
    line of defence, and the *next* session's `crm_test_schema` absorbs whatever is left either
    way.
-
-## Deferred test coverage
-
-`SQL-013` (an ambiguous commit is never retried; it resolves through the receipt, never a
-second business row) is **deferred to Slice C**, alongside the retry work it depends on
-(`DECISIONS.md` §5/§10, ruling R66) — recorded here rather than silently dropped.
 
 ## `tests/e2e`
 
