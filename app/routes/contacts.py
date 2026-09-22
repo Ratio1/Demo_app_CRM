@@ -883,20 +883,33 @@ async def _duplicate_response(request: Request, result: Duplicate) -> Response:
 
 
 async def _start_mutation(
-  request: Request, form_fields: frozenset[str]
+  request: Request, form_fields: frozenset[str], *, admin_for: str | None = None
 ) -> tuple[Principal, dict[str, str]] | Response:
   """Run the unsafe-method pipeline up to the body allowlist (§2(c)).
+
+  Parameters
+  ----------
+  request : Request
+    The inbound request.
+  form_fields : frozenset[str]
+    That form's exact accepted set (§2(f)).
+  admin_for : str | None, optional
+    The raw path id, on the one admin-only route. Passing it runs step 3
+    **before** the body allowlist, which is the contracted order: the role
+    check is constant over objects, so it must not sit behind a check that
+    a crafted body could answer first.
 
   Returns
   -------
   tuple[Principal, dict[str, str]] | Response
     The principal and the validated body, or the response that refuses the
     request. The order is fixed and shared so nine routes cannot drift:
-    session, body, CSRF, content type, budget, forced-reset gate, body
-    allowlist. CSRF is checked **before** the content type, so a cross-site
-    post carrying no token at all meets the same ``403`` as one carrying a
-    stale token; the budget is charged **after** CSRF, so an unauthenticated
-    cross-site request cannot burn an authenticated user's budget.
+    session, body, CSRF, content type, budget, forced-reset gate, role,
+    body allowlist. CSRF is checked **before** the content type, so a
+    cross-site post carrying no token at all meets the same ``403`` as one
+    carrying a stale token; the budget is charged **after** CSRF, so an
+    unauthenticated cross-site request cannot burn an authenticated user's
+    budget.
   """
   principal = await require_session(request)
   form = await read_form(request)
@@ -906,6 +919,8 @@ async def _start_mutation(
   await charge_account_budget(request, principal, safe=False)
   if principal.must_change_password:
     raise ForcedResetRequired
+  if admin_for is not None:
+    await _require_admin(request, principal, admin_for)
   body = _read_body(form, form_fields)
   if body is None:
     return await _reject_input(request, principal)
@@ -1212,11 +1227,10 @@ async def contact_restore(request: Request, contact_id: str) -> Response:
 @router.post("/contacts/{contact_id}/reassign", name="contact_reassign")
 async def contact_reassign(request: Request, contact_id: str) -> Response:
   """Move one contact to another active owner — admin only (``ACC-031``-``ACC-034``)."""
-  started = await _start_mutation(request, _REASSIGN_FIELDS)
+  started = await _start_mutation(request, _REASSIGN_FIELDS, admin_for=contact_id)
   if isinstance(started, Response):
     return started
   principal, body = started
-  await _require_admin(request, principal, contact_id)
   identifier = _contact_id(contact_id)
   version = _positive_int(body["version"] or None, default=0)
   key = parse_canonical(body["idempotency_key"])
