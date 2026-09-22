@@ -51,31 +51,37 @@ Two ways a test reaches the database
    status codes, response headers). The server subprocess builds its own
    ``SystemClock`` (``create_app`` takes no clock parameter), so nothing
    reachable only through HTTP can be driven by ``ManualClock``.
-2. **In process**, via ``db_connection``/``owner_db_connection`` — for
-   repository-level behaviour the contract itself drives by an explicit
-   ``now`` parameter (expiry, revocation, throttle/budget windows: §7.3
-   "every expiry test... advances the clock rather than sleeping"). These
-   fixtures call ``app.config.load_config()`` with no explicit mapping, so
-   they read ``os.environ`` directly — which means **the test process
-   itself** needs the runtime or owner credentials already in its
-   environment. Per slice-a.md §7.2 ("The suite itself runs under
-   ``.env.test.local`` as ``crm_test_app``"), the canonical way to run this
-   suite is therefore::
+2. **In process**, via ``db_connection`` — for repository-level behaviour
+   the contract itself drives by an explicit ``now`` parameter (expiry,
+   revocation, throttle/budget windows: §7.3 "every expiry test... advances
+   the clock rather than sleeping"). This fixture calls
+   ``app.config.load_config()`` with no explicit mapping, so it reads
+   ``os.environ`` directly — which means **the test process itself** needs
+   the runtime credentials already in its environment. Per slice-a.md §7.2
+   ("The suite itself runs under ``.env.test.local`` as ``crm_test_app``"),
+   the canonical way to run this suite is therefore::
 
      scripts/with-env .env.test.local -- .venv/bin/python -B -m pytest
 
    A bare ``pytest`` invocation still collects and runs every test that
-   does not request ``db_connection``/``owner_db_connection`` (all of
-   ``tests/unit``, ``tests/arch``, and the subprocess-driven
+   does not request ``db_connection`` (all of ``tests/unit``,
+   ``tests/arch``, and the subprocess-driven
    ``tests/security/test_dep_hostile_env.py``, each of which reaches the
    database only through its own ``with-env`` subprocess); a test that does
-   request one of those two fixtures fails with a plain, value-free
-   ``ConfigError`` under a bare invocation — an honest signal, not a leak.
+   request it fails with a plain, value-free ``ConfigError`` under a bare
+   invocation — an honest signal, not a leak. Seeding data that needs the
+   **owner** role (for example a ``users`` row, whose runtime grant is
+   ``SELECT, UPDATE`` only) still goes through its own dedicated
+   ``with-env .env.test.owner.local`` subprocess — see
+   :func:`insert_test_user_row` — never through an in-process owner
+   connection, because a single test process can only ever hold the one
+   role it was launched under.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import socket
 import subprocess
 import time
@@ -968,3 +974,85 @@ async def anon_client(
 ) -> httpx.AsyncClient:
   """One httpx client with its own, empty cookie jar — no session at all."""
   return http_client_factory()
+
+
+# ---------------------------------------------------------------------------
+# Logging in over HTTP — shared by every test that needs an authenticated
+# client rather than being about login itself.
+# ---------------------------------------------------------------------------
+
+_CSRF_INPUT_PATTERN = re.compile(r'<input[^>]*name="csrf_token"[^>]*value="([^"]*)"', re.IGNORECASE)
+
+
+def extract_csrf_token(html: str) -> str:
+  """Pull the ``csrf_token`` hidden-field value out of a rendered form page.
+
+  Parameters
+  ----------
+  html : str
+    The response body of ``GET /login`` (or any page carrying the same
+    hidden field, per ``auth/login.html`` and ``auth/change_password.html``).
+
+  Returns
+  -------
+  str
+    The token value.
+
+  Raises
+  ------
+  AssertionError
+    If no such field is present — an honest failure naming what was
+    expected, since a missing CSRF field is itself a finding.
+  """
+  match = _CSRF_INPUT_PATTERN.search(html)
+  assert match is not None, "no csrf_token hidden field found in the response body"
+  return match.group(1)
+
+
+async def login_via_http(client: httpx.AsyncClient, *, email: str, password: str) -> httpx.Response:
+  """Drive the real ``GET /login`` → ``POST /login`` flow for one client.
+
+  Parameters
+  ----------
+  client : httpx.AsyncClient
+    A client with its own cookie jar (``admin_client``/``agent_client``/
+    a fresh one from ``http_client_factory``); the pre-auth cookie set by
+    ``GET /login`` and the full-session cookie set on success both land in
+    this client's own jar.
+  email, password : str
+    The principal's fictional credentials.
+
+  Returns
+  -------
+  httpx.Response
+    The ``POST /login`` response, **not followed** (``follow_redirects`` is
+    always ``False`` on these clients — slice-a.md §4 pins a ``303`` on
+    success; the caller asserts on it directly rather than on whatever the
+    destination page happens to render).
+  """
+  get_response = await client.get("/login")
+  csrf_token = extract_csrf_token(get_response.text)
+  return await client.post(
+    "/login",
+    data={"csrf_token": csrf_token, "email": email, "password": password},
+  )
+
+
+@pytest_asyncio.fixture
+async def admin_session(
+  admin_client: httpx.AsyncClient, bootstrap_admin: ProvisionedUser
+) -> httpx.AsyncClient:
+  """``admin_client``, already logged in as the bootstrapped admin.
+
+  Yields the same client passed in (its cookie jar now carries a full
+  session), so a test can go straight to the page it actually wants to
+  assert on.
+  """
+  response = await login_via_http(
+    admin_client, email=bootstrap_admin.email, password=bootstrap_admin.password
+  )
+  assert response.status_code == 303, (
+    f"login as the bootstrapped admin failed (status {response.status_code}); "
+    "every test depending on admin_session assumes this succeeds"
+  )
+  return admin_client
