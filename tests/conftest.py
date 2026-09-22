@@ -1312,6 +1312,83 @@ def clear_throttle_and_budget_state(*, log_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# R68 (Slice B close-out, 2026-09-22): clear the two DB-SHARED GLOBAL rate
+# buckets once per test *module*, so a long, single ``pytest tests``
+# invocation never trips the 120/minute ``login_global``/``preauth_global``
+# budget (SEC-031) mid-suite purely from the accumulated logins every other
+# module's fixtures perform. This is additive to, and narrower than, the
+# per-test wipe above: it touches neither ``login_throttle`` nor the two
+# per-account ``rate_budget`` buckets, and it never runs for
+# ``tests/security/test_throttle_and_budget.py``, which owns the budget
+# tables for the one module whose whole point is to trip and observe them
+# (R68: "Not a weakening of the control").
+# ---------------------------------------------------------------------------
+
+_CLEAR_GLOBAL_RATE_BUCKETS_SNIPPET: Final[str] = """
+import asyncio
+from typing import Any, cast
+from psycopg import AsyncConnection
+from app.config import load_config
+
+async def main() -> None:
+  kwargs = cast('dict[str, Any]', load_config().connect_kwargs())
+  conn = await AsyncConnection.connect(autocommit=True, **kwargs)
+  try:
+    await conn.execute(
+      "DELETE FROM public.rate_budget WHERE bucket IN ('login_global', 'preauth_global')"
+    )
+  finally:
+    await conn.close()
+
+asyncio.run(main())
+"""
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _clear_global_rate_buckets_before_each_module(
+  crm_test_schema: None, tmp_path_factory: pytest.TempPathFactory, request: pytest.FixtureRequest
+) -> None:
+  """R68: wipe ``login_global``/``preauth_global`` once before each test module.
+
+  Module-scoped and ``autouse`` so every module gets a clean pair of global
+  counters without asking, the same shape as ``tests/inprocess``'s own
+  function-scoped clear (which additionally covers the per-account buckets
+  and ``login_throttle``, and is unaffected by running alongside this one —
+  clearing an already-empty table is a no-op). This fixture runs *before*
+  the module's first test, never after, because its only job is to make
+  sure a long run does not walk into the 120/minute ceiling with a
+  half-spent budget left over from an earlier module; it is not a
+  per-test isolation guarantee the way ``clear_throttle_and_budget_state``
+  is for its one module.
+
+  Parameters
+  ----------
+  crm_test_schema : None
+    Documents the real dependency (``rate_budget`` must exist); already
+    satisfied regardless, since it is session-scoped autouse (R57).
+  tmp_path_factory : pytest.TempPathFactory
+    For the owner-role subprocess's log file.
+  request : pytest.FixtureRequest
+    Used only to read the requesting module's file stem, so this fixture
+    can skip the one module that owns the budget tables for its own
+    trip-and-recover assertions (R68).
+  """
+  del crm_test_schema
+  module_file = getattr(request.module, "__file__", None)
+  if module_file is not None and Path(module_file).stem == "test_throttle_and_budget":
+    return
+  log_path = tmp_path_factory.mktemp("r68_global_budget_clear") / "clear.log"
+  run_with_env(
+    OWNER_ENV_FILE,
+    str(VENV_PYTHON),
+    "-B",
+    "-c",
+    _CLEAR_GLOBAL_RATE_BUCKETS_SNIPPET,
+    log_path=log_path,
+  )
+
+
+# ---------------------------------------------------------------------------
 # Collection ordering.
 #
 # Five concerns, addressed in one hook because they interact (see each
@@ -1753,3 +1830,231 @@ async def create_contact(
 def fresh_idempotency_key() -> str:
   """Return a fresh ``uuid.uuid4()`` string, for a test that needs to mint its own (PIN 1)."""
   return str(uuid.uuid4())
+
+
+# ---------------------------------------------------------------------------
+# Slice C — deals: HTTP helpers shared by every deal-surface module under
+# tests/access, tests/security, tests/concurrency and tests/e2e. Mirrors the
+# contact helpers above; none of this can succeed before
+# ``app/routes/deals.py`` ships (``contracts/slice-c.md`` §2(c) route table,
+# §2(j): "no route exists, no template renders, no form has been posted").
+#
+# Authority: ``contracts/slice-c.md`` §2(c) (route table, notice codes),
+# §2(d) (the stage control's exact fields, R22), §1(b) note 2 (``contact_id``
+# is immutable after create — absent from the edit form entirely).
+# ---------------------------------------------------------------------------
+
+#: `POST /contacts/{id}/deals` on success: `303 /contacts/{id}?notice=deal_created#deal-{id}`.
+_DEAL_CREATE_LOCATION_PATTERN = re.compile(
+  r"^/contacts/([0-9a-fA-F-]{36})\?notice=deal_created#deal-([0-9a-fA-F-]{36})$"
+)
+#: `POST /deals/{id}` on success: `303 /deals/{id}?notice=deal_saved`.
+_DEAL_UPDATE_LOCATION_PATTERN = re.compile(r"^/deals/([0-9a-fA-F-]{36})(?:[?].*)?$")
+#: `POST /deals/{id}/stage|won|lost` on success:
+#: `303 /contacts/{contact_id}?notice=deal_moved|deal_won|deal_lost#deal-{id}`.
+_DEAL_STAGE_LOCATION_PATTERN = re.compile(
+  r"^/contacts/([0-9a-fA-F-]{36})\?notice=(deal_moved|deal_won|deal_lost)#deal-([0-9a-fA-F-]{36})$"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SeededDeal:
+  """A deal created through the real HTTP surface, for a test to act on.
+
+  Attributes
+  ----------
+  id : str
+    Parsed from the create response's ``Location`` fragment (``#deal-{id}``
+    — the deal id is never a path segment on the create route, R22/§2(c)).
+  contact_id : str
+    The parent contact's id, echoed by the same ``Location`` header.
+  owner : LoggedInPrincipal
+    Whoever created it (``AG-O`` for their own objects).
+  """
+
+  id: str
+  contact_id: str
+  owner: LoggedInPrincipal
+
+
+def parse_deal_id_from_create_location(location: str) -> tuple[str, str]:
+  """Pull ``(contact_id, deal_id)`` out of a deal-create ``Location`` header.
+
+  Parameters
+  ----------
+  location : str
+    E.g. ``"/contacts/3fa8.../?notice=deal_created#deal-7c21..."``.
+
+  Returns
+  -------
+  tuple[str, str]
+    ``(contact_id, deal_id)``.
+
+  Raises
+  ------
+  AssertionError
+    If the header does not match the contracted shape — a malformed
+    redirect target is itself a finding, not something to swallow.
+  """
+  match = _DEAL_CREATE_LOCATION_PATTERN.match(location)
+  assert match is not None, f"unexpected deal-create Location header shape: {location!r}"
+  return match.group(1), match.group(2)
+
+
+def parse_deal_id_from_edit_location(location: str) -> str:
+  """Pull ``{id}`` out of a ``POST /deals/{id}`` (edit) ``Location`` header."""
+  match = _DEAL_UPDATE_LOCATION_PATTERN.match(location)
+  assert match is not None, f"unexpected deal-update Location header shape: {location!r}"
+  return match.group(1)
+
+
+def parse_deal_stage_location(location: str) -> tuple[str, str, str]:
+  """Pull ``(contact_id, notice_code, deal_id)`` out of a stage-change ``Location`` header."""
+  match = _DEAL_STAGE_LOCATION_PATTERN.match(location)
+  assert match is not None, f"unexpected deal-stage Location header shape: {location!r}"
+  return match.group(1), match.group(2), match.group(3)
+
+
+def extract_scoped_hidden_field(html: str, *, form_action: str, name: str) -> str:
+  """Extract a hidden field's value from **within** the ``<form>`` whose ``action`` matches.
+
+  ``extract_hidden_field`` returns the *first* match anywhere in the
+  document, which is exactly right while a page carries one mutation form
+  (``contacts/form.html``, ``deals/form.html``) but ambiguous once it
+  carries several sharing field names — Slice C's stage control renders
+  **three** ``<form>`` elements on one page (lateral move, Won, Lost),
+  each with its own ``idempotency_key``/``version`` hidden fields that
+  happen to share the *same value* (one ``stage_form`` render, R22/§2(d))
+  but live in different forms, and the contact detail page adds one
+  archive/restore form alongside a stage control per deal card. This
+  narrows the search to one ``<form ... action="...">...</form>`` block
+  first, so the right occurrence is picked even when several fields share
+  a ``name``.
+
+  Parameters
+  ----------
+  html : str
+    A rendered page carrying two or more forms.
+  form_action : str
+    The exact ``action`` attribute value of the form to search inside
+    (e.g. ``"/deals/7c21.../stage"``).
+  name : str
+    The hidden field's ``name`` attribute.
+
+  Returns
+  -------
+  str
+
+  Raises
+  ------
+  AssertionError
+    If no ``<form>`` with that ``action`` exists, or it carries no such
+    hidden field.
+  """
+  form_pattern = re.compile(
+    rf'<form\b[^>]*\baction="{re.escape(form_action)}"[^>]*>(.*?)</form>',
+    re.IGNORECASE | re.DOTALL,
+  )
+  form_match = form_pattern.search(html)
+  assert form_match is not None, f"no <form action={form_action!r}> found in the response body"
+  return extract_hidden_field(form_match.group(1), name)
+
+
+async def create_deal(
+  principal: LoggedInPrincipal,
+  *,
+  contact_id: str,
+  title: str = "Northwind platform expansion",
+  amount: str = "1250.00",
+  close_date: str = "",
+) -> SeededDeal:
+  """Drive ``GET /contacts/{id}/deals/new`` -> ``POST /contacts/{id}/deals``, return the new id.
+
+  Parameters
+  ----------
+  principal : LoggedInPrincipal
+    Creates the deal as themselves, under ``contact_id``.
+  contact_id : str
+    The parent contact's id — the only ownership input, re-resolved under
+    the scope predicate by the service (``ACC-205``..``ACC-208``).
+  title, amount, close_date : str
+    Fictional field values. ``amount`` is the raw submitted string
+    (PIN C1's pattern, ``^\\d{1,10}(\\.\\d{1,2})?$``); ``close_date`` empty
+    means ``NULL`` (§2(d)).
+
+  Returns
+  -------
+  SeededDeal
+
+  Raises
+  ------
+  AssertionError
+    If either leg does not behave as the contract requires — reported
+    honestly, never hidden, until ``app/routes/deals.py`` ships.
+  """
+  new_form = await principal.client.get(f"/contacts/{contact_id}/deals/new")
+  assert new_form.status_code == 200, (
+    f"GET /contacts/{contact_id}/deals/new failed (status {new_form.status_code}) — "
+    "deal creation cannot proceed"
+  )
+  csrf_token = extract_csrf_token(new_form.text)
+  idempotency_key = extract_hidden_field(new_form.text, "idempotency_key")
+  create_response = await principal.client.post(
+    f"/contacts/{contact_id}/deals",
+    data={
+      "csrf_token": csrf_token,
+      "idempotency_key": idempotency_key,
+      "title": title,
+      "amount": amount,
+      "close_date": close_date,
+    },
+  )
+  assert create_response.status_code == 303, (
+    f"POST /contacts/{contact_id}/deals failed (status {create_response.status_code}); "
+    f"body follows: {create_response.text[:500]!r}"
+  )
+  parent_id, deal_id = parse_deal_id_from_create_location(
+    create_response.headers.get("location", "")
+  )
+  assert parent_id == contact_id, (
+    f"deal-create Location named parent {parent_id!r}, expected {contact_id!r}"
+  )
+  return SeededDeal(id=deal_id, contact_id=contact_id, owner=principal)
+
+
+async def archive_contact(principal: LoggedInPrincipal, *, contact_id: str) -> httpx.Response:
+  """Archive ``contact_id`` as ``principal``, returning the raw mutation response.
+
+  Factors out the sequence ``tests/access/test_contacts.py``'s
+  ``test_acc006`` inlines, for Slice C tests that need an archived parent
+  (``ACC-208``, ``ACC-216``, ``ACC-222``, ``ACC-229``) without duplicating
+  it. Uses ``extract_hidden_field`` (first match), which is exactly right
+  today because the contact detail page carries one archive/restore form;
+  a test relying on this against a contact that already owns a deal card
+  should prefer ``extract_scoped_hidden_field`` instead once that region
+  ships, in case field ordering ever makes the first match ambiguous.
+
+  Parameters
+  ----------
+  principal : LoggedInPrincipal
+    Must own ``contact_id`` (or be ``ADM``).
+  contact_id : str
+
+  Returns
+  -------
+  httpx.Response
+    The raw ``POST /contacts/{id}/archive`` response (``303`` on success);
+    the caller asserts on it, since some tests need the archive to be
+    denied (e.g. re-archiving is not this helper's concern).
+  """
+  detail = await principal.client.get(f"/contacts/{contact_id}")
+  assert detail.status_code == 200, (
+    f"GET /contacts/{contact_id} failed (status {detail.status_code}) before archiving it"
+  )
+  version = extract_hidden_field(detail.text, "version")
+  csrf_token = extract_csrf_token(detail.text)
+  idempotency_key = extract_hidden_field(detail.text, "idempotency_key")
+  return await principal.client.post(
+    f"/contacts/{contact_id}/archive",
+    data={"csrf_token": csrf_token, "idempotency_key": idempotency_key, "version": version},
+  )
