@@ -20,20 +20,43 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 
 __all__ = [
   "CA_BUNDLE_PATH",
+  "CLIENT_ENCODING",
   "CONNECT_TIMEOUT_S",
   "DEFAULT_DB_PORT",
   "ENV_NAMES",
+  "GSSENCMODE",
+  "SSLMODE",
+  "SSL_MIN_PROTOCOL_VERSION",
   "Config",
   "ConfigError",
   "load_config",
 ]
 
 DEFAULT_DB_PORT: int = 5432
-CA_BUNDLE_PATH: str = "app/certs/ca-bundle.pem"  # code constant, never an env var
+
+#: Resolved from this package's own location (delta **D2**), not from the
+#: working directory: ``scripts/manage``, a ``python -c`` probe and a test
+#: subprocess do not all run from the submodule root, and a cwd-relative
+#: bundle silently becomes "no trust anchor" — which ``sslmode=verify-full``
+#: then reports as a connection failure rather than as a misconfiguration.
+#: Kept a ``str`` because it is handed straight to libpq.
+CA_BUNDLE_PATH: str = str(Path(__file__).resolve().parent / "certs" / "ca-bundle.pem")
+
 CONNECT_TIMEOUT_S: int = 5
+
+#: The four TLS/encoding constants of delta **D1** (ruling **R34**). Each is a
+#: code constant; none is an environment variable, and none may be relaxed
+#: without a contract step. ``R2``'s spelling ``sslminprotocolversion`` is
+#: invalid — libpq rejects it outright — and ``R34`` corrects it to the
+#: spelling below.
+SSLMODE: str = "verify-full"
+SSL_MIN_PROTOCOL_VERSION: str = "TLSv1.2"
+GSSENCMODE: str = "disable"
+CLIENT_ENCODING: str = "UTF8"
 ENV_NAMES: tuple[str, ...] = ("DB_SERVER", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME")
 
 _REQUIRED_NAMES: tuple[str, ...] = ("DB_SERVER", "DB_USER", "DB_PASSWORD", "DB_NAME")
@@ -90,9 +113,11 @@ class Config:
     Returns
     -------
     dict[str, object]
-      ``host``, ``port``, ``user``, ``password``, ``dbname``,
-      ``sslmode="verify-full"``, ``sslrootcert=CA_BUNDLE_PATH``,
-      ``connect_timeout=CONNECT_TIMEOUT_S`` and ``options=""``.
+      Delta **D1**'s twelve keys, exactly: ``host``, ``port``, ``user``,
+      ``password``, ``dbname``, ``sslmode="verify-full"``,
+      ``sslrootcert=CA_BUNDLE_PATH``, ``connect_timeout=CONNECT_TIMEOUT_S``,
+      ``options=""``, ``ssl_min_protocol_version="TLSv1.2"``,
+      ``gssencmode="disable"`` and ``client_encoding="UTF8"``.
 
     Notes
     -----
@@ -102,8 +127,12 @@ class Config:
     contract step. ``statement_timeout`` is applied by the pool's configure
     hook, not here, because ``options`` must stay empty.
 
-    ``sslrootcert`` is relative to the working directory, which is the
-    application root both in the image and in a host dev run.
+    The last three are delta **D1** / ruling **R34**, each closing a
+    downgrade an explicit value would otherwise leave open: a TLS floor
+    below 1.2, a GSSAPI encryption negotiation this deployment never wants,
+    and a client encoding libpq would otherwise take from the environment's
+    locale. ``sslrootcert`` is resolved from the package (delta **D2**), so
+    the trust anchor does not depend on the working directory.
     """
     return {
       "host": self.host,
@@ -111,10 +140,13 @@ class Config:
       "user": self.user,
       "password": self.password,
       "dbname": self.dbname,
-      "sslmode": "verify-full",
+      "sslmode": SSLMODE,
       "sslrootcert": CA_BUNDLE_PATH,
       "connect_timeout": CONNECT_TIMEOUT_S,
       "options": "",
+      "ssl_min_protocol_version": SSL_MIN_PROTOCOL_VERSION,
+      "gssencmode": GSSENCMODE,
+      "client_encoding": CLIENT_ENCODING,
     }
 
 
