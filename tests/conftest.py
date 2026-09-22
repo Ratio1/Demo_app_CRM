@@ -54,25 +54,35 @@ Two ways a test reaches the database
 2. **In process**, via ``db_connection`` — for repository-level behaviour
    the contract itself drives by an explicit ``now`` parameter (expiry,
    revocation, throttle/budget windows: §7.3 "every expiry test... advances
-   the clock rather than sleeping"). This fixture calls
-   ``app.config.load_config()`` with no explicit mapping, so it reads
-   ``os.environ`` directly — which means **the test process itself** needs
-   the runtime credentials already in its environment. Per slice-a.md §7.2
-   ("The suite itself runs under ``.env.test.local`` as ``crm_test_app``"),
-   the canonical way to run this suite is therefore::
+   the clock rather than sleeping"; ruling **R46(a)**: this is Slice A's
+   "in-process transport with an injected ``ManualClock``" for exactly the
+   repository-level surface it can reach — ``create_app`` itself has no
+   clock/service injection seam yet, so a request through the full ASGI
+   app cannot be clock-driven; that gap belongs to the Backend lane, not
+   this suite). This fixture calls ``app.config.load_config()`` with no
+   explicit mapping, so **it**, in turn, reads ``os.environ`` — but this
+   module's own fixtures never read ``os.environ`` directly to build a
+   database credential; they always go through ``load_config()``, which
+   means **the test process itself** needs the runtime credentials already
+   in its environment. Per slice-a.md §7.2 ("The suite itself runs under
+   ``.env.test.local`` as ``crm_test_app``") and ruling **R52**, the
+   canonical, and only supported, way to run this suite is::
 
-     scripts/with-env .env.test.local -- .venv/bin/python -B -m pytest
+     scripts/with-env .env.test.local -- .venv/bin/python -B -m pytest tests -p no:cacheprovider -q
 
-   A bare ``pytest`` invocation still collects and runs every test that
-   does not request ``db_connection`` (all of ``tests/unit``,
-   ``tests/arch``, and the subprocess-driven
-   ``tests/security/test_dep_hostile_env.py``, each of which reaches the
-   database only through its own ``with-env`` subprocess); a test that does
-   request it fails with a plain, value-free ``ConfigError`` under a bare
-   invocation — an honest signal, not a leak. Seeding data that needs the
-   **owner** role (for example a ``users`` row, whose runtime grant is
-   ``SELECT, UPDATE`` only) still goes through its own dedicated
-   ``with-env .env.test.owner.local`` subprocess — see
+   (from ``Demo_app_CRM``; also recorded in ``tests/README.md`` and
+   ``ACCEPTANCE.md``). **A bare ``pytest`` invocation is not a supported
+   invocation (R52)** — it still collects and runs every test that does
+   not request ``db_connection`` (all of ``tests/unit``, ``tests/arch``,
+   and the subprocess-driven ``tests/security/test_dep_hostile_env.py``,
+   each of which reaches the database only through its own ``with-env``
+   subprocess) as a convenience for iterating on one file, and a test that
+   does request ``db_connection`` fails with a plain, value-free
+   ``ConfigError`` under it — an honest signal, not a leak — but it is not
+   the invocation whose results this suite's reports may cite. Seeding
+   data that needs the **owner** role (for example a ``users`` row, whose
+   runtime grant is ``SELECT, UPDATE`` only) still goes through its own
+   dedicated ``with-env .env.test.owner.local`` subprocess — see
    :func:`insert_test_user_row` — never through an in-process owner
    connection, because a single test process can only ever hold the one
    role it was launched under.
@@ -100,15 +110,20 @@ now reorders every ``tests/e2e`` item to run **after** everything else in
 the same session, which removes the corruption for a single, literal
 ``pytest tests`` invocation (verified: zero ``Runner.run()`` errors and
 zero "never awaited" warnings across the whole suite with the hook in
-place, where the same run showed both before it existed). The reliable
-split remains available and is still how a browser-less run is done::
+place, where the same run showed both before it existed). **R52 pins the
+single, literal invocation as canonical** (see above); the two-invocation
+split below is kept only as a fallback for isolating a browser-less run by
+hand, is not itself the R52 invocation, and is never what a gate or
+``ACCEPTANCE.md`` run cites::
 
   scripts/with-env .env.test.local -- .venv/bin/python -B -m pytest tests/ --ignore=tests/e2e
   .venv/bin/python -B -m pytest tests/e2e   # separate invocation; no with-env needed today
 
 Every count this suite's commit messages report from before this revision
 was measured with that split; counts reported afterwards use either form
-interchangeably, since both are now corruption-free.
+interchangeably, since both are now corruption-free — but only the R52
+single invocation is the one this suite's own reports (``README.md``,
+``ACCEPTANCE.md``, ``tests/README.md``) may cite as *the* run.
 """
 
 from __future__ import annotations
@@ -984,21 +999,26 @@ def _default_origin_on_unsafe_methods(
   empty ``headers={}`` a safe-method test passes to assert on the no-Origin
   case (a safe method is untouched here regardless).
 
-  Note for the backend/orchestrator, not something this hook can address:
-  a **real** browser does not always send the page's origin on an unsafe
-  navigation — when the referring page carries ``Referrer-Policy:
-  no-referrer`` (slice-a.md §2.6, sent on every response including
-  ``/login``), the Fetch standard's "append a request `Origin` header"
-  algorithm serializes it as the literal string ``"null"`` instead, which
-  then fails this same equality check. Reproduced on a plain, unrelated
-  ``http.server`` (no TLS, no app code): a ``GET`` response carrying only
-  ``Referrer-Policy: no-referrer`` makes the following real-Chromium
-  same-origin form ``POST`` arrive with ``Origin: null``. This hook
-  deliberately sends the *real* origin (what a browser would send without
-  that header) so the httpx-driven suite exercises the CSRF/session logic
-  in isolation; ``tests/e2e`` drives a real browser and is the one place
-  this actually surfaces — see ``NOTES.md``/the round-3 report for the
-  full reproduction and why it is reported as backend, not fixed here.
+  Historical note, resolved by ruling **R50** — kept because it explains
+  why this hook exists rather than the app simply always sending
+  ``Origin``: a **real** browser does not always send the page's origin on
+  an unsafe navigation — when the referring page carries
+  ``Referrer-Policy: no-referrer``, the Fetch standard's "append a request
+  `Origin` header" algorithm serializes it as the literal string
+  ``"null"`` instead, which fails an exact-``Origin`` equality check.
+  Reproduced live in Slice A gate round 1 (headless Chromium, real form
+  ``POST``) and on a plain, unrelated ``http.server`` (no TLS, no app
+  code): a ``GET`` response carrying only ``Referrer-Policy: no-referrer``
+  made a same-origin form ``POST`` arrive with ``Origin: null``. **R50**
+  fixed this at the source — ``app/security/headers.py`` now sends
+  ``Referrer-Policy: same-origin`` (``SEC-027``), under which a real
+  browser keeps sending the true ``Origin`` on a same-origin ``POST`` — so
+  this is no longer an open backend gap; the header value below is
+  verified against the response in ``tests/security/test_headers.py``.
+  This hook still exists because httpx, unlike a browser, never adds
+  ``Origin`` on its own regardless of ``Referrer-Policy``, so every
+  unsafe-method call in this httpx-driven suite still needs it stamped
+  explicitly.
 
   Parameters
   ----------
