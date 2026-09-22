@@ -81,7 +81,6 @@ async def test_a_spoofed_host_is_403_even_on_an_unknown_path(
   """
   async with httpx.AsyncClient(
     base_url=live_server.base_url,
-    verify=False,  # noqa: S501
     timeout=10.0,
   ) as client:
     response = await client.get(
@@ -96,7 +95,6 @@ async def test_health_endpoints_answer_normally_with_a_spoofed_host(
   """``/health/live`` and ``/health/ready`` are exempt from the origin/host check entirely."""
   async with httpx.AsyncClient(
     base_url=live_server.base_url,
-    verify=False,  # noqa: S501
     timeout=10.0,
   ) as client:
     response = await client.get("/health/live", headers={"Host": "evil.example.test"})
@@ -141,7 +139,6 @@ async def test_an_options_preflight_to_a_mutation_route_is_405_not_a_preflight_r
   """``OPTIONS /login`` is ``405``, never a CORS preflight response."""
   async with httpx.AsyncClient(
     base_url=live_server.base_url,
-    verify=False,  # noqa: S501
     timeout=10.0,
   ) as client:
     response = await client.options("/login")

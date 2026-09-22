@@ -19,7 +19,6 @@ import subprocess
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
 
 import pytest
 from conftest import (
@@ -36,12 +35,6 @@ VIEWPORTS = [
   pytest.param({"width": 390, "height": 844}, id="mobile-390x844"),
   pytest.param({"width": 1440, "height": 900}, id="desktop-1440x900"),
 ]
-
-
-@pytest.fixture
-def browser_context_args(browser_context_args: dict[str, Any]) -> dict[str, Any]:
-  """Extend pytest-playwright's default context args with ``ignore_https_errors``."""
-  return {**browser_context_args, "ignore_https_errors": True}
 
 
 @pytest.fixture

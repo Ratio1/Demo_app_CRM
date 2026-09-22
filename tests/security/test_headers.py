@@ -59,15 +59,22 @@ async def test_x_content_type_options_nosniff_on_every_kind_of_page(
     assert response.headers.get("x-content-type-options") == "nosniff"
 
 
-async def test_strict_transport_security_present_on_every_kind_of_page(
+async def test_strict_transport_security_absent_on_every_kind_of_page(
   admin_session: httpx.AsyncClient, http_client_factory: Any
 ) -> None:
-  """HSTS header present with the pinned ``max-age`` and ``includeSubDomains``, no ``preload``."""
+  """No response ever carries ``Strict-Transport-Security`` on ``live_server``'s ``http://`` origin.
+
+  ``live_server`` (root ``conftest.py``) serves plain HTTP with an
+  ``http://127.0.0.1:<port>`` origin, so the header — a promise this
+  deployment cannot keep on plain HTTP — must never appear here. The
+  ``https://`` half of this same origin-scheme contract (HSTS present,
+  with the pinned ``max-age`` and ``includeSubDomains``, no ``preload``) is
+  proved at ``tests/inprocess/test_origin_scheme.py``, the one remaining
+  transport in this suite that still points ``crm_test`` at an ``https://``
+  origin.
+  """
   for response in await _pages(admin_session, http_client_factory):
-    hsts = response.headers.get("strict-transport-security", "")
-    assert "max-age=31536000" in hsts
-    assert "includeSubDomains" in hsts
-    assert "preload" not in hsts
+    assert "strict-transport-security" not in response.headers
 
 
 async def test_permissions_policy_is_the_exact_pinned_value(

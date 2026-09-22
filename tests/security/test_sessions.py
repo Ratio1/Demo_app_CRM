@@ -265,14 +265,23 @@ async def test_revoke_sessions_keeps_only_the_named_session(
 
 # ---------------------------------------------------------------------------
 # Cookie identity, rotation, caching and logout headers, over HTTP.
+#
+# ``live_server`` serves plain HTTP with an ``http://127.0.0.1:<port>``
+# origin (root ``conftest.py``), so every cookie assertion here is the
+# unprefixed, non-``Secure`` shape — see ``app.security.sessions``'s module
+# docstring. The ``https://`` half of the same origin-scheme contract
+# (``Secure``, the ``__Host-`` name, HSTS) is proved at
+# ``tests/inprocess/test_origin_scheme.py``, the one remaining transport in
+# this suite that still points ``crm_test`` at an ``https://`` origin.
 # ---------------------------------------------------------------------------
 
 
-async def test_the_session_cookie_is_named_exactly_dunder_host_crm_session(
+async def test_the_session_cookie_is_named_exactly_crm_session(
   admin_session: httpx.AsyncClient,
 ) -> None:
-  """The literal cookie name is ``__Host-crm_session`` — not merely the prefix."""
-  assert "__Host-crm_session" in admin_session.cookies
+  """The literal cookie name is ``crm_session`` — unprefixed, matching the ``http://`` origin."""
+  assert "crm_session" in admin_session.cookies
+  assert "__Host-crm_session" not in admin_session.cookies
 
 
 async def test_login_rotates_the_cookie_value_the_preauth_token_no_longer_works(
@@ -281,16 +290,16 @@ async def test_login_rotates_the_cookie_value_the_preauth_token_no_longer_works(
   """The pre-auth cookie value dies on login; only the new, post-login value authenticates."""
   client: httpx.AsyncClient = http_client_factory()
   await client.get("/login")
-  preauth_value = client.cookies.get("__Host-crm_session")
+  preauth_value = client.cookies.get("crm_session")
   assert preauth_value is not None
 
   await login_via_http(client, email=bootstrap_admin.email, password=bootstrap_admin.password)
-  full_value = client.cookies.get("__Host-crm_session")
+  full_value = client.cookies.get("crm_session")
   assert full_value is not None
   assert full_value != preauth_value
 
   replay_client: httpx.AsyncClient = http_client_factory()
-  replay_client.cookies.set("__Host-crm_session", preauth_value, domain="127.0.0.1")
+  replay_client.cookies.set("crm_session", preauth_value, domain="127.0.0.1")
   response = await replay_client.get("/account/password")
   assert response.status_code in (303, 403), "the dead pre-auth token must not authenticate"
 
@@ -329,8 +338,10 @@ async def test_logout_carries_clear_site_data_and_expires_the_cookie(
   assert response.status_code == 303
   assert response.headers.get("clear-site-data") == '"cache", "storage"'
   set_cookie = response.headers.get("set-cookie", "")
-  assert "__Host-crm_session=" in set_cookie
+  assert "crm_session=" in set_cookie
+  assert "__Host-crm_session=" not in set_cookie
   assert "Max-Age=0" in set_cookie
+  assert "Secure" not in set_cookie, "the http:// live_server origin must never send Secure"
 
 
 def _run_manage_with_stdin(*args: str, password: str, tmp_path: Path, name: str) -> None:

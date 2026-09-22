@@ -1,9 +1,10 @@
 """Playwright end-to-end journey — login, forced reset, logout, keyboard, axe.
 
 Plain **sync** tests (pytest-playwright's ``page`` fixture is sync); no
-``pytestmark = pytest.mark.asyncio`` in this module. TLS is the real
-self-signed test certificate ``live_server`` generates, so every browser
-context here is built with ``ignore_https_errors=True``.
+``pytestmark = pytest.mark.asyncio`` in this module. ``live_server`` serves
+plain HTTP (root ``conftest.py``), so every browser context here is
+pytest-playwright's ordinary default — no TLS, no certificate, nothing to
+ignore.
 """
 
 from __future__ import annotations
@@ -11,7 +12,6 @@ from __future__ import annotations
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
 
 import pytest
 from conftest import (
@@ -31,17 +31,6 @@ VIEWPORTS = [
   pytest.param({"width": 390, "height": 844}, id="mobile-390x844"),
   pytest.param({"width": 1440, "height": 900}, id="desktop-1440x900"),
 ]
-
-
-@pytest.fixture
-def browser_context_args(browser_context_args: dict[str, Any]) -> dict[str, Any]:
-  """Extend pytest-playwright's default context args with ``ignore_https_errors``.
-
-  The test cert is a throwaway fixture generated per ``live_server``
-  instance, not a trust decision — the same reason the httpx fixtures use
-  ``verify=False``.
-  """
-  return {**browser_context_args, "ignore_https_errors": True}
 
 
 def _provision_forced_reset_agent(tmp_path: Path) -> tuple[str, str]:

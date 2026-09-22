@@ -69,7 +69,7 @@ async def test_a_failed_login_leaks_no_password_or_cookie(
   )
   stream = live_server.log_path.read_bytes()
   _assert_absent(stream, _DISTINCTIVE_PASSWORD, label="the submitted password")
-  cookie_value = client.cookies.get("__Host-crm_session")
+  cookie_value = client.cookies.get("crm_session")
   if cookie_value:
     _assert_absent(stream, cookie_value, label="the raw session cookie value")
 
@@ -96,7 +96,6 @@ async def test_a_spoofed_host_403_leaks_nothing_either(
   spoofed_host = f"{_DISTINCTIVE_TERM.replace('@', '-')}.evil.invalid"
   async with httpx.AsyncClient(
     base_url=live_server.base_url,
-    verify=False,  # noqa: S501
     timeout=10.0,
   ) as client:
     response = await client.get("/account/password", headers={"Host": spoofed_host})

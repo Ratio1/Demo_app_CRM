@@ -335,7 +335,7 @@ async def test_the_tenth_concurrent_login_gets_a_sanitized_429(
   per-account throttle cannot itself explain a 429 here — only the shared
   hash-queue depth can.
 
-  Every client's pre-auth ``GET /login`` (CSRF token, TLS handshake) is
+  Every client's pre-auth ``GET /login`` (CSRF token, the TCP connect) is
   driven to completion *before* any ``POST`` fires, and an
   :class:`asyncio.Barrier` then releases all ten ``POST``s together.
   Without this staging, interleaving the GET-then-POST pairs freely under

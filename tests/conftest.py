@@ -20,19 +20,22 @@ application itself runs as.
 
 Server isolation
 ------------------
-One test **session** that needs a live HTTP(S) endpoint gets **one**
+One test **session** that needs a live HTTP endpoint gets **one**
 uvicorn subprocess (``live_server``, session-scoped), bound to an
 OS-assigned ``127.0.0.1:0`` port with **no** probe-then-bind race: this
 module binds and listens on the port itself and hands the
 already-listening socket's file descriptor to the uvicorn subprocess
 (``--fd``), so there is never a second bind. Port ``3002`` is the human
-dev-run assignment and never appears here. Every test that uses it shares
-that one process and its one certificate; isolation between tests is by
-data (dedicated ``example.test`` identities from
-``provision_agent``/``unique_email``, never the shared ``bootstrap_admin``,
-for anything that mutates account-scoped or global counters) and by
-targeted owner-role cleanup (``test_throttle_and_budget.py``'s autouse
-clear of ``login_throttle``/``rate_budget``), not by a fresh process.
+dev-run assignment and never appears here. The process serves plain
+HTTP — the shipped application never terminates TLS itself, a Cloudflare
+(or equivalent) terminator in front of it does — so there is no
+certificate of any kind here, dev or otherwise. Every test that uses it
+shares that one process; isolation between tests is by data (dedicated
+``example.test`` identities from ``provision_agent``/``unique_email``,
+never the shared ``bootstrap_admin``, for anything that mutates
+account-scoped or global counters) and by targeted owner-role cleanup
+(``test_throttle_and_budget.py``'s autouse clear of
+``login_throttle``/``rate_budget``), not by a fresh process.
 
 Why so much of this is lazy-imported
 --------------------------------------
@@ -46,10 +49,10 @@ surfaces as one failing test, not a blank test session.
 
 Three ways a test reaches the database
 --------------------------------------
-1. **Over HTTP, against the real TLS server**, via
+1. **Over HTTP, against the real server**, via
    ``live_server``/``admin_client``/``agent_client`` — for anything
-   genuinely observable only at the wire (cookie attributes, TLS itself,
-   status codes, response headers). ``live_server`` builds its app with the
+   genuinely observable only at the wire (cookie attributes, real header
+   casing, status codes, response headers). ``live_server`` builds its app with the
    production ``SystemClock`` (one such server per *session*, not per
    test — see the fixture's own docstring), so nothing reached through it
    can be driven by ``ManualClock``; a clock-dependent assertion belongs
@@ -780,62 +783,8 @@ def provision_agent(
 
 
 # ---------------------------------------------------------------------------
-# The ephemeral TLS server.
+# The ephemeral plain-HTTP server.
 # ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class TestCertificate:
-  """A self-signed ``127.0.0.1`` certificate generated into ``tmp_path``."""
-
-  cert_path: Path
-  key_path: Path
-
-
-def generate_test_certificate(tmp_path: Path) -> TestCertificate:
-  """Generate a throwaway self-signed TLS certificate for ``127.0.0.1``.
-
-  Mirrors ``scripts/dev-run.sh``'s ``openssl`` invocation, but always
-  regenerates into ``tmp_path`` (never ``app/certs/dev-server.*``, which is
-  the human dev-run's pair and is never touched by a test).
-
-  Parameters
-  ----------
-  tmp_path : Path
-    Destination directory; the key is written mode 0600.
-
-  Returns
-  -------
-  TestCertificate
-
-  Raises
-  ------
-  SubprocessFailed
-    If ``openssl`` is not on ``PATH`` or refuses the request.
-  """
-  cert_path = tmp_path / "test-server.crt"
-  key_path = tmp_path / "test-server.key"
-  argv = [
-    "openssl",
-    "req",
-    "-x509",
-    "-newkey",
-    "rsa:2048",
-    "-nodes",
-    "-days",
-    "1",
-    "-keyout",
-    str(key_path),
-    "-out",
-    str(cert_path),
-    "-subj",
-    "/CN=127.0.0.1",
-    "-addext",
-    "subjectAltName=IP:127.0.0.1,DNS:localhost",
-  ]
-  _run_logged(argv, cwd=tmp_path, log_path=tmp_path / "openssl.log")
-  key_path.chmod(0o600)
-  return TestCertificate(cert_path=cert_path, key_path=key_path)
 
 
 def bind_ephemeral_listening_socket() -> socket.socket:
@@ -859,12 +808,14 @@ def bind_ephemeral_listening_socket() -> socket.socket:
 
 @dataclass(frozen=True, slots=True)
 class LiveServer:
-  """A running, per-test uvicorn instance over TLS on an ephemeral port.
+  """A running, session-scoped uvicorn instance in plain HTTP on an ephemeral port.
 
   Attributes
   ----------
   base_url : str
-    ``https://127.0.0.1:<port>`` — never ``3002``.
+    ``http://127.0.0.1:<port>`` — never ``3002``. Plain HTTP: the shipped
+    application never terminates TLS itself, so there is no certificate
+    here — see the module docstring.
   port : int
     The OS-assigned port.
   log_path : Path
@@ -900,7 +851,7 @@ def _wait_until_serving(base_url: str, *, timeout: float) -> None:
   last_error: Exception | None = None
   while time.monotonic() < deadline:
     try:
-      response = httpx.get(f"{base_url}/health/live", verify=False, timeout=1.0)  # noqa: S501
+      response = httpx.get(f"{base_url}/health/live", timeout=1.0)
     except httpx.HTTPError as error:
       last_error = error
       time.sleep(0.1)
@@ -917,23 +868,24 @@ def live_server(
   tmp_path_factory: pytest.TempPathFactory,
   bootstrap_admin: ProvisionedUser,
 ) -> Iterator[LiveServer]:
-  """Start one uvicorn instance over TLS, on its own ephemeral port, once per session.
+  """Start one uvicorn instance in plain HTTP, on its own ephemeral port, once per session.
 
   Plain sync generator fixture: nothing in its body ``await``s (subprocess
   management, socket binding and the polling wait are all synchronous), so
   there is no reason to add async-fixture/event-loop-scope friction under
   ``asyncio_mode = strict`` for a fixture that does no I/O through asyncio.
 
-  Order: generate a throwaway certificate into a
-  dedicated ``tmp_path_factory`` directory (session-scoped — **not**
-  ``tmp_path``, which is function-scoped and would be a pytest
-  ``ScopeMismatch`` error here); bind and listen on ``127.0.0.1:0``
+  Order: bind and listen on ``127.0.0.1:0``
   ourselves; hand the listening socket to uvicorn by file descriptor; wait
   for it to answer; re-point ``crm_test``'s stored origin to this exact
-  port with ``manage set-origin`` under the owner env file, its own
-  subprocess.
+  ``http://`` origin with ``manage set-origin`` under the owner env file,
+  its own subprocess — an ``http://`` origin is exactly what a local
+  acceptance run behind nothing (no Cloudflare, no other terminator) uses:
+  this process only ever speaks plain HTTP; a production deployment's
+  origin is ``https://`` because a terminator in front of it holds the
+  certificate, never this process.
 
-  **Session-scoped:** one TLS uvicorn subprocess serves
+  **Session-scoped:** one plain-HTTP uvicorn subprocess serves
   every test in the session that needs one, rather than a fresh subprocess
   per test. It starts once, the first time any
   test requests it (directly or through ``http_client_factory``), and is
@@ -965,10 +917,9 @@ def live_server(
   both are provisioning preconditions of ``/health/ready``.
   """
   tmp_path = tmp_path_factory.mktemp("live_server")
-  certificate = generate_test_certificate(tmp_path)
   sock = bind_ephemeral_listening_socket()
   port = sock.getsockname()[1]
-  base_url = f"https://127.0.0.1:{port}"
+  base_url = f"http://127.0.0.1:{port}"
   log_path = tmp_path / "uvicorn.log"
 
   argv = [
@@ -982,10 +933,6 @@ def live_server(
     "app.main:app",
     "--fd",
     str(sock.fileno()),
-    "--ssl-certfile",
-    str(certificate.cert_path),
-    "--ssl-keyfile",
-    str(certificate.key_path),
     "--no-server-header",
     "--no-proxy-headers",
     "--no-access-log",
@@ -1122,7 +1069,6 @@ async def http_client_factory(
   def _factory() -> httpx.AsyncClient:
     client = httpx.AsyncClient(
       base_url=live_server.base_url,
-      verify=False,  # noqa: S501 — the test cert is not a trust decision
       follow_redirects=False,
       timeout=10.0,
       event_hooks={"request": [_default_origin_on_unsafe_methods(live_server.base_url)]},
@@ -1396,7 +1342,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
   1. ``tests/inprocess`` **first.** Its own module-scoped fixture points
      ``crm_test``'s stored ``public_origin`` at ``https://crm.test``.
      ``live_server`` (bucket 2/3) points the same row at
-     its own ``https://127.0.0.1:<port>`` the moment it is first
+     its own ``http://127.0.0.1:<port>`` the moment it is first
      constructed and never repoints it again for the rest of the session —
      so if any ``live_server``-backed test ran *before* ``tests/inprocess``,
      the in-process fixture's ``manage set-origin`` would still work, but
