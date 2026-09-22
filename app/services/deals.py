@@ -117,18 +117,22 @@ __all__ = [
   "DealView",
   "Duplicate",
   "Invalid",
+  "ParentSummary",
   "PipelineView",
   "RestoreForm",
   "SameStage",
   "StageColumn",
   "StageTerminal",
   "Stale",
+  "blocked_parent",
   "build_deal_query",
   "change_stage",
   "create_for_contact",
   "get_for_detail",
+  "lateral_targets",
   "list_deals",
   "list_for_contact",
+  "parent_for_form",
   "pipeline",
   "update_deal",
 ]
@@ -305,6 +309,12 @@ class DealCardView:
   shape, so this is one class; :data:`DealRowView` is its other contracted
   name. The ``url`` and ``contact_url`` keys of that shape are added by the
   route, because this module holds no URL.
+
+  ``version`` is **not** part of that frozen shape and is never rendered as
+  part of a card: it is here because ``contacts/detail.html``'s
+  ``deal_forms {deal_id: {…, version, …}}`` needs one concurrency token per
+  deal, and reading it per card is how the workspace's stage controls are
+  built without a second query per row.
   """
 
   id: UUID
@@ -318,6 +328,7 @@ class DealCardView:
   owner_name: str
   is_own: bool
   parent_archived: bool
+  version: int
 
 
 #: ``CONTRACTS.md`` §8.3's second name for the identical shape. An alias
@@ -509,6 +520,21 @@ class SameStage:
 
 
 @dataclass(frozen=True, slots=True)
+class ParentSummary:
+  """What ``deals/form.html`` may echo about a deal's parent (``ACC-230``).
+
+  Exactly the id and the ``full_name``: the two attributes the caller could
+  already read at ``GET /contacts/{id}`` under the same predicate. No count,
+  no aggregate, no other owner's name, nothing from ``users`` — the cell is
+  asserted by diffing the rendered form against the caller's own permitted
+  contact read.
+  """
+
+  id: UUID
+  full_name: str
+
+
+@dataclass(frozen=True, slots=True)
 class Duplicate:
   """``409`` ``context="duplicate"`` — same key, different payload (``SQL-028``)."""
 
@@ -601,7 +627,7 @@ def _digest_fields(values: Mapping[str, str]) -> Sequence[tuple[str, str]]:
   return [(name, values[name]) for name in DEAL_FIELDS]
 
 
-def _lateral_targets(stage: str) -> tuple[tuple[str, str], ...]:
+def lateral_targets(stage: str) -> tuple[tuple[str, str], ...]:
   """Return the legal lateral targets for ``stage``, minus ``stage`` itself.
 
   Parameters
@@ -649,7 +675,7 @@ def _view(row: DealRow, scope: Scope) -> DealView:
     # meets 409 archived_parent, decided in the transaction.
     can_edit=not archived_parent,
     can_change_stage=not archived_parent and row.stage not in TERMINAL,
-    lateral_targets=_lateral_targets(row.stage),
+    lateral_targets=lateral_targets(row.stage),
   )
 
 
@@ -667,6 +693,7 @@ def _card(row: DealRow, scope: Scope) -> DealCardView:
     owner_name=row.owner_name,
     is_own=row.owner_id == scope.actor_id,
     parent_archived=row.parent_archived_at is not None,
+    version=row.version,
   )
 
 
@@ -1124,6 +1151,72 @@ async def list_for_contact(
 
   page = await runner.read_committed(_read, op="deal-region")
   return tuple(_card(row, scope) for row in page.rows)
+
+
+async def parent_for_form(
+  runner: TransactionRunner, scope: Scope, *, contact_id: UUID
+) -> ParentSummary | Blocked:
+  """Resolve the parent of a deal form, by the statement the ``POST`` uses.
+
+  Parameters
+  ----------
+  runner : TransactionRunner
+    The process runner.
+  scope : Scope
+    The viewer's scope.
+  contact_id : UUID
+    The parent named in the path.
+
+  Returns
+  -------
+  ParentSummary | Blocked
+    The two attributes the form may echo (``ACC-230``), or the 409
+    ``archived_parent`` payload (``ACC-229``).
+
+  Raises
+  ------
+  ContactNotFound
+    For a foreign parent and for a missing one alike (``ACC-228``).
+
+  Notes
+  -----
+  ``ACC-228`` requires the pre-filled form to resolve its parent *"by the
+  same statement ``ACC-207`` uses on the POST — one code path, so the GET
+  cannot 404 differently from the POST"*. That statement is
+  :func:`app.db.repositories.deals.parent_state`, and it is what **decides**
+  here: the name is read only **after** it has answered ``active``, so both
+  verbs refuse from the same place and the extra read can never turn a
+  refusal into a disclosure.
+  """
+
+  async def _read(conn: PoolConnection) -> ParentSummary | Blocked:
+    state = await deals_repo.parent_state(conn, scope, contact_id=contact_id)
+    if state == "missing":
+      raise ContactNotFound(contact_id)
+    if state == "archived":
+      return await _blocked_parent(conn, scope, contact_id=contact_id)
+    parent = await contacts_repo.get_contact(conn, scope, contact_id=contact_id)
+    if parent is None:
+      raise ContactNotFound(contact_id)
+    return ParentSummary(id=parent.id, full_name=parent.full_name)
+
+  return await runner.read_committed(_read, op="deal-form-parent")
+
+
+async def blocked_parent(runner: TransactionRunner, scope: Scope, *, contact_id: UUID) -> Blocked:
+  """Build the 409 ``archived_parent`` payload outside a mutation.
+
+  Used by ``GET /deals/{id}/edit``, which answers 409 rather than render a
+  form whose ``POST`` could only ever answer 409 (ask **A-8**), and by the
+  ``POST`` paths that must refuse a field error under an archived parent —
+  ``ACCESS_MATRIX.md`` §1.1 puts the archive state ahead of validation. The
+  read is scoped, so it discloses nothing the caller could not already open.
+  """
+
+  async def _read(conn: PoolConnection) -> Blocked:
+    return await _blocked_parent(conn, scope, contact_id=contact_id)
+
+  return await runner.read_committed(_read, op="deal-blocked-parent")
 
 
 async def create_for_contact(

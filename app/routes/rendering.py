@@ -56,6 +56,8 @@ if TYPE_CHECKING:
 
 __all__ = [
   "APP_NAME",
+  "CP_30_AGENT_SCOPE",
+  "CP_31_ADMIN_SCOPE",
   "NOTICE_CODES",
   "TEMPLATES",
   "TEMPLATES_DIR",
@@ -64,9 +66,16 @@ __all__ = [
   "csrf_token_for_request",
   "notice_for",
   "render",
+  "scope_label_for",
 ]
 
 APP_NAME: Final = "Demo_App_CRM"
+
+#: ``UX_FLOWS.md`` §6.3 ``CP-30``/``CP-31`` — the list sub-heading that
+#: tells an admin whose records they are looking at. One definition, read
+#: by every private page through :func:`scope_label_for`.
+CP_30_AGENT_SCOPE: Final = "Your records"
+CP_31_ADMIN_SCOPE: Final = "All records"
 
 
 def _templates_dir() -> Path:
@@ -259,6 +268,26 @@ def csrf_token_for_request(request: Request) -> str:
     return ""
   csrf_token, _digest = csrf_for_token(token)
   return csrf_token
+
+
+def scope_label_for(principal: Principal) -> str:
+  """Return ``CP-30`` or ``CP-31`` for this principal's page heading.
+
+  Parameters
+  ----------
+  principal : Principal
+    The resolved actor, whose role was re-read from ``users`` on this
+    request.
+
+  Returns
+  -------
+  str
+    The label only. It is **copy, never authorization**: the scope that
+    decides what the page may show is built from the same principal by
+    :func:`app.security.principal.scope_of` and is applied inside the
+    statement.
+  """
+  return CP_31_ADMIN_SCOPE if principal.is_admin else CP_30_AGENT_SCOPE
 
 
 def base_context(

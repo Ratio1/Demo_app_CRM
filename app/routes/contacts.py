@@ -52,6 +52,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from app.logging import current_correlation_id
+from app.routes.cards import deal_card_context, stage_form_context
 from app.routes.errors import CONTACTS_URL, conflict, redirect
 from app.routes.pipeline import (
   is_fragment_request,
@@ -62,7 +63,14 @@ from app.routes.pipeline import (
   start_mutation,
   start_read,
 )
-from app.routes.rendering import View, base_context, csrf_token_for_request, notice_for, render
+from app.routes.rendering import (
+  View,
+  base_context,
+  csrf_token_for_request,
+  notice_for,
+  render,
+  scope_label_for,
+)
 from app.security.context import context_of
 from app.security.failures import ContactNotFound
 from app.security.idempotency import mint_key, parse_canonical
@@ -90,6 +98,7 @@ from app.services.contacts import (
   restore_contact,
   update_contact,
 )
+from app.services.deals import list_for_contact
 
 if TYPE_CHECKING:
   from uuid import UUID
@@ -156,10 +165,7 @@ _OWNER_LABEL: Final = "Owner"
 #: viewer's own display name repeated back at them.
 _CP_32_SELF: Final = "you"
 
-#: ``UX_FLOWS.md`` §6.3 ``CP-30``/``CP-31`` and §6.5 ``CP-41``/``CP-42``/
-#: ``CP-43``.
-_CP_30_AGENT_SCOPE: Final = "Your records"
-_CP_31_ADMIN_SCOPE: Final = "All records"
+#: ``UX_FLOWS.md`` §6.5 ``CP-41``/``CP-42``/``CP-43``.
 _CP_42_NO_RESULTS: Final = "No contacts match this search."
 _CP_43_EMPTY: Final = (
   "No contacts yet. Add your first contact to start tracking deals and activity."
@@ -403,11 +409,6 @@ def _owner_label(owner_name: str, *, is_own: bool) -> str:
   return _CP_32_SELF if is_own else owner_name
 
 
-def _scope_label(principal: Principal) -> str:
-  """Return ``CP-30`` or ``CP-31`` for this principal's list heading."""
-  return _CP_31_ADMIN_SCOPE if principal.is_admin else _CP_30_AGENT_SCOPE
-
-
 def _contact_context(view: ContactView) -> dict[str, Any]:
   """Build ``CONTRACTS.md`` §8.2's ``contact`` — and nothing beyond it.
 
@@ -478,15 +479,31 @@ async def _detail_context(
   Notes
   -----
   Four idempotency keys are minted per render — archive, restore, reassign
-  and the Slice C activity form — because a page with N mutation forms
-  carries N keys (``CONTRACTS.md`` §8 rule 2).
+  and the activity form — **plus one per deal**, because a page with N
+  mutation forms carries N keys (``CONTRACTS.md`` §8 rule 2) and each deal
+  card draws its own stage control. ``deal_forms`` is that per-deal half
+  (finding F-4: one key per *control render*, shared by the three forms the
+  partial draws, only one of which can be submitted).
+
+  The ``#deals`` region is a **full page render only** (``slice-c.md``
+  §2(e)): it carries no ``hx-*`` attribute and has no fragment route, because
+  §8.3 defines exactly four swap targets and none of them is this one. Every
+  deal mutation already lands on ``303 /contacts/{id}…#deal-{id}``, a full
+  server render, so the region has nothing to swap.
 
   The reassign panel is built only for an admin on an **active** contact
   (**R25**): while the contact is archived it does not render at all, and a
   crafted POST then answers 409 ``archived_parent``.
   """
   context = context_of(request)
+  scope = scope_of(principal)
   can_reassign = principal.is_admin and not view.is_archived
+  # No archive clause on this read (slice-c.md §1(b) function 5): the parent
+  # read above has already decided whether this contact is viewable, and an
+  # archived contact's workspace must still show what its owner is about to
+  # restore. The stage controls are absent on every card while it is
+  # archived, and a crafted POST meets 409 `archived_parent`.
+  deals = await list_for_contact(context.runner, scope, contact_id=view.id)
   reassign: dict[str, Any] | None = None
   if can_reassign:
     users = await list_assignable_users(context.runner)
@@ -505,7 +522,7 @@ async def _detail_context(
     csrf_token=csrf_token_for_request(request),
     private=True,
     nav_active="contacts",
-    scope_label=_scope_label(principal),
+    scope_label=scope_label_for(principal),
     notice=notice_for(request, substitutions={"name": view.owner_name}),
   )
   page.update(
@@ -515,11 +532,16 @@ async def _detail_context(
       "archive": not view.is_archived,
       "restore": view.is_archived,
       "reassign": can_reassign,
-      "add_deal": False,
+      "add_deal": not view.is_archived,
       "add_activity": False,
     },
-    deals=[],
-    deal_forms={},
+    deals=[deal_card_context(request, card) for card in deals],
+    deal_forms={
+      str(card.id): stage_form_context(
+        idempotency_key=mint_key(), version=card.version, stage=card.stage
+      )
+      for card in deals
+    },
     timeline=_empty_timeline(),
     activity_form=View(
       values={
@@ -565,7 +587,7 @@ def _form_context(
     csrf_token=csrf_token_for_request(request),
     private=True,
     nav_active="contacts",
-    scope_label=_scope_label(principal),
+    scope_label=scope_label_for(principal),
     notice=notice_for(request),
   )
   page.update(
@@ -809,7 +831,7 @@ async def contacts_page(request: Request) -> Response:
     private=True,
     nav_active="contacts",
     announce=_announce(view) if fragment else None,
-    scope_label=_scope_label(principal),
+    scope_label=scope_label_for(principal),
     notice=None if fragment else notice_for(request),
   )
   page.update(

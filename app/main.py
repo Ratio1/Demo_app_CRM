@@ -64,6 +64,7 @@ from app.logging import configure_logging, log_request, log_unhandled, new_corre
 from app.logging import set_correlation_id as bind_correlation_id
 from app.routes import auth as auth_routes
 from app.routes import contacts as contact_routes
+from app.routes import deals as deal_routes
 from app.routes import health as health_routes
 from app.routes.errors import (
   ambiguous_commit_handler,
@@ -489,6 +490,11 @@ def create_app(
   application.include_router(health_routes.router)
   application.include_router(auth_routes.router)
   application.include_router(contact_routes.router)
+  # After the contact table, and with `/deals/pipeline` declared before
+  # `/deals/{deal_id}` inside it: Starlette matches in registration order,
+  # and the other way round the literal path would be read as a
+  # non-canonical deal id and answered 404 (slice-c.md §2(c)).
+  application.include_router(deal_routes.router)
 
   handlers: dict[Any, Any] = {
     StarletteHTTPException: http_exception_handler,
