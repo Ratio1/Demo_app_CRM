@@ -1,7 +1,7 @@
 """The runtime role's live grant set, table by table.
 
-The runtime role's grant set matches the data contract **exactly**, table
-by table, read from `information_schema.table_privileges` — every expected
+The runtime role's grant set matches `_EXPECTED_TABLE_GRANTS` below
+**exactly**, table by table, read from `information_schema.table_privileges` — every expected
 privilege present and **no unexpected one**, so an over-grant fails the
 test — plus the live negatives: no `UPDATE`/`DELETE` on `audit_events`, no
 write to `app_settings`, no `INSERT` into `users`, no `DELETE` on
@@ -44,9 +44,9 @@ _EXPECTED_TABLE_GRANTS: dict[str, frozenset[str]] = {
   "activities": frozenset({"SELECT", "INSERT"}),
 }
 
-#: Tables the data contract describes that this migration chain has not
-#: created. Empty today: every table in the contract now exists, so there
-#: is nothing left to assert absent.
+#: Tables the application's schema is expected to eventually hold that
+#: this migration chain has not created yet. Empty today: every expected
+#: table already exists, so there is nothing left to assert absent.
 _NOT_YET_SHIPPED_TABLES: frozenset[str] = frozenset()
 
 
