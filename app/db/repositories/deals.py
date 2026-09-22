@@ -67,6 +67,7 @@ __all__ = [
   "StageBucket",
   "StatusFilter",
   "change_stage_versioned",
+  "dashboard_totals",
   "get_deal",
   "insert_deal",
   "list_deals",
@@ -271,6 +272,33 @@ SELECT d.stage, count(*) AS deal_count,
   JOIN public.contacts c ON c.id = d.contact_id
  {where}
  GROUP BY d.stage
+""")
+
+#: The dashboard aggregate (Slice D), **one statement for all four numbers**.
+#: Every count and every sum is the engine's under the one predicate: nothing
+#: on this path is summed, filtered or bucketed in Python (``PIN C6``,
+#: ``ACC-302``). ``SUM(CASE ...)`` rather than ``count(*) FILTER (WHERE ...)``
+#: because §9.2's portable set has no ``FILTER`` clause, and rather than a
+#: ``GROUP BY d.stage`` whose five rows Python would then have to add up.
+#:
+#: The archive conjunct is written in, not selected: an archived contact's
+#: deals are off the dashboard exactly as they are off the default lists
+#: (``ACC-306``). The ownership conjunct is on the **parent**, like every other
+#: statement in this module.
+_DASHBOARD_TOTALS_SQL: Final = sql.SQL("""
+SELECT COALESCE(SUM(CASE WHEN d.stage IN ('new', 'qualified', 'proposal')
+                         THEN 1 ELSE 0 END), 0) AS open_count,
+       COALESCE(SUM(CASE WHEN d.stage IN ('new', 'qualified', 'proposal')
+                         THEN d.amount ELSE CAST(0 AS DECIMAL(12,2)) END),
+                CAST(0 AS DECIMAL(12,2))) AS open_amount,
+       COALESCE(SUM(CASE WHEN d.stage = 'won' THEN 1 ELSE 0 END), 0) AS won_count,
+       COALESCE(SUM(CASE WHEN d.stage = 'won'
+                         THEN d.amount ELSE CAST(0 AS DECIMAL(12,2)) END),
+                CAST(0 AS DECIMAL(12,2))) AS won_amount
+  FROM public.deals d
+  JOIN public.contacts c ON c.id = d.contact_id
+ WHERE c.archived_at IS NULL
+   {scope}
 """)
 
 #: ``P-CONTACT-SCOPE-*`` with the select list narrowed to the one fact the
@@ -510,6 +538,25 @@ class DealPage:
   total: int
   page: int
   per_page: int
+
+
+@dataclass(frozen=True, slots=True)
+class DealTotals:
+  """The dashboard's two deal tiles: counts and € totals, both from the engine.
+
+  Attributes
+  ----------
+  open_count, open_amount : int, Decimal
+    The three non-terminal stages (``new``, ``qualified``, ``proposal``).
+  won_count, won_amount : int, Decimal
+    Stage ``won``. ``lost`` is on neither tile and is not returned at all:
+    ``CONTRACTS.md`` §8.2 freezes three tiles and ``R16`` forbids a fourth.
+  """
+
+  open_count: int
+  open_amount: Decimal
+  won_count: int
+  won_amount: Decimal
 
 
 @dataclass(frozen=True, slots=True)
@@ -1264,3 +1311,29 @@ async def change_stage_versioned(
   if cursor.rowcount != 1:
     return None
   return await get_deal(conn, scope, deal_id=deal_id)
+
+
+async def dashboard_totals(conn: PoolConnection, scope: Scope) -> DealTotals:
+  """Read the open and won deal counts and € totals in one scoped statement.
+
+  Raises
+  ------
+  TypeError
+    If either sum arrives as anything but a :class:`~decimal.Decimal`
+    (``ARC-021``'s runtime half at the repository boundary).
+  """
+  cursor = await conn.execute(
+    _DASHBOARD_TOTALS_SQL.format(scope=_read_scope(scope)),
+    {"actor_id": str(scope.actor_id)},
+  )
+  row = await cursor.fetchone()
+  if row is None:  # pragma: no cover - an aggregate always returns one row
+    return DealTotals(
+      open_count=0, open_amount=Decimal("0.00"), won_count=0, won_amount=Decimal("0.00")
+    )
+  return DealTotals(
+    open_count=int(str(row[0])),
+    open_amount=_as_decimal(row[1], column="SUM(deals.amount) open"),
+    won_count=int(str(row[2])),
+    won_amount=_as_decimal(row[3], column="SUM(deals.amount) won"),
+  )

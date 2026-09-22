@@ -69,6 +69,7 @@ __all__ = [
   "SortKey",
   "StatusFilter",
   "archive_contact",
+  "count_visible",
   "get_contact",
   "insert_contact",
   "list_contacts",
@@ -194,6 +195,20 @@ SELECT count(*)
   FROM public.contacts c
   JOIN public.users u ON u.id = c.owner_id
  {where}
+""")
+
+#: The dashboard's first tile (Slice D). Deliberately **not** built from
+#: :func:`_visible_where`: the dashboard takes no query at all, so composing a
+#: whole ``ContactQuery`` to reach one predicate would put a search term, a
+#: kind filter and a sort key on a statement that has none of them. The
+#: archive conjunct is written here, in the statement, because "visible" on
+#: that screen means not archived, and no parameter selects it. No ``u`` join:
+#: nothing here returns a user column and the join is count-neutral.
+_COUNT_VISIBLE_SQL: Final = sql.SQL("""
+SELECT count(*)
+  FROM public.contacts c
+ WHERE c.archived_at IS NULL
+   {scope}
 """)
 
 _INSERT_CONTACT_SQL: Final[LiteralString] = """
@@ -954,3 +969,21 @@ async def reassign_contact(
   if cursor.rowcount != 1:
     return None
   return await get_contact(conn, scope, contact_id=contact_id)
+
+
+async def count_visible(conn: PoolConnection, scope: Scope) -> int:
+  """Count the non-archived contacts this scope may see (the dashboard's tile).
+
+  Notes
+  -----
+  The ownership conjunct is the same pair every other read in this module
+  uses, so the tile can never count a contact the list would not show
+  (``ACC-301``/``ACC-302``). An admin gets no conjunct rather than a widened
+  one.
+  """
+  cursor = await conn.execute(
+    _COUNT_VISIBLE_SQL.format(scope=_read_scope(scope)),
+    {"actor_id": str(scope.actor_id)},
+  )
+  row = await cursor.fetchone()
+  return 0 if row is None else int(str(row[0]))

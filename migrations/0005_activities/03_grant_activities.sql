@@ -1,0 +1,12 @@
+-- DATA_CONTRACT.md §5.2. The runtime role reads activities and appends to
+-- them. NOTHING ELSE.
+--
+-- No UPDATE and no DELETE, and that absence is the control: "once logged, an
+-- activity cannot be edited or deleted" (contacts/detail.html's own field
+-- help) is enforced by the privilege set, not by the absence of a route. A
+-- compromised session, a crafted request and a bug in this application alike
+-- meet a 42501 from the engine rather than a missing handler.
+--
+-- Deletion exists only under the MAINTENANCE role, in `reset-demo` (§5.3) and
+-- in the deferred `erase-subject`.
+GRANT SELECT, INSERT ON TABLE public.activities TO {grant_to}
