@@ -18,15 +18,10 @@ here is wire-observable and uses ``live_server``.
 
 Typing note: ``db_connection`` and ``clock`` are typed ``Any`` in this file,
 not ``object``. Both come from fixtures whose real implementation
-(``psycopg.AsyncConnection``, ``app.security.clock.ManualClock``) does not
-exist in this tree yet; ``object`` would need a ``# type: ignore`` on every
-attribute access, and — confirmed empirically — mypy's handling of those
-per-line ignores is inconsistent once several other files in the same run
-also import from modules that do not exist yet (some are flagged "unused"
-depending on unrelated files elsewhere in the same invocation). ``Any``
-sidesteps that instability entirely and is the honest type regardless: this
-module genuinely does not know the real type until the Backend/Data lanes
-ship it.
+(``psycopg.AsyncConnection``, ``app.security.clock.ManualClock``) is
+deferred-imported, so an ``object`` annotation here would need a
+``# type: ignore`` on every attribute access; ``Any`` is the honest type
+for a value this module only ever passes through to a deferred import.
 """
 
 from __future__ import annotations

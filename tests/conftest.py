@@ -1359,7 +1359,7 @@ def _clear_global_rate_buckets_before_each_module(
   module_file = getattr(request.module, "__file__", None)
   if module_file is not None and Path(module_file).stem == "test_throttle_and_budget":
     return
-  log_path = tmp_path_factory.mktemp("r68_global_budget_clear") / "clear.log"
+  log_path = tmp_path_factory.mktemp("global_budget_clear") / "clear.log"
   run_with_env(
     OWNER_ENV_FILE,
     str(VENV_PYTHON),
