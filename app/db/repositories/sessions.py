@@ -23,6 +23,7 @@ if TYPE_CHECKING:
   from app.db.pool import PoolConnection
 
 __all__ = [
+  "PREAUTH_PURGE_LIMIT",
   "SessionRow",
   "create_preauth_session",
   "delete_session",
@@ -42,6 +43,33 @@ SELECT s.id, s.kind, s.user_id, s.csrf_sha256, s.created_at, s.last_seen_at,
    AND s.idle_expires_at > %(now)s
    AND s.absolute_expires_at > %(now)s
    AND (s.kind = 'pre_auth' OR u.is_active)
+"""
+
+#: Ruling **R48**. How many expired pre-auth rows one ``GET /login`` may
+#: reclaim. Bounded so the login path's cost cannot grow with the size of the
+#: backlog, and a single home for the number so the statement and any test
+#: that asserts the bound read the same constant. ``manage cleanup`` remains
+#: the full sweep.
+PREAUTH_PURGE_LIMIT: Final[int] = 100
+
+#: **R48**, issued in the same transaction as — and immediately before — the
+#: pre-auth INSERT.
+#:
+#: The bounded single-column ``IN (SELECT … LIMIT n)`` is §8.1's sanctioned
+#: portable idiom: ``DELETE … LIMIT`` is banned outright by §9.1 and is not an
+#: option. ``kind = 'pre_auth'`` is not in the predicate because
+#: ``ck_sessions_kind_user`` makes ``user_id IS NULL`` and that kind the same
+#: set (§3.3), and adding the redundant conjunct would suggest the CHECK might
+#: not hold. The cutoff is a bound parameter from the injected clock — never
+#: ``now()``, never interval arithmetic (§2.3 rule 2).
+_PURGE_EXPIRED_PREAUTH_SQL: Final[LiteralString] = """
+DELETE FROM public.sessions
+ WHERE id IN (SELECT id
+                FROM public.sessions
+               WHERE user_id IS NULL
+                 AND absolute_expires_at < %(now)s
+               ORDER BY absolute_expires_at, id
+               LIMIT %(purge_limit)s)
 """
 
 _CREATE_PREAUTH_SESSION_SQL: Final[LiteralString] = """
@@ -221,8 +249,39 @@ async def create_preauth_session(
 
   This is ``DATA_CONTRACT.md`` §6.8 row 26 — the one write an anonymous
   ``GET`` can cause — and the caller has already charged the
-  ``preauth_global`` budget before reaching it (``ARC-017``(c)).
+  ``preauth_global`` budget before reaching it (``ARC-017``(c)). Under
+  **R48** that write set is now a bounded DELETE beside the INSERT, which is
+  the edit §6.8 row 26 and ``ARC-003``'s note are owed.
+
+  **R48, and why it lives here rather than in a function of its own.** The
+  ruling binds the purge to *each* pre-auth INSERT. A separate
+  ``purge_expired_preauth`` would be easier to test in isolation and exactly
+  as easy for a future caller to forget, and a forgotten purge is an unbounded
+  table; :func:`promote_session` is the shipped precedent for two statements
+  in one repository function. A test asserts the bound by counting rows rather
+  than by calling the purge directly.
+
+  The DELETE is issued **first**. That is cosmetic — the row about to be
+  inserted expires in the future, so it can never be selected whichever order
+  runs — and it is chosen anyway, so that the scan's snapshot matches what the
+  comment claims.
+
+  ``ORDER BY absolute_expires_at, id`` makes two concurrent purges choose the
+  same rows, which narrows the window in which they take locks in conflicting
+  orders. It does **not** eliminate a deadlock: the outer DELETE's lock order
+  is the outer plan's, not the subquery's. What closes the case is that
+  ``40P01`` is in ``RETRYABLE_SQLSTATES`` and this function's caller runs
+  under ``run_read_committed``. Stated this way rather than as "deadlock-free",
+  which would not be true.
+
+  No new grant is needed: ``0002_auth_core`` step 09 already granted DELETE on
+  ``sessions`` for logout and revocation, and ``ix_sessions_absolute_expires_at``
+  serves the subquery.
   """
+  await conn.execute(
+    _PURGE_EXPIRED_PREAUTH_SQL,
+    {"now": now, "purge_limit": PREAUTH_PURGE_LIMIT},
+  )
   await conn.execute(
     _CREATE_PREAUTH_SESSION_SQL,
     {
