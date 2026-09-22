@@ -108,10 +108,22 @@ async def test_acc004_forced_reset_session_cannot_read_a_contact(
 async def test_acc005_no_session_redirects_to_login_invariant_to_existence(
   anon_client: httpx.AsyncClient,
 ) -> None:
-  """`NOSESS` reading any contact id — real or fabricated — gets the same `303 /login`."""
-  response = await anon_client.get("/contacts/00000000-0000-4000-8000-000000000000")
+  """`NOSESS` reading any contact id — real or fabricated — gets the same `303 /login...`.
+
+  The target carries a validated ``?next=`` back to the page that was
+  asked for (``app/routes/errors.py::no_session_handler``, shipped Slice A
+  behaviour, unchanged by Slice B) — this only asserts the *path*, not the
+  full query string, since the exact encoding is Slice A's contract, not
+  this cell's.
+  """
+  path = "/contacts/00000000-0000-4000-8000-000000000000"
+  response = await anon_client.get(path)
   assert response.status_code == 303
-  assert response.headers.get("location") == "/login"
+  location = response.headers.get("location", "")
+  assert location.split("?", 1)[0] == "/login"
+  assert "notice=session_ended" not in location, (
+    "an anon client with no cookie is never told its session ended"
+  )
 
 
 async def test_acc006_owner_can_read_own_archived_contact(agent_a: LoggedInPrincipal) -> None:
@@ -804,10 +816,10 @@ async def test_acc106_list_denied_for_forced_reset(
 
 
 async def test_acc107_list_denied_no_session(anon_client: httpx.AsyncClient) -> None:
-  """`NOSESS` gets `303 /login`."""
+  """`NOSESS` gets `303 /login...` (see `test_acc005`'s docstring on the `?next=` tail)."""
   response = await anon_client.get("/contacts")
   assert response.status_code == 303
-  assert response.headers.get("location") == "/login"
+  assert response.headers.get("location", "").split("?", 1)[0] == "/login"
 
 
 async def test_acc108_default_filter_excludes_archived(agent_a: LoggedInPrincipal) -> None:
