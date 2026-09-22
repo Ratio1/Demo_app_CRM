@@ -8,7 +8,8 @@
 #
 # Why each flag:
 #
-#   --host 0.0.0.0 --port 3000   what the container publishes; see DEPLOY.md.
+#   --host 0.0.0.0 --port 3000   the address the container listens on; the
+#                                deployer publishes it.
 #   --workers 1                  one worker, so there is no worker manager and
 #                                no process supervisor; `exec` below then makes
 #                                uvicorn PID 1 and SIGTERM reaches it directly.

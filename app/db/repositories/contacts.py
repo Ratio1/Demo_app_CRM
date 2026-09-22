@@ -94,9 +94,8 @@ type SortDir = Literal["asc", "desc"]
 type ContactKind = Literal["lead", "customer"]
 type StatusFilter = Literal["active", "archived", "all"]
 
-#: The ownership conjunct of a **read**, aliased, as ``P-CONTACT-SCOPE-AGENT``
-#: and ``P-CONTACT-VISIBLE-AGENT`` write it. Its admin twin is the
-#: absence of a conjunct, not a widened one.
+#: The ownership conjunct of a **read**, aliased on ``c``. Its admin twin is
+#: the absence of a conjunct, not a widened one.
 _READ_OWNED: Final = sql.SQL("AND c.owner_id = %(actor_id)s")
 _READ_ANY: Final = sql.SQL("")
 

@@ -12,7 +12,8 @@ exactly which schema its code was written against. ``/health/ready`` answers
 comparison does three jobs: it keeps an unmigrated database from serving, it
 catches a database migrated by a *newer* image — the old replica fails ready
 instead of writing against a schema it does not understand — and it is
-therefore the coordinated-upgrade mechanism DEPLOY.md documents.
+therefore what makes a rolling upgrade safe: migrate first, then replace the
+replicas, and a replica that is behind takes itself out of rotation.
 
 Nothing here writes. Every function is safe on a pooled connection held by the
 DML-only runtime role, and every failure is read as "not ready": a readiness

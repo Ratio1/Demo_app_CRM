@@ -261,7 +261,7 @@ async def list_for_contact(
   **No archive clause**, exactly as ``deals.list_for_contact`` states it: the
   parent read has already decided whether this contact is viewable, and an
   archived contact's workspace must still show the history its owner is about
-  to restore (``P-ACTIVITY-TIMELINE-AGENT``).
+  to restore.
   """
   scope_fragment = _read_scope(scope)
   clamped_page, clamped_per_page, offset = _paging(page, per_page)

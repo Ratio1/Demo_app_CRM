@@ -19,17 +19,17 @@
 #
 # Three named stages on ONE linear chain. Nothing is copied between stages, so
 # `runtime` is byte-for-byte what a single-stage build would produce. `deps`
-# exists so the dependency install can be built and timed on its own, which is
-# how the build's resource figures in RESOURCE_TESTS.md were measured:
+# exists so the dependency install can be built and timed on its own, which
+# is how the build's own resource use was measured:
 #
 #   docker build --target deps -t demo-crm-app:p0 .
 #
 # No RUN imports the application, so the image builds with no database
 # reachable; no DB_* variable is read at build time; and there is no
 # HEALTHCHECK, because `/health/live` and `/health/ready` are the deployer's
-# probes and are documented in DEPLOY.md. Runtime configuration is only the
-# five environment variables listed in .env.example, supplied by the deployer;
-# none of them has a default here.
+# own probes and a Dockerfile setting would not be evidence that either one
+# works. Runtime configuration is only the five environment variables listed
+# in .env.example, supplied by the deployer; none of them has a default here.
 
 FROM python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 AS base
 

@@ -110,9 +110,8 @@ type ParentState = Literal["missing", "archived", "active"]
 #: What :func:`insert_deal` answers. The repository never chooses a status.
 type CreateOutcome = Literal["created", "parent_missing", "parent_archived"]
 
-#: The ownership conjunct of a **read**, aliased on the parent, as
-#: ``P-DEAL-SCOPE-AGENT`` writes it. Its admin twin
-#: is the *absence* of a conjunct, not a widened one. The same pair is composed
+#: The ownership conjunct of a **read**, aliased on the parent. Its admin
+#: twin is the *absence* of a conjunct, not a widened one. The same pair is composed
 #: into the correlated ``EXISTS`` of both versioned writes, where the alias is
 #: also ``c``.
 _READ_OWNED: Final = sql.SQL("AND c.owner_id = %(actor_id)s")
@@ -299,8 +298,8 @@ SELECT COALESCE(SUM(CASE WHEN d.stage IN ('new', 'qualified', 'proposal')
    {scope}
 """)
 
-#: ``P-CONTACT-SCOPE-*`` with the select list narrowed to the one fact the
-#: caller may learn. **No archive clause, by design**: the archive state is the
+#: The contact scope predicate, with the select list narrowed to the one
+#: fact the caller may learn. **No archive clause, by design**: the archive state is the
 #: ANSWER, not a filter, and the order is fixed — scope predicate first
 #: (0 rows -> ``missing`` -> the identical 404), archived state second
 #: (-> ``archived`` -> 409 ``archived_parent``). The statement returns one
@@ -1034,7 +1033,7 @@ async def list_for_contact(
   **No archive clause either.** The parent read has already decided whether
   this contact is viewable, and an archived contact's detail must still show
   what its owner is about to restore — exactly the rule
-  ``P-ACTIVITY-TIMELINE-AGENT`` states for the timeline.
+  the timeline's own read does.
   """
   scope_fragment = _read_scope(scope)
   clamped_page, clamped_per_page, offset = _paging(page, per_page)
