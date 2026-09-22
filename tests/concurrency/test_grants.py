@@ -11,9 +11,12 @@ on `audit_events`, no write to `app_settings`, no `INSERT` into `users`, no
 Runs entirely through ``db_connection`` — the suite process's own runtime
 role (``crm_test_app``, per ``tests/README.md``) — so every assertion below
 is the **live** grant this role actually holds today, never a value this
-suite reads or prints from an env file (``AGENTS.md``). ``deals`` and
-``activities`` are Slice C: absent from `crm_test` today, and this module
-asserts that absence explicitly rather than silently skipping them.
+suite reads or prints from an env file (``AGENTS.md``). ``deals`` shipped
+with the Slice C contract step (``migrations/0004_deals`` step 04) and is
+now asserted against its own row of ``DATA_CONTRACT.md`` §5.2, exactly as
+every other table is; ``activities`` is Slice D and is still absent from
+`crm_test` today, so this module asserts that absence explicitly rather
+than silently skipping it.
 """
 
 from __future__ import annotations
@@ -26,8 +29,12 @@ import pytest
 pytestmark = pytest.mark.asyncio
 
 #: `DATA_CONTRACT.md` §5.2, restricted to the tables that exist in `crm_test`
-#: as of Slice B (`deals`/`activities` are Slice C and are asserted absent
-#: below, never compared against a grant set they do not yet have).
+#: as of Slice C (`activities` is Slice D and is asserted absent below,
+#: never compared against a grant set it does not yet have). `deals`'s
+#: three privileges and no `DELETE` are `migrations/0004_deals` step 04's
+#: exact grant (`SQL-019`'s extension, `contracts/slice-c.md` §1(f)) — "a
+#: deal is never deleted by the application" is what makes the *absence*
+#: of the privilege load-bearing, not a convention.
 _EXPECTED_TABLE_GRANTS: dict[str, frozenset[str]] = {
   "users": frozenset({"SELECT", "UPDATE"}),
   "sessions": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),
@@ -38,12 +45,13 @@ _EXPECTED_TABLE_GRANTS: dict[str, frozenset[str]] = {
   "schema_migrations": frozenset({"SELECT"}),
   "mutation_receipts": frozenset({"SELECT", "INSERT"}),
   "contacts": frozenset({"SELECT", "INSERT", "UPDATE"}),
+  "deals": frozenset({"SELECT", "INSERT", "UPDATE"}),
 }
 
-#: Slice C tables — must not exist yet in `crm_test` (`DATA_CONTRACT.md`
+#: Slice D tables — must not exist yet in `crm_test` (`DATA_CONTRACT.md`
 #: §5.2 rows for them are a forward-looking contract, not a live grant to
 #: compare against a table this migration chain has not created).
-_NOT_YET_SHIPPED_TABLES: frozenset[str] = frozenset({"deals", "activities"})
+_NOT_YET_SHIPPED_TABLES: frozenset[str] = frozenset({"activities"})
 
 
 async def _live_table_grants(db_connection: Any) -> dict[str, frozenset[str]]:
@@ -172,4 +180,16 @@ async def test_sql019_no_insert_into_users(db_connection: Any) -> None:
   """The runtime role holds no `INSERT` on `users` — account creation is CLI-only."""
   await _assert_refused_with_42501(
     db_connection, "INSERT INTO users (id) VALUES ('00000000-0000-4000-8000-000000000000')"
+  )
+
+
+async def test_sql019_no_delete_on_deals(db_connection: Any) -> None:
+  """The runtime role holds no `DELETE` on `deals` — a deal is never deleted by the application.
+
+  `contracts/slice-c.md` §1(a): deletion exists only in `reset-demo` and
+  `erase-subject`, under the maintenance role — the absence of the
+  privilege here is what makes "no deal disappears" structural.
+  """
+  await _assert_refused_with_42501(
+    db_connection, "DELETE FROM deals WHERE id = '00000000-0000-4000-8000-000000000000'"
   )
