@@ -75,6 +75,7 @@ if TYPE_CHECKING:
   from uuid import UUID
 
   from app.db.pool import Pool, PoolConnection
+  from app.db.repositories.users import UserAuthRow
   from app.security.clock import Clock
   from app.security.passwords import PasswordService
   from app.security.principal import Principal
@@ -275,7 +276,7 @@ async def login(
   if state.locked:
     return LoginResult(outcome=OUTCOME_LOCKED, retry_after_s=state.retry_after_s)
 
-  async def _find(conn: PoolConnection) -> object | None:
+  async def _find(conn: PoolConnection) -> UserAuthRow | None:
     return await find_user_for_auth(conn, email_norm=email_norm)
 
   user = await run_read_committed(pool, _find, op="find-user-for-auth")
@@ -410,7 +411,7 @@ async def change_password(
   """
   now = clock.now()
 
-  async def _read(conn: PoolConnection) -> object | None:
+  async def _read(conn: PoolConnection) -> UserAuthRow | None:
     return await read_user(conn, user_id=principal.id)
 
   user = await run_read_committed(pool, _read, op="read-user-for-password-change")
