@@ -17,6 +17,27 @@ mutation is a plain form `POST`), psycopg3 + psycopg-pool, uvicorn.
 Commands below assume a working directory that contains `_tools/pgsql` (see Prerequisites)
 unless a section says otherwise.
 
+## Configuration
+
+Five environment variables are the whole runtime configuration (`.env.example`). Serving and
+maintenance use the same five names, with different database roles.
+
+| Variable | Required | Value |
+|---|---|---|
+| `DB_SERVER` | yes | PostgreSQL host or `host:port`; an IPv6 literal is bracketed (`[2001:db8::1]`, `[2001:db8::1]:5432`). No URL, query string or connection option. |
+| `DB_PORT` | no | Decimal port 1–65535, default `5432`. If `DB_SERVER` also carries a port, the two must be identical or startup fails. |
+| `DB_USER` | yes | Serving: the DML-only runtime role. `scripts/manage`: the owner role. |
+| `DB_PASSWORD` | yes | That role's password, used verbatim. |
+| `DB_NAME` | yes | An existing, dedicated database; never created at startup. |
+
+There is no `PORT`, `APP_URL`, `DATABASE_URL` or secret. The container always listens on plain
+HTTP `0.0.0.0:3000` (`scripts/start`). The public origin — in production the `https://` hostname
+Cloudflare serves — is stored in the database by `scripts/manage bootstrap --origin …` (changed
+later with `set-origin`); its scheme alone decides the session cookie's name and `Secure` flag
+and whether `Strict-Transport-Security` is sent. The database connection is always
+`sslmode=verify-full` and trusts only `app/certs/ca-bundle.pem`, a file rather than a variable
+(§2, §10).
+
 ## 1. Credentials
 
 Two env files, five variables in force (`DB_SERVER`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`;
@@ -194,3 +215,88 @@ until the deferred privacy and MFA items close.
   makes no third-party network request. SHA-256:
   `71ea67185bfa8c98c39d31717c6fce5d852370fcdfd129db4543774d3145c0de`.
 - `app/static/img/**` — icon sprite and illustrations.
+
+## 10. Production deployment (Ratio1 WAR)
+
+Reference only: nothing in this section has been run against a Ratio1 node from this repository.
+A Worker App Runner (WAR) deploys from source and does not use the `Dockerfile`: it clones the
+repository into a stock base container and runs a list of commands there. Field names are those
+of `create_worker_web_app` in the `ratio1` Python SDK (3.5.57) and of the edge node's
+`extensions/business/container_apps/worker_app_runner.py`; re-verify them against the SDK and
+node version you deploy with.
+
+**Base image.** `Dockerfile`:
+`python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9`.
+WAR: the tag `python:3.12-slim`, which floats. Python 3.12 is required either way
+(`pyproject.toml`: `requires-python = "==3.12.*"`).
+
+### Before the first deploy
+
+1. **Trust anchor.** `app/certs/ca-bundle.pem` is git-ignored and not in the repository —
+   `scripts/build-image` writes it locally (in this checkout, from the development CA) — so a
+   fresh clone does not have it. The production database's CA certificate (public certificate
+   only) must be at that path in the checkout the runner builds from: commit it on the
+   deployment branch (`git add -f app/certs/ca-bundle.pem`, because the path is ignored), or
+   write it in a build step from a file you supply. The development CA must never be the one
+   used in production. Without the right certificate the process still starts and
+   `/health/live` still answers `200`, but every database connection fails and `/health/ready`
+   stays `503`.
+
+2. **Migrate and bootstrap, once, as the owner role**, from a machine that can reach the
+   production database; the serving container never migrates, provisions or seeds. Put the
+   owner-role values (the same five names) in a git-ignored env file such as
+   `.env.prod.owner.local`, then, from `Demo_app_CRM/`:
+
+   ```
+   cp <production-ca.pem> app/certs/ca-bundle.pem
+   docker build -t demo-crm-app:prod --target runtime .
+   docker run --rm --env-file .env.prod.owner.local demo-crm-app:prod scripts/manage migrate
+   docker run --rm -it --env-file .env.prod.owner.local demo-crm-app:prod scripts/manage bootstrap \
+     --email <admin-email> --name "<admin name>" --origin https://<public-host>
+   ```
+
+   Not `scripts/build-image`: while `../_tools/pgsql/pg` exists it copies the development CA and
+   ignores its argument. Run it again afterwards to put the development CA back for local use.
+   `migrate` grants the runtime role `<DB_NAME>_app`; add `--grant-to <role>` if the production
+   runtime role is named otherwise. `<public-host>` is the hostname the WAR's tunnel serves (the
+   SDK's default `tunnel_engine` is `cloudflare`, with `cloudflare_token`). `seed-demo` (§3), if
+   wanted, runs the same way.
+
+3. **Later migrations.** Before pushing a commit that adds a migration step, run `migrate` the
+   same way. `/health/ready` compares the code's migration steps with the database's exactly, so
+   a replica on either side of a mismatch answers `503`.
+
+### WAR fields
+
+| Field | Value |
+|---|---|
+| `vcs_data` | `{"PROVIDER": "github", "REPO_OWNER": …, "REPO_NAME": …, "BRANCH": <deployment branch>}`; add `USERNAME` and `TOKEN` for a private repository |
+| `image` | `"python:3.12-slim"` (the SDK default is `node:22`) |
+| `build_and_run_commands` | `["pip install --no-cache-dir --require-hashes -r requirements.lock.txt", "scripts/start"]` |
+| `port` | `3000` |
+| `endpoint_url` | `"/health/live"` |
+| `container_resources` | `{"cpu": 0.5, "gpu": 0, "memory": "1024m", "ports": []}` — the SDK default's shape with CPU and memory changed |
+| `env` | `DB_SERVER`, `DB_PORT` (optional), `DB_USER`, `DB_PASSWORD`, `DB_NAME` with the **runtime-role** values; nothing else |
+| `volumes`, `file_volumes` | omitted |
+
+There is no separate build or run field: the list runs in order and its last command is the
+server. The runner clones `BRANCH` into `/app`, installs git with `apt-get` when the image lacks
+it (`python:3.12-slim` does), then runs every command as `cd /app && <command>`, all chained
+with `&&` in one `sh -c`. It checks the branch every `vcs_poll_interval` seconds (default 60)
+and restarts on a new commit, so every push to that branch is a redeploy: a fresh clone, then
+the command list again.
+
+- **Probe.** `/health/live` answers `200` whenever the process runs; `/health/ready` answers
+  `503` until `bootstrap` has run, so it cannot be the probe for a first start. The SDK sends
+  `endpoint_url`, but the runner plugin named above has no `ENDPOINT_URL` setting and takes its
+  HTTP probe path from `HEALTH_CHECK: {"PATH": "/health/live"}`; check which one your node
+  honours.
+- **`scripts/start`** must keep its executable bit in git (`git ls-files -s scripts/start`
+  shows mode `100755`). It unsets every `PG*` variable, then `exec`s uvicorn on `0.0.0.0:3000`.
+- **Not carried over from the `Dockerfile`:** the runner runs the commands as root (its
+  `CONTAINER_USER` default), not as `10001:10001`; the root filesystem is writable; the
+  `Dockerfile`'s `ENV` lines do not apply; and the node must reach GitHub, the Debian package
+  mirrors and PyPI for the clone and install steps. The 0.5 CPU / 1 GiB cap and the absence of
+  volumes do carry over, through the fields above.
+- **Not verified here:** whether `image` accepts the `Dockerfile`'s digest form, and whether
+  `container_resources.ports` must also list `3000`.
