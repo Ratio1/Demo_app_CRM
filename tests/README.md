@@ -93,31 +93,35 @@ test trips can never leak into another.
 ## Collection order (`conftest.py`'s `pytest_collection_modifyitems`)
 
 ```
-[tests/inprocess]  ->  [everything else]  ->  [tests/e2e]  ->  [test_last_admin_race.py]
-  ->  [test_migration_journal.py]
+[tests/inprocess]  ->  [everything else]  ->  [tests/e2e]  ->  [test_demo_seed_and_reset.py]
+  ->  [test_last_admin_race.py]  ->  [test_migration_journal.py]
 ```
 
-Four reasons, in that order:
+Six buckets, for these reasons, in that order:
 
 1. `tests/inprocess` first, so its `manage set-origin --origin https://crm.test` always runs
    before `live_server` is ever constructed and repoints the same stored origin to its own
    ephemeral port — no toggling back and forth is needed either way.
-2. Everything else, unordered relative to itself except as the next two entries pull specific
+2. Everything else, unordered relative to itself except as the entries below pull specific
    items out of it.
-3. `tests/e2e` second to last: at least one of its items sets up pytest-playwright's
+3. `tests/e2e` after everything else: at least one of its items sets up pytest-playwright's
    session-scoped fixtures, and once that has happened in a session, `pytest-asyncio`'s
    `asyncio.Runner.run()` can fail or silently drop a coroutine for every *later* async test.
    Ordering it last among the async buckets removes the corruption for the single, literal
    `pytest tests` invocation.
-4. `tests/concurrency/test_last_admin_race.py` absolute last, after even `tests/e2e`: its own
+4. `tests/concurrency/test_demo_seed_and_reset.py` after `tests/e2e`: its `reset-demo --yes`
+   deletes every contact, deal, activity, receipt, session and throttle/budget row in the shared
+   `crm_test`, other modules' fixture data included, so nothing that still expects that data may
+   run after it.
+5. `tests/concurrency/test_last_admin_race.py` after `test_demo_seed_and_reset.py`: its own
    module-scoped fixture resets and re-migrates `crm_test` from scratch and bootstraps two
    admins of its own, which would otherwise wipe the shared `bootstrap_admin`/`crm_test_schema`
-   state every other module's `live_server`/`db_connection` fixture depends on. Placing it last
-   means nothing else in *this* session needs that state afterward; the *next* session's
+   state every other module's `live_server`/`db_connection` fixture depends on. Placing it this
+   late means nothing else in *this* session needs that state afterward; the *next* session's
    `crm_test_schema` (autouse) absorbs whatever it leaves behind.
-5. `tests/concurrency/test_migration_journal.py` absolute last, after even
+6. `tests/concurrency/test_migration_journal.py` absolute last, after even
    `test_last_admin_race.py`: its from-empty-migrate test drops and recreates the whole `public` schema
-   directly to prove a from-empty `migrate`, one wipe further out than reason 4's. A
+   directly to prove a from-empty `migrate`, one wipe further out than reason 5's. A
    module-scoped, autouse fixture there also runs one more `migrate` at teardown as a second
    line of defence, and the *next* session's `crm_test_schema` absorbs whatever is left either
    way.
@@ -125,7 +129,7 @@ Four reasons, in that order:
 ## `tests/e2e`
 
 Needs Playwright's Chromium browser installed once: `.venv/bin/python -m playwright install
-chromium`. Automatically collected and run second-to-last (only `test_last_admin_race.py` runs
-after it) in a single `pytest tests` invocation — see "Collection order" above — which avoids a
-known `pytest-asyncio`/`pytest-playwright` event-loop interaction; it can also be run as its
-own, separate invocation if a browser-less leg is wanted.
+chromium`. Automatically collected and run after everything else except the three data-wiping
+modules that follow it in a single `pytest tests` invocation — see "Collection order" above —
+which avoids a known `pytest-asyncio`/`pytest-playwright` event-loop interaction; it can also be
+run as its own, separate invocation if a browser-less leg is wanted.
